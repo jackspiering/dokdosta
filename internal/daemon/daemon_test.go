@@ -61,6 +61,7 @@ func (h *harness) start(opts func(*Options)) {
 		opts(&o)
 	}
 	h.d = New(o)
+	h.d.CheckVersions(h.ctx)
 }
 
 // advance moves the clock and ticks once per second, as Run does.
@@ -434,18 +435,19 @@ func TestParentWithOpenIncidentSuppressesDependent(t *testing.T) {
 	}
 }
 
-func TestStaleDependentAfterParentRestartIsRecordedNotActedOn(t *testing.T) {
+// M2b: the dependents step. A dependent whose parent restarted later (same ID) is restarted through the API.
+func TestStaleDependentAfterParentRestartIsRestarted(t *testing.T) {
 	h := newHarness(t, nil, nil)
 	parent := h.running(hexID("27"), "p", "parent")
 	dep := h.running(hexID("d1"), "p", "dep")
 	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
 	h.set(parent.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now().Add(-time.Minute) }) // restarted after the dependent
+	h.fake.OnMutate = func(f *docker.Fake, verb, id string) {
+		f.Update(id, func(c *docker.Container) { c.StartedAt = h.clk.Now() })
+	}
 	h.tick()
 	h.advance(3 * time.Minute)
-	h.wantCalls()
-	if h.count(engine.NeedsDependentRestart) != 1 {
-		t.Fatalf("want one NeedsDependentRestart: %v", h.rec.Types())
-	}
+	h.wantCalls("restart " + dep.ID)
 }
 
 // ---- in-flight window, manual stops ----------------------------------------------------------
@@ -550,8 +552,13 @@ func TestNonComposeContainerIsHealedByName(t *testing.T) {
 	h.set(c.ID, unhealthy)
 	h.advance(2 * time.Minute)
 	h.wantCalls("restart " + c.ID)
-	if ev := h.rec.Events()[0]; ev.Key != "h/plain" {
-		t.Fatalf("key = %q", ev.Key)
+	for _, ev := range h.rec.Events() {
+		if ev.Type == engine.IncidentOpened && ev.Key != "h/plain" {
+			t.Fatalf("key = %q", ev.Key)
+		}
+	}
+	if h.count(engine.IncidentOpened) != 1 {
+		t.Fatal(h.rec.Types())
 	}
 }
 

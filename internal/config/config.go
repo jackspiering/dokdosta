@@ -41,7 +41,18 @@ type Global struct {
 	FlapWindow       time.Duration
 	DataDir          string        // the SQLite store lives here
 	HistoryRetention time.Duration // closed incidents older than this are pruned
+
+	DriftGuard DriftGuard // strict (default): a recreate that would deploy a change is skipped and SUSPENDS; warn: recreate anyway and say so
+	ComposeBin string     // WHALENURSE_COMPOSE_BIN: the compose binary to use, ahead of the host plugin and the bundled copy
 }
+
+// DriftGuard is WHALENURSE_DRIFT_GUARD.
+type DriftGuard string
+
+const (
+	DriftStrict DriftGuard = "strict"
+	DriftWarn   DriftGuard = "warn"
+)
 
 // CooldownMax caps the cooldown backoff.
 const CooldownMax = 5 * time.Minute
@@ -66,14 +77,13 @@ func Defaults() Global {
 		FlapWindow:       24 * time.Hour,
 		DataDir:          "/data",
 		HistoryRetention: 30 * 24 * time.Hour,
+		DriftGuard:       DriftStrict,
 	}
 }
 
 // later lists variables defined in the plan that nothing acts on yet.
 var later = map[string]string{
 	"WHALENURSE_NOTIFY_URLS":   "M3",
-	"WHALENURSE_DRIFT_GUARD":   "M2b",
-	"WHALENURSE_COMPOSE_BIN":   "M2b",
 	"WHALENURSE_HTTP_TOKEN":    "M5",
 	"WHALENURSE_HEARTBEAT_URL": "M3",
 }
@@ -169,6 +179,17 @@ func FromEnv(environ []string) (Global, []string, error) {
 	}
 	if v, ok := take("WHALENURSE_CONTROL_SOCKET"); ok {
 		g.ControlSocket = v
+	}
+	if v, ok := take("WHALENURSE_DRIFT_GUARD"); ok {
+		switch DriftGuard(strings.ToLower(v)) {
+		case DriftStrict, DriftWarn:
+			g.DriftGuard = DriftGuard(strings.ToLower(v))
+		default:
+			errs = append(errs, fmt.Sprintf("WHALENURSE_DRIFT_GUARD=%q: want strict or warn", v))
+		}
+	}
+	if v, ok := take("WHALENURSE_COMPOSE_BIN"); ok {
+		g.ComposeBin = v
 	}
 
 	keys := make([]string, 0, len(env))

@@ -14,6 +14,10 @@ type Obs struct {
 	RestartCount   int
 	FinishedAt     time.Time // when the previous run ended: the best timestamp for a new increase
 	HasHealthcheck bool
+	// Unavailable lists the rungs that cannot run for this container right now, with the reason: "recreate" when the
+	// version gate disabled the compose rungs, the container has no usable compose inputs, or it is not enabled by
+	// whalenurse.actions. The ladder records the reason and goes on; for a decision that needs a recreate it is advisory.
+	Unavailable map[string]string
 }
 
 // Observe feeds one inspect into the crash-loop tracker of the key and returns

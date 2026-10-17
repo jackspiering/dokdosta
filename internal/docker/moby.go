@@ -13,6 +13,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/events"
 	"github.com/moby/moby/client"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 // Moby implements Client on top of the moby client. API version negotiation is
@@ -73,6 +74,26 @@ func (m *Moby) Inspect(ctx context.Context, ref string) (Container, error) {
 	return fromInspect(res.Container), nil
 }
 
+func (m *Moby) ServerVersion(ctx context.Context) (ServerInfo, error) {
+	v, err := m.c.ServerVersion(ctx, client.ServerVersionOptions{})
+	if err != nil {
+		return ServerInfo{}, err
+	}
+	return ServerInfo{Version: v.Version, APIVersion: v.APIVersion, Arch: v.Arch, OS: v.Os}, nil
+}
+
+// ImageID is `docker image inspect --platform linux/<arch> --format '{{.Id}}' <ref>` (needs API 1.49, Engine 28.1).
+func (m *Moby) ImageID(ctx context.Context, ref, arch string) (string, error) {
+	res, err := m.c.ImageInspect(ctx, ref, client.ImageInspectWithPlatform(&ocispec.Platform{OS: "linux", Architecture: arch}))
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return "", fmt.Errorf("%w: %s (linux/%s)", ErrImageNotFound, ref, arch)
+		}
+		return "", err
+	}
+	return res.ID, nil
+}
+
 func (m *Moby) Restart(ctx context.Context, id string) error {
 	_, err := m.c.ContainerRestart(ctx, id, client.ContainerRestartOptions{})
 	return err
@@ -129,6 +150,7 @@ func fromInspect(r container.InspectResponse) Container {
 	c := Container{ID: r.ID, Name: strings.TrimPrefix(r.Name, "/"), RestartCount: r.RestartCount, Created: parseTime(r.Created)}
 	if r.Config != nil {
 		c.Labels = r.Config.Labels
+		c.Image = r.Config.Image
 	}
 	if s := r.State; s != nil {
 		c.Status = string(s.Status)
@@ -143,6 +165,7 @@ func fromInspect(r container.InspectResponse) Container {
 		c.RestartPolicy = string(h.RestartPolicy.Name)
 		c.MaxRetries = h.RestartPolicy.MaximumRetryCount
 		c.NetworkMode, c.IpcMode, c.PidMode = string(h.NetworkMode), string(h.IpcMode), string(h.PidMode)
+		c.VolumesFrom = append([]string(nil), h.VolumesFrom...)
 	}
 	return c
 }

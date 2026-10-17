@@ -67,8 +67,13 @@ var (
 	bad = rules.Decision{Class: rules.ClassUnhealthy, Action: rules.ActionRestart, Reason: "unhealthy"}
 	ok  = rules.Decision{Class: rules.ClassOK, Action: rules.ActionNone, Reason: "running"}
 
-	hcObs = Obs{HasHealthcheck: true}
-	noHC  = Obs{}
+	// The M2a tests are about rung 1 and the ladder around it, so their observations say that the compose rungs are
+	// disabled (the version gate); the M2b tests use hcRecreate and noHCRecreate.
+	off          = map[string]string{config.RungRecreate: "the compose rungs are disabled (test)"}
+	hcObs        = Obs{HasHealthcheck: true, Unavailable: off}
+	noHC         = Obs{Unavailable: off}
+	hcRecreate   = Obs{HasHealthcheck: true}
+	noHCRecreate = Obs{}
 )
 
 // run performs one planned action the way the daemon does and returns the plan.
@@ -100,7 +105,7 @@ func TestLadderStepsAndCooldown(t *testing.T) {
 	if p := e.Evaluate(tgt, bad, cfg, hcObs); acted(p) || p.RecheckAt.IsZero() {
 		t.Fatalf("%+v", p)
 	}
-	// After it, rung 2 does not exist yet: it is recorded as needing M2b and the container is SUSPENDED.
+	// After it, rung 2 is disabled: it is recorded as unavailable and the container is SUSPENDED.
 	clk.Advance(21 * time.Second)
 	if p := e.Evaluate(tgt, bad, cfg, hcObs); acted(p) {
 		t.Fatalf("second pass must not restart again: %+v", p)
@@ -109,8 +114,8 @@ func TestLadderStepsAndCooldown(t *testing.T) {
 		t.Fatalf("%v", rec.Types())
 	}
 	for _, ev := range rec.Events() {
-		if ev.Type == RungUnavailable && !strings.Contains(ev.Message, "needs recreate (M2b)") {
-			t.Fatalf("rung 2 must be recorded as needing M2b: %q", ev.Message)
+		if ev.Type == RungUnavailable && !strings.Contains(ev.Message, "disabled") {
+			t.Fatalf("rung 2 must be recorded as unavailable, with the reason: %q", ev.Message)
 		}
 		if ev.Type == Suspended && ev.Attrs["reason"] != ReasonLadder {
 			t.Fatalf("%+v", ev)

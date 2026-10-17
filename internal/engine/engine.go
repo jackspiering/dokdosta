@@ -5,9 +5,12 @@
 // daemon feeds it decisions and performs the actions it returns, and a
 // Persister (internal/store) keeps its state across restarts.
 //
-// Rung 2 (recreate) does not exist until M2b. Where the ladder would recreate it
-// records RungUnavailable ("needs recreate (M2b)") and moves on, so an unhealthy
-// container goes restart, then SUSPENDED.
+// Rung 2 (recreate) is carried out by the daemon through compose. The engine
+// only plans it (Plan.Act is ActionRecreate or ActionRecreateStale), and the
+// daemon runs the drift guard in between and reports the verdict back through
+// Blocked or Warned. Where a rung cannot run (the version gate, no compose
+// inputs) the ladder records RungUnavailable and moves on, so an unhealthy
+// container then goes restart, then SUSPENDED.
 //
 // The Engine is safe for concurrent use: the daemon loop drives it, and the
 // control socket's commands (pause, resume, unsuspend, status) call it from HTTP
@@ -33,10 +36,8 @@ import (
 const (
 	ReasonLadder   = "ladder"   // every rung ran and the container is still bad
 	ReasonFlapping = "flapping" // more than FLAP_LIMIT incidents within FLAP_WINDOW
+	ReasonDrift    = "drift"    // the drift guard skipped the recreate
 )
-
-// RecreateRungNote is the text recorded where rung 2 would run.
-const RecreateRungNote = "needs recreate (M2b): the recreate rung does not exist yet"
 
 // Params configures an Engine.
 type Params struct {
@@ -61,7 +62,7 @@ type Target struct {
 
 // Plan is what the daemon should do after Evaluate.
 type Plan struct {
-	Act       rules.Action // ActionNone, ActionRestart or ActionStart
+	Act       rules.Action // ActionNone, ActionRestart, ActionStart, ActionRecreate or ActionRecreateStale
 	Rung      string
 	RecheckAt time.Time // inspect again then (cooldown, recovery period); zero for none
 }
@@ -491,12 +492,10 @@ func (e *Engine) Evaluate(t Target, d rules.Decision, cfg config.Container, o Ob
 	}
 
 	switch d.Action {
-	case rules.ActionRestart, rules.ActionStart:
-		return e.heal(t, st, d, cfg, now)
+	case rules.ActionRestart, rules.ActionStart, rules.ActionRecreate, rules.ActionRecreateStale:
+		return e.heal(t, st, d, cfg, o, now)
 	case rules.ActionNeedsRecreate:
 		e.advise(t, st, d, NeedsRecreate)
-	case rules.ActionNeedsDependentRestart:
-		e.advise(t, st, d, NeedsDependentRestart)
 	case rules.ActionWaitForParent:
 		e.advise(t, st, d, WaitingForParent)
 	case rules.ActionNotify:
@@ -574,6 +573,9 @@ func (e *Engine) advise(t Target, st *keyState, d rules.Decision, typ EventType)
 	if d.Cause != rules.CauseNone {
 		attrs["cause"] = string(d.Cause)
 	}
+	if len(d.Dependents) > 0 {
+		attrs["dependents"] = strings.Join(d.Dependents, ",")
+	}
 	e.emit(t, typ, d.Reason, attrs)
 }
 
@@ -584,7 +586,7 @@ func (e *Engine) flapLimit(cfg config.Container) int {
 	return e.p.FlapLimit
 }
 
-func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Container, now time.Time) Plan {
+func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Container, o Obs, now time.Time) Plan {
 	st.advisory = ""
 	if st.incident == nil {
 		// Flap count: closing an incident does not reset it, only the window expiring does.
@@ -632,7 +634,21 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 
 	for inc.rung < len(cfg.Actions) {
 		r := cfg.Actions[inc.rung]
-		if r == config.RungRestart {
+		if r == config.RungRestart && d.Action.IsRecreate() {
+			// Restarting a dependent whose parent is gone fails and makes it worse (E1); a network that is gone
+			// is not repaired by a restart either. Rung 2 is the first rung that can help.
+			inc.rung++
+			st.dirty = true
+			continue
+		}
+		if why, bad := o.Unavailable[r]; bad {
+			e.emit(t, RungUnavailable, fmt.Sprintf("rung %q: %s; skipped", r, why), map[string]string{"rung": r})
+			inc.rung++
+			st.dirty = true
+			continue
+		}
+		switch r {
+		case config.RungRestart, config.RungRecreate:
 			if !e.rateOK(now) {
 				if !inc.rateNoted {
 					inc.rateNoted = true
@@ -641,19 +657,59 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 				return Plan{RecheckAt: e.nextSlot(now)}
 			}
 			inc.rateNoted = false
-			return Plan{Act: d.Action, Rung: r}
+			act := d.Action
+			if r == config.RungRecreate && !act.IsRecreate() {
+				act = rules.ActionRecreate // rung 2 after a restart: compose --force-recreate
+			}
+			return Plan{Act: act, Rung: r}
+		default:
+			e.emit(t, RungUnavailable, fmt.Sprintf("rung %q: the pull rung is not built yet (M4); skipped", r), map[string]string{"rung": r})
+			inc.rung++
+			st.dirty = true
 		}
-		e.emit(t, RungUnavailable, fmt.Sprintf("rung %q: %s; skipped", r, RecreateRungNote), map[string]string{"rung": r})
-		inc.rung++
-		st.dirty = true
 	}
 	inc.spent, inc.spentReason = true, ReasonLadder
-	msg := "restart did not help"
+	msg := "every rung ran or was unavailable"
 	if inc.rung == 0 {
 		msg = "no usable rung configured"
 	}
 	e.suspend(t, st, msg+": "+d.Reason, d)
 	return Plan{}
+}
+
+// Blocked is the drift guard's verdict "do not recreate" (plan §3.6): the rung is skipped, the cause is reported, and
+// the container is SUSPENDED, because the pull rung would be stopped by the same findings. The daemon calls it instead
+// of Begin, so no rate-limit slot is spent. It reports false when the incident is gone or already suspended.
+func (e *Engine) Blocked(t Target, d rules.Decision, findings []string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st := e.state(t.Key)
+	defer e.flush(t.Key, st)
+	inc := st.incident
+	if inc == nil || inc.suspended {
+		return false
+	}
+	cause := strings.Join(findings, "; ")
+	e.emit(t, DriftBlocked, "recreate skipped by the drift guard: "+cause, map[string]string{"class": string(d.Class), "findings": cause})
+	inc.spent, inc.spentReason = true, ReasonDrift
+	e.suspend(t, st, "recreate skipped by the drift guard ("+cause+"): "+d.Reason, d)
+	return true
+}
+
+// Warned records that WHALENURSE_DRIFT_GUARD=warn let a recreate through despite the findings.
+func (e *Engine) Warned(t Target, findings []string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	cause := strings.Join(findings, "; ")
+	e.emit(t, DriftWarned, "recreating despite the drift guard (WHALENURSE_DRIFT_GUARD=warn): "+cause, map[string]string{"findings": cause})
+}
+
+// Note publishes an event the daemon observed (the version gate, a post-check) so it reaches the same stream as the
+// engine's own.
+func (e *Engine) Note(t Target, typ EventType, msg string, attrs map[string]string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.emit(t, typ, msg, attrs)
 }
 
 func (e *Engine) suspend(t Target, st *keyState, msg string, d rules.Decision) {

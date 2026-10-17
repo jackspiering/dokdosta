@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackspiering/whalenurse/internal/clock"
+	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
 	"github.com/jackspiering/whalenurse/internal/engine"
@@ -68,6 +69,14 @@ type Options struct {
 	// BootID reads the kernel's boot id; nil reads BootIDPath.
 	BootID func() string
 
+	// Compose is the compose binary's read-only half (the dry-run oracle, config --hash); ComposeActor is the mutating half
+	// (compose.DryRun in dry-run mode). Both nil means no compose was found: rungs 2 and 3 are then disabled, and
+	// ComposeNote says why. Stat replaces os.Stat for the readability check of the compose inputs (tests).
+	Compose      compose.Reader
+	ComposeActor compose.Actor
+	ComposeNote  string
+	Stat         func(string) (os.FileInfo, error)
+
 	// ReconnectBackoff is the first wait before resubscribing to events (doubles up to 30s).
 	ReconnectBackoff time.Duration
 }
@@ -98,6 +107,8 @@ type Daemon struct {
 	pend        map[string]pending
 	warned      map[string]bool
 	idx         index
+	compState   atomic.Pointer[composeState] // the startup version gate, readable from the control socket
+	depGate     map[string]depGate           // one dependent at a time per parent, keyed by the raw container: reference
 
 	eventsUp   atomic.Bool
 	eventsDown atomic.Int64 // unix nanos when the stream went down; 0 while up
@@ -120,8 +131,9 @@ func New(o Options) *Daemon {
 			RecoveryPeriod: g.RecoveryPeriod, CrashloopAfter: g.CrashloopAfter, FlapLimit: g.FlapLimit, FlapWindow: g.FlapWindow,
 			Persist: o.Persist,
 		}, o.Clock, o.Bus),
-		pend:   map[string]pending{},
-		warned: map[string]bool{},
+		pend:    map[string]pending{},
+		warned:  map[string]bool{},
+		depGate: map[string]depGate{},
 	}
 	d.eng.Restore(o.Snapshot)
 	d.started = o.Clock.Now()
@@ -240,6 +252,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
+	d.CheckVersions(ctx)
 	d.log.Info("whalenurse started",
 		"host", d.cfg.HostID, "mode", d.cfg.Mode, "dry_run", d.cfg.DryRun,
 		"poll", d.cfg.PollInterval.String(), "grace", d.cfg.Grace.String(), "startup_settle", d.cfg.StartupSettle.String())
@@ -626,11 +639,24 @@ func (d *Daemon) process(ctx context.Context, key string) {
 		return
 	}
 	// Rule 3's crash-loop verdict needs memory between inspects, so the engine owns it.
-	obs := engine.Obs{RestartCount: c.RestartCount, FinishedAt: c.FinishedAt, HasHealthcheck: c.Health != ""}
+	obs := engine.Obs{RestartCount: c.RestartCount, FinishedAt: c.FinishedAt, HasHealthcheck: c.Health != "", Unavailable: d.unavailable(c)}
 	if in.Loop = d.eng.Observe(t, obs); in.Loop.Active {
 		dec = rules.Classify(in)
 	}
+	dec = d.adjust(c, cfg, dec, obs)
 	d.log.Debug("classified", "key", key, "container", c.Name, "class", dec.Class, "action", dec.Action, "reason", dec.Reason)
+
+	// A parent that is in a good state but still has an incident open: its dependents have been waiting for it.
+	if dec.Class == rules.ClassOK {
+		if open, _ := d.eng.IncidentOpen(key); open && d.hasDependents(c) {
+			d.requestDependentSweep(now.Add(time.Second))
+		}
+	}
+
+	if dec.Class == rules.ClassStaleParentRestarted && d.siblingBusy(ctx, c, key) {
+		d.schedule(key, now.Add(depRetry)) // one dependent at a time; an incident opens when it is this one's turn
+		return
+	}
 
 	plan := d.eng.Evaluate(t, dec, cfg, obs)
 	if !plan.RecheckAt.IsZero() {
@@ -642,28 +668,44 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	d.execute(ctx, t, c, dec, plan, cfg)
 }
 
-// execute performs one rung-1 action. Just before touching the container it
-// re-checks every container: reference, because the parent can be recreated
-// between the decision and the action, and an API restart of a dependent
-// whose parent ID is gone turns a running dependent into an exited one (E1).
+// adjust applies what the rules cannot know: a recreate that is not available is only advice (never a restart, never a
+// SUSPENDED for something whalenurse could not have done), and a parent that stays down names its dependents.
+func (d *Daemon) adjust(c docker.Container, cfg config.Container, dec rules.Decision, obs engine.Obs) rules.Decision {
+	if dec.Action.IsRecreate() {
+		why := obs.Unavailable[config.RungRecreate]
+		if why == "" && !cfg.HasRung(config.RungRecreate) {
+			why = "recreate is not enabled by " + config.LabelActions
+		}
+		if why != "" {
+			dec.Action = rules.ActionNeedsRecreate
+			dec.Reason += " (needs recreate, but: " + why + ")"
+		}
+	}
+	if dec.Class == rules.ClassExitedHostStopped {
+		if deps := d.dependentNames(c); len(deps) > 0 {
+			dec.Dependents = deps
+			dec.Reason += "; its network_mode dependents (" + strings.Join(deps, ", ") + ") stay down with it"
+		}
+	}
+	return dec
+}
+
+// execute performs one planned action: rung 1 through the Docker API, rung 2 and the dependents recreate through compose.
+// Just before touching the container it re-checks every container: reference, because the parent can be recreated
+// between the decision and the action, and an API restart of a dependent whose parent ID is gone turns a running
+// dependent into an exited one (E1).
 func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container) {
-	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
-		ref := docker.ContainerRef(mode)
-		if ref == "" {
-			continue
-		}
-		p, err := d.rd.Inspect(ctx, ref)
-		switch {
-		case errors.Is(err, docker.ErrNotFound):
-			d.refuse(t, dec, fmt.Sprintf("container:%s no longer exists; needs recreate (M2b), not restarting", docker.ShortID(ref)))
-			return
-		case err != nil:
-			d.refuse(t, dec, fmt.Sprintf("cannot verify container:%s (%v); not acting", docker.ShortID(ref), err))
-			return
-		case !p.Running:
-			d.refuse(t, dec, fmt.Sprintf("parent %s is not running; act on the parent only", docker.ShortID(p.ID)))
-			return
-		}
+	if plan.Act.IsRecreate() {
+		d.executeRecreate(ctx, t, c, dec, plan, cfg)
+		return
+	}
+	if why := d.refsRefusal(ctx, c); why != "" {
+		d.refuse(t, dec, why)
+		return
+	}
+	if d.siblingBusy(ctx, c, t.Key) {
+		d.schedule(t.Key, d.clk.Now().Add(depRetry))
+		return
 	}
 
 	d.eng.Begin(t, plan, dec)
@@ -677,9 +719,7 @@ func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Containe
 		err = d.o.Actor.Start(actx, c.ID)
 	}
 	recheck := d.eng.End(t, plan, engine.Result{Err: err, DryRun: d.cfg.DryRun}, cfg)
-	if !recheck.IsZero() {
-		d.schedule(t.Key, recheck)
-	}
+	d.afterAction(t, c, recheck)
 }
 
 func (d *Daemon) refuse(t engine.Target, dec rules.Decision, why string) {
@@ -700,6 +740,20 @@ func (d *Daemon) keyOf(s docker.Summary) string {
 }
 
 func hasRef(s docker.Summary) bool { return docker.ContainerRef(s.NetworkMode) != "" }
+
+// dependentNames lists the containers (from the last list) whose network_mode points at c.
+func (d *Daemon) dependentNames(c docker.Container) []string {
+	var out []string
+	for _, s := range d.idx.all {
+		if s.ID != c.ID && docker.MatchesRef(c.ID, c.Name, docker.ContainerRef(s.NetworkMode)) {
+			out = append(out, s.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func (d *Daemon) hasDependents(c docker.Container) bool { return len(d.dependentNames(c)) > 0 }
 
 // refresh reloads the container list. When two containers share a key (compose
 // renames the old one while it recreates), the newest wins.

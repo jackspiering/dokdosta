@@ -31,13 +31,55 @@ type Fake struct {
 	OnMutate      func(f *Fake, verb, id string) // runs inside the call, before it returns
 	AfterInspect  func(f *Fake, ref string)      // runs after an Inspect call has read its result
 	ListErr       error
+	ServerErr     error // ServerVersion fails with this
 
-	since []time.Time // the since argument of every Events subscription
+	server ServerInfo
+	images map[string]string // reference -> what ImageID returns for it
+	since  []time.Time       // the since argument of every Events subscription
 }
 
 // NewFake returns an empty Fake.
 func NewFake() *Fake {
-	return &Fake{containers: map[string]Container{}, events: make(chan Event, 256), errs: make(chan error, 1)}
+	return &Fake{
+		containers: map[string]Container{}, events: make(chan Event, 256), errs: make(chan error, 1),
+		server: ServerInfo{Version: "29.9.1", APIVersion: "1.56", Arch: "amd64", OS: "linux"}, images: map[string]string{},
+	}
+}
+
+// SetServer replaces what ServerVersion reports.
+func (f *Fake) SetServer(s ServerInfo) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.server = s
+}
+
+// SetImage makes ImageID(ref) return id; an empty id removes the reference.
+func (f *Fake) SetImage(ref, id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id == "" {
+		delete(f.images, ref)
+		return
+	}
+	f.images[ref] = id
+}
+
+func (f *Fake) ServerVersion(context.Context) (ServerInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.ServerErr != nil {
+		return ServerInfo{}, f.ServerErr
+	}
+	return f.server, nil
+}
+
+func (f *Fake) ImageID(_ context.Context, ref, arch string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if id, ok := f.images[ref]; ok {
+		return id, nil
+	}
+	return "", fmt.Errorf("%w: %s (linux/%s)", ErrImageNotFound, ref, arch)
 }
 
 // Put adds or replaces a container (keyed by ID).

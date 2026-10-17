@@ -14,8 +14,8 @@ func LogSink(log *slog.Logger) func(engine.Event) {
 	return func(e engine.Event) {
 		level := slog.LevelInfo
 		switch e.Type {
-		case engine.Suspended, engine.NeedsRecreate, engine.NeedsDependentRestart, engine.ActionRefused,
-			engine.RateLimited, engine.NotifyOnly, engine.IncidentOpened:
+		case engine.Suspended, engine.NeedsRecreate, engine.ActionRefused, engine.DriftBlocked, engine.DriftWarned,
+			engine.RungsDisabled, engine.DependentPostCheck, engine.RateLimited, engine.NotifyOnly, engine.IncidentOpened:
 			level = slog.LevelWarn
 		case engine.EventAttributed, engine.RestoreEvent:
 			level = slog.LevelDebug

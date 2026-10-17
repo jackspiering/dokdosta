@@ -24,6 +24,7 @@ import (
 
 	"github.com/jackspiering/whalenurse/internal/api"
 	"github.com/jackspiering/whalenurse/internal/clock"
+	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/control"
 	"github.com/jackspiering/whalenurse/internal/daemon"
@@ -168,6 +169,7 @@ func runCmd(args []string) error {
 		log.Warn("DRY RUN: decisions are logged, no container is changed")
 	}
 	opts.Actor = actor
+	opts.Compose, opts.ComposeActor, opts.ComposeNote = composeFor(ctx, cfg, log)
 	d := daemon.New(opts)
 
 	tcpHandler, sockHandler := handlers(d)
@@ -193,6 +195,27 @@ func runCmd(args []string) error {
 	}
 	log.Info("stopped")
 	return nil
+}
+
+// composeFor finds the compose binary (plan §3.4: WHALENURSE_COMPOSE_BIN, then the host plugin mounted read-only, then
+// the bundled copy) and builds the compose Reader and Actor. With none, rungs 2 and 3 are disabled by the version gate
+// and the note says why. In dry-run mode the Actor is a no-op; the Reader still runs the drift guard, which only reads.
+func composeFor(ctx context.Context, cfg config.Global, log *slog.Logger) (compose.Reader, compose.Actor, string) {
+	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	bin, notes, err := compose.Resolve(rctx, compose.Lookup{Env: cfg.ComposeBin})
+	if err != nil {
+		log.Warn("no usable docker compose binary", "error", err.Error())
+		return nil, nil, err.Error()
+	}
+	log.Info("compose binary", "path", bin.Path, "source", string(bin.Source), "version", bin.VersionString(), "skipped", strings.Join(notes, "; "))
+	c := compose.New(*bin, nil)
+	if cfg.DryRun {
+		return c, compose.DryRun{Would: func(verb string, p compose.Project) {
+			log.Info("dry-run: would run compose", "verb", verb, "project", p.Name, "service", p.Service)
+		}}, ""
+	}
+	return c, c, ""
 }
 
 func healthCmd(args []string) error {
@@ -352,6 +375,7 @@ func printStatus(w io.Writer, st daemon.Status) {
 		rate += fmt.Sprintf(" (limit %d)", e.RateLimit)
 	}
 	fmt.Fprintln(w, rate)
+	printCompose(w, st.Compose)
 	if !e.RestoreUntil.IsZero() {
 		fmt.Fprintf(w, "restore window open until %s: starts are restores, kills set no marker\n", e.RestoreUntil.Local().Format(time.TimeOnly))
 	}
@@ -398,6 +422,22 @@ func printStatus(w io.Writer, st daemon.Status) {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", k.Key, k.State, strings.Join(detail, ", "), k.Flaps)
 	}
 	tw.Flush()
+}
+
+func printCompose(w io.Writer, c daemon.ComposeStatus) {
+	bin := "no compose binary"
+	if c.Binary != "" {
+		bin = fmt.Sprintf("compose %s (%s, %s)", c.Version, c.Binary, c.Source)
+	}
+	engineV := "Engine unknown"
+	if c.Engine != "" {
+		engineV = "Engine " + c.Engine
+	}
+	if c.Rungs {
+		fmt.Fprintf(w, "%s, %s; rungs 2 and 3 enabled; drift guard %s\n", bin, engineV, c.DriftGuard)
+		return
+	}
+	fmt.Fprintf(w, "%s, %s; rungs 2 and 3 DISABLED (the ladder ends after rung 1): %s\n", bin, engineV, c.Reason)
 }
 
 // daemonLike is what the two listeners need from the daemon.
