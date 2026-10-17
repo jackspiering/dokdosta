@@ -11,8 +11,11 @@
 //	Down      the ONLY place that runs `down -v`, and only for matching projects
 //	Ctr       stop/start/restart/kill/exec on a container whose project label matches
 //	PullBase  pulls only the base images in BaseImages
+//	Tag/Untag/Build  image tags under whalenurse-test/ only; a build may start FROM a base image only
 //	Actor     wraps whalenurse's own docker.Actor so the healer under test cannot
 //	          touch a container outside a matching project either
+//	ComposeRunner  the compose Runner the healer under test runs compose through: only `up` (with -d --no-deps --pull never
+//	          --no-build), `config --hash` and `version`, only with -p <matching project>; never down, rm, pull or build
 //
 // Reads (inspect, ps, logs) use plain docker. This file has no build tag so
 // the guard itself is unit-tested without Docker (guard_test.go).
@@ -25,9 +28,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 
+	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
 )
@@ -255,3 +261,203 @@ func (a Actor) Start(ctx context.Context, id string) error {
 }
 
 var _ docker.Actor = Actor{}
+
+// TagPrefix is the only image namespace the tests may create.
+const TagPrefix = "whalenurse-test/"
+
+func requireTag(tag string) error {
+	if !strings.HasPrefix(tag, TagPrefix) || strings.ContainsAny(tag, " \t\n;&|$`") {
+		return refuse("image tag %q is not under %s", tag, TagPrefix)
+	}
+	return nil
+}
+
+// Tag points dst, a whalenurse-test/ tag, at src: a base image or another whalenurse-test/ tag.
+func (g *Guard) Tag(ctx context.Context, src, dst string) error {
+	if err := requireTag(dst); err != nil {
+		return err
+	}
+	ok := strings.HasPrefix(src, TagPrefix)
+	for _, b := range BaseImages {
+		ok = ok || src == b
+	}
+	if !ok {
+		return refuse("tag source %q is neither a base image nor under %s", src, TagPrefix)
+	}
+	_, err := g.R.Run(ctx, "docker", "tag", src, dst)
+	return err
+}
+
+// Untag removes a whalenurse-test/ tag (the image stays if something else uses it).
+func (g *Guard) Untag(ctx context.Context, tag string) error {
+	if err := requireTag(tag); err != nil {
+		return err
+	}
+	_, err := g.R.Run(ctx, "docker", "rmi", tag)
+	return err
+}
+
+var fromRE = regexp.MustCompile(`(?im)^\s*FROM\s+(\S+)`)
+
+// Build builds a whalenurse-test/ image from a Dockerfile held in memory, whose every FROM is a base image.
+func (g *Guard) Build(ctx context.Context, tag, dockerfile string) error {
+	if err := requireTag(tag); err != nil {
+		return err
+	}
+	froms := fromRE.FindAllStringSubmatch(dockerfile, -1)
+	if len(froms) == 0 {
+		return refuse("the Dockerfile has no FROM")
+	}
+	for _, m := range froms {
+		allowed := false
+		for _, b := range BaseImages {
+			allowed = allowed || m[1] == b
+		}
+		if !allowed {
+			return refuse("FROM %q is not a base image", m[1])
+		}
+	}
+	dir, err := os.MkdirTemp("", "whalenurse-test-build-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	if err := os.WriteFile(filepath.Join(dir, "Dockerfile"), []byte(dockerfile), 0o600); err != nil {
+		return err
+	}
+	_, err = g.R.Run(ctx, "docker", "build", "-q", "-t", tag, dir)
+	return err
+}
+
+// ImagePulls counts the image `pull` events in [since, until]: a heal must produce none (plan §3.1).
+func (g *Guard) ImagePulls(ctx context.Context, since, until string) (int, error) {
+	out, err := g.R.Run(ctx, "docker", "events", "--since", since, "--until", until, "--filter", "type=image", "--filter", "event=pull", "--format", "{{.Action}} {{.Actor.ID}}")
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "pull") {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// ---- compose, as whalenurse runs it --------------------------------------------------------------------------------
+
+// CheckComposeCommand is the filter in front of whalenurse's compose: it accepts exactly the three shapes the compose
+// package builds and nothing else. A command whalenurse should never run (down, rm, pull, build, run, a different project,
+// an up that could pull or build or touch other services) is REFUSED.
+func CheckComposeCommand(args []string) error {
+	if len(args) < 3 || args[0] != "-p" {
+		return refuse("compose command does not start with -p <project>: %v", args)
+	}
+	if err := RequireProject(args[1]); err != nil {
+		return err
+	}
+	i := 2
+	for i < len(args) {
+		switch a := args[i]; {
+		case a == "--project-directory" || a == "-f" || a == "--env-file" || a == "--progress":
+			if i+1 >= len(args) {
+				return refuse("%s without a value", a)
+			}
+			i += 2
+		case a == "--dry-run":
+			i++
+		default:
+			goto sub
+		}
+	}
+	return refuse("compose command has no subcommand: %v", args)
+sub:
+	rest := args[i+1:]
+	switch args[i] {
+	case "version":
+		if len(rest) > 1 || (len(rest) == 1 && rest[0] != "--short") {
+			return refuse("compose version with %v", rest)
+		}
+	case "config":
+		if len(rest) != 1 || !strings.HasPrefix(rest[0], "--hash=") || strings.ContainsAny(rest[0], ",*") {
+			return refuse("compose config with %v: only --hash=<one service>", rest)
+		}
+	case "up":
+		want := map[string]bool{"-d": false, "--no-deps": false, "--no-build": false}
+		pullNever, force, services := false, false, 0
+		for j := 0; j < len(rest); j++ {
+			switch a := rest[j]; {
+			case a == "--pull":
+				if j+1 >= len(rest) || rest[j+1] != "never" {
+					return refuse("compose up --pull must be never: %v", rest)
+				}
+				pullNever = true
+				j++
+			case a == "--force-recreate":
+				force = true
+			case strings.HasPrefix(a, "-"):
+				if _, ok := want[a]; !ok {
+					return refuse("compose up with flag %s", a)
+				}
+				want[a] = true
+			default:
+				services++
+			}
+		}
+		for f, seen := range want {
+			if !seen {
+				return refuse("compose up without %s", f)
+			}
+		}
+		if !pullNever || services != 1 {
+			return refuse("compose up needs --pull never and exactly one service: %v (force=%v)", rest, force)
+		}
+	default:
+		return refuse("compose %s is not something whalenurse runs", args[i])
+	}
+	return nil
+}
+
+// ComposeRunner is the compose.Runner the healer under test uses: it checks every command with CheckComposeCommand, keeps
+// a log of what ran, and then runs it for real.
+type ComposeRunner struct {
+	Inner compose.Runner
+	mu    sync.Mutex
+	log   []string
+}
+
+// NewComposeRunner runs real compose behind the filter.
+func NewComposeRunner() *ComposeRunner { return &ComposeRunner{Inner: compose.ExecRunner{}} }
+
+func (r *ComposeRunner) Run(ctx context.Context, c compose.Command) (compose.Result, error) {
+	if filepath.Base(c.Bin) != "docker-compose" {
+		return compose.Result{}, refuse("compose binary %q", c.Bin)
+	}
+	if err := CheckComposeCommand(c.Args); err != nil {
+		return compose.Result{}, err
+	}
+	r.mu.Lock()
+	r.log = append(r.log, strings.Join(c.Args, " "))
+	r.mu.Unlock()
+	return r.Inner.Run(ctx, c)
+}
+
+// Log returns the commands that ran, in order.
+func (r *ComposeRunner) Log() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.log...)
+}
+
+// Mutating returns the logged commands that could have changed something: an up that is not a --dry-run.
+func (r *ComposeRunner) Mutating() []string {
+	var out []string
+	for _, l := range r.Log() {
+		if strings.Contains(l, " up ") && !strings.Contains(l, "--dry-run") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+var _ compose.Runner = (*ComposeRunner)(nil)

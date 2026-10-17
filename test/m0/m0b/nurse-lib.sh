@@ -71,10 +71,17 @@ $dirty"
   (cd "$M0B_ROOT" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=m0b-$sha" -o "$ctx/whalenurse" ./cmd/whalenurse)
   docker image inspect gcr.io/distroless/static:nonroot >/dev/null 2>&1 || m0_pull gcr.io/distroless/static:nonroot
   chmod 755 "$ctx" "$ctx/data" "$ctx/whalenurse" # m0b_state_new sets umask 077; the nonroot user in the image must be able to exec it
+  # The bundled compose (plan section 3.4) is a build-stage download in the Dockerfile; here it is the host's own plugin, copied
+  # into the context. The scenarios mount the host plugin at /host/docker-compose as well, which is used first.
+  compose_plugin_path >"$STATE/host-compose-path.txt"
+  cp "$(cat "$STATE/host-compose-path.txt")" "$ctx/docker-compose"
+  chmod 755 "$ctx/docker-compose"
   sed -n '/^FROM gcr.io\/distroless\/static:nonroot$/,$p' "$M0B_ROOT/Dockerfile" |
     sed -e 's|^COPY --from=build /out/whalenurse /whalenurse$|COPY whalenurse /whalenurse|' \
+      -e 's|^COPY --from=build --chmod=0755 /out/docker-compose /usr/libexec/whalenurse/docker-compose$|COPY --chmod=0755 docker-compose /usr/libexec/whalenurse/docker-compose|' \
       -e 's|^COPY --from=build --chown=65532:65532 /out/data /data$|COPY --chown=65532:65532 data /data|' >"$ctx/Dockerfile"
   if ! grep -q '^COPY whalenurse /whalenurse$' "$ctx/Dockerfile" || ! grep -q '^COPY --chown=65532:65532 data /data$' "$ctx/Dockerfile" ||
+    ! grep -q '^COPY --chmod=0755 docker-compose /usr/libexec/whalenurse/docker-compose$' "$ctx/Dockerfile" ||
     grep -q -- '--from' "$ctx/Dockerfile"; then
     m0_die "the runtime stage of the Dockerfile changed; update nurse_build_image ($ctx/Dockerfile)"
   fi

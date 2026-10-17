@@ -19,6 +19,7 @@ import (
 
 	"github.com/jackspiering/whalenurse/internal/api"
 	"github.com/jackspiering/whalenurse/internal/clock"
+	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/control"
 	"github.com/jackspiering/whalenurse/internal/daemon"
@@ -66,11 +67,21 @@ func newStack(t *testing.T, g *Guard, cli *docker.Moby, name, compose string) *s
 	t.Helper()
 	var b [3]byte
 	_, _ = rand.Read(b[:])
-	s := &stack{t: t, g: g, cli: cli, project: "whalenurse-test-" + name + "-" + hex.EncodeToString(b[:]), dir: t.TempDir()}
+	// The stack directory is world-readable: a containerized whalenurse (uid 65532) reads it at the identical path to
+	// recreate from it (t.TempDir() is 0700, which would make every recreate fail as "unreadable").
+	dir, err := os.MkdirTemp("", "whalenurse-test-stack-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	s := &stack{t: t, g: g, cli: cli, project: "whalenurse-test-" + name + "-" + hex.EncodeToString(b[:]), dir: dir}
 	if err := RequireProject(s.project); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(s.dir, "compose.yaml"), []byte(compose), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(s.dir, "compose.yaml"), []byte(compose), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -173,15 +184,35 @@ func breakApp(t *testing.T, g *Guard, s *stack) {
 	waitFor(t, "app to turn unhealthy", 30*time.Second, func() bool { return s.container("app").Health == "unhealthy" })
 }
 
-// startDaemon runs the healer in-process with short timings. Its actor is
-// wrapped in the guard so it cannot touch anything outside a test project.
-func startDaemon(t *testing.T, g *Guard, cli *docker.Moby, dry bool) *engine.Recorder {
-	t.Helper()
-	rec, _ := startDaemonWith(t, g, cli, dry)
-	return rec
+// running is a healer started by a test.
+type running struct {
+	Rec     *engine.Recorder
+	D       *daemon.Daemon
+	Compose *ComposeRunner // every compose command the healer ran
 }
 
-func startDaemonWith(t *testing.T, g *Guard, cli *docker.Moby, dry bool) (*engine.Recorder, *daemon.Daemon) {
+type daemonOpts struct {
+	Dry         bool
+	Reader      docker.Reader                       // default: the real client
+	WrapCompose func(compose.Reader) compose.Reader // wraps the compose Reader (to disable the oracle, say)
+	Tweak       func(*config.Global)
+}
+
+// composeBin finds the compose binary the way whalenurse does (WHALENURSE_COMPOSE_BIN, then the host plugin) and logs
+// which one it is: the CI matrix runs the same tests against three releases.
+func composeBin(t *testing.T) *compose.Binary {
+	t.Helper()
+	bin, _, err := compose.Resolve(context.Background(), compose.Lookup{Env: os.Getenv("WHALENURSE_COMPOSE_BIN")})
+	if err != nil {
+		t.Fatalf("no compose binary: %v", err)
+	}
+	t.Logf("compose %s at %s (%s)", bin.VersionString(), bin.Path, bin.Source)
+	return bin
+}
+
+// startDaemonOpts runs the healer in-process with short timings. Its Docker actor is wrapped in the guard, and its compose
+// runs through the compose filter, so it cannot touch anything outside a test project.
+func startDaemonOpts(t *testing.T, g *Guard, cli *docker.Moby, o daemonOpts) *running {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.RecoveryPeriod = 10 * time.Second
@@ -191,21 +222,48 @@ func startDaemonWith(t *testing.T, g *Guard, cli *docker.Moby, dry bool) (*engin
 	cfg.Cooldown = 5 * time.Second
 	cfg.StartupSettle = 0
 	cfg.RateLimit = 100
-	cfg.DryRun = dry
+	cfg.DryRun = o.Dry
+	if o.Tweak != nil {
+		o.Tweak(&cfg)
+	}
 	var actor docker.Actor = Actor{Reader: cli, Inner: cli}
-	if dry {
+	runner := NewComposeRunner()
+	c := compose.New(*composeBin(t), runner)
+	var reader compose.Reader = c
+	var cactor compose.Actor = c
+	if o.WrapCompose != nil {
+		reader = o.WrapCompose(reader)
+	}
+	if o.Dry {
 		actor = docker.DryRun{}
+		cactor = compose.DryRun{}
+	}
+	var rd docker.Reader = cli
+	if o.Reader != nil {
+		rd = o.Reader
 	}
 	rec := &engine.Recorder{}
 	bus := &engine.Bus{}
 	bus.Subscribe(rec.Record)
 	bus.Subscribe(func(e engine.Event) { t.Logf("event %-18s %s: %s", e.Type, e.Key, e.Message) })
-	d := daemon.New(daemon.Options{Config: cfg, Reader: cli, Actor: actor, Clock: clock.Real{}, Bus: bus})
+	d := daemon.New(daemon.Options{Config: cfg, Reader: rd, Actor: actor, Clock: clock.Real{}, Bus: bus, Compose: reader, ComposeActor: cactor})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); _ = d.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
-	return rec, d
+	return &running{Rec: rec, D: d, Compose: runner}
+}
+
+// startDaemon runs the healer with real rung 1 and rung 2 (or none of them, with dry).
+func startDaemon(t *testing.T, g *Guard, cli *docker.Moby, dry bool) *engine.Recorder {
+	t.Helper()
+	return startDaemonOpts(t, g, cli, daemonOpts{Dry: dry}).Rec
+}
+
+func startDaemonWith(t *testing.T, g *Guard, cli *docker.Moby, dry bool) (*engine.Recorder, *daemon.Daemon) {
+	t.Helper()
+	r := startDaemonOpts(t, g, cli, daemonOpts{Dry: dry})
+	return r.Rec, r.D
 }
 
 func countFor(rec *engine.Recorder, typ engine.EventType, key string) int {
@@ -261,72 +319,6 @@ func TestDryRunDoesNothing(t *testing.T) {
 	}
 	if after.Health != "unhealthy" {
 		t.Fatalf("health %q: dry-run must leave it broken", after.Health)
-	}
-}
-
-// TestDependentWithParentGoneIsNotRestarted is E1 end to end: restarting a
-// network_mode dependent whose parent was recreated turns it from running into
-// exited. The dependent here is also unhealthy, so a naive healer would
-// restart it. whalenurse must record "needs recreate" and leave it alone.
-func TestDependentWithParentGoneIsNotRestarted(t *testing.T) {
-	g, cli := requireIntegration(t)
-	const loop = `["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done"]`
-	s := newStack(t, g, cli, "dep", `
-services:
-  parent:
-    image: busybox:1.37
-    labels:
-      whalenurse.enable: "true"
-    stop_grace_period: 2s
-    command: `+loop+`
-  dep:
-    image: busybox:1.37
-    network_mode: service:parent
-    labels:
-      whalenurse.enable: "true"
-    stop_grace_period: 2s
-    command: `+loop+`
-    healthcheck:
-      test: ["CMD", "false"]
-      interval: 1s
-      timeout: 1s
-      retries: 1
-`)
-	s.up()
-	oldParent := s.container("parent")
-	dep := s.container("dep")
-	if docker.ContainerRef(dep.NetworkMode) != oldParent.ID {
-		t.Fatalf("setup: dependent network mode %q, parent %s", dep.NetworkMode, oldParent.ID)
-	}
-
-	s.compose("up", "-d", "--force-recreate", "--no-deps", "--pull", "never", "parent")
-	newParent := s.container("parent")
-	if newParent.ID == oldParent.ID {
-		t.Fatal("setup: the parent was not recreated")
-	}
-	dep = s.container("dep")
-	if docker.ContainerRef(dep.NetworkMode) != oldParent.ID || !dep.Running {
-		t.Fatalf("setup: the dependent should be running with a stale network mode: %+v", dep)
-	}
-	waitFor(t, "the dependent to be unhealthy", 30*time.Second, func() bool { return s.container("dep").Health == "unhealthy" })
-
-	rec := startDaemon(t, g, cli, false)
-	waitFor(t, "NeedsRecreate for the dependent", 60*time.Second, func() bool {
-		return countFor(rec, engine.NeedsRecreate, s.key("dep")) >= 1
-	})
-	time.Sleep(20 * time.Second) // let polls and the unhealthy healthcheck tempt it
-
-	after := s.container("dep")
-	if after.ID != dep.ID || !after.StartedAt.Equal(dep.StartedAt) || !after.Running {
-		t.Fatalf("the dependent was touched (ID %s->%s, started %v->%v, status %s)", dep.ID, after.ID, dep.StartedAt, after.StartedAt, after.Status)
-	}
-	if n := countFor(rec, engine.NeedsRecreate, s.key("dep")); n != 1 {
-		t.Fatalf("NeedsRecreate should be recorded once, got %d", n)
-	}
-	for _, typ := range []engine.EventType{engine.ActionStarted, engine.IncidentOpened, engine.Suspended} {
-		if n := countFor(rec, typ, s.key("dep")); n != 0 {
-			t.Fatalf("%d %s events for the dependent", n, typ)
-		}
 	}
 }
 
@@ -568,32 +560,6 @@ func eventMessage(rec *engine.Recorder, typ engine.EventType, key string) string
 	return ""
 }
 
-// M2a: the ladder with only rung 1. restart, then "needs recreate (M2b)" in place of rung 2, then SUSPENDED;
-// and then nothing more is tried, however many polls pass.
-func TestLadderEndsInSuspendedWhenARestartDoesNotHelp(t *testing.T) {
-	g, cli := requireIntegration(t)
-	s := stuckStack(t, g, cli, "ladder")
-	before := s.container("app")
-
-	rec := startDaemon(t, g, cli, false)
-	waitFor(t, "the app to be SUSPENDED", 120*time.Second, func() bool { return countFor(rec, engine.Suspended, s.key("app")) == 1 })
-	if n := countFor(rec, engine.ActionStarted, s.key("app")); n != 1 {
-		t.Fatalf("want exactly one restart, got %d", n)
-	}
-	if msg := eventMessage(rec, engine.RungUnavailable, s.key("app")); !strings.Contains(msg, "needs recreate (M2b)") {
-		t.Fatalf("rung 2 should be recorded as needing M2b: %q", msg)
-	}
-	mid := s.container("app")
-	if mid.ID != before.ID || !mid.StartedAt.After(before.StartedAt) {
-		t.Fatalf("the app should have been restarted once, in place: %s %v -> %s %v", before.ID, before.StartedAt, mid.ID, mid.StartedAt)
-	}
-	time.Sleep(25 * time.Second) // five polls, several cooldowns
-	after := s.container("app")
-	if !after.StartedAt.Equal(mid.StartedAt) || countFor(rec, engine.ActionStarted, s.key("app")) != 1 {
-		t.Fatalf("SUSPENDED means no more attempts: started %v -> %v", mid.StartedAt, after.StartedAt)
-	}
-}
-
 // M2a: pause, resume and unsuspend over the control socket, against a real daemon and real containers.
 func TestPauseResumeAndUnsuspendOverTheControlSocket(t *testing.T) {
 	g, cli := requireIntegration(t)
@@ -636,10 +602,14 @@ func TestPauseResumeAndUnsuspendOverTheControlSocket(t *testing.T) {
 
 	// SUSPENDED, then unsuspend: a fresh pass, so one more restart.
 	waitFor(t, "the stuck app to be SUSPENDED", 120*time.Second, func() bool { return countFor(rec, engine.Suspended, stuck.key("app")) == 1 })
+	if n := countFor(rec, engine.ActionStarted, stuck.key("app")); n != 2 {
+		t.Fatalf("one pass is a restart and a recreate, got %d actions", n)
+	}
 	if _, err := cmd("unsuspend", stuck.project, ""); err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, "a second pass after unsuspend", 90*time.Second, func() bool { return countFor(rec, engine.ActionStarted, stuck.key("app")) == 2 })
+	// A pass is now rung 1 and rung 2, so the first pass made two actions and the second makes two more.
+	waitFor(t, "a second pass after unsuspend", 120*time.Second, func() bool { return countFor(rec, engine.ActionStarted, stuck.key("app")) == 4 })
 	if _, err := cmd("unsuspend", "nonexistent-project", ""); err == nil {
 		t.Fatal("unsuspend of something that is not suspended should say so")
 	}
