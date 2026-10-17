@@ -13,16 +13,16 @@ import (
 )
 
 // Action is what the rules want done. Restart and Start are the only actions
-// M1 performs; NeedsRecreate and NeedsDependentRestart are recorded and logged
-// and take effect in M2.
+// performed until M2b; NeedsRecreate and NeedsDependentRestart are recorded and
+// logged and take effect in M2b.
 type Action string
 
 const (
 	ActionNone                  Action = "none"
 	ActionRestart               Action = "restart"                 // API restart: running, unhealthy or crash-looping
 	ActionStart                 Action = "start"                   // API start: created or exited
-	ActionNeedsRecreate         Action = "needs-recreate"          // M2: recreate via compose
-	ActionNeedsDependentRestart Action = "needs-dependent-restart" // M2: the dependents step
+	ActionNeedsRecreate         Action = "needs-recreate"          // M2b: recreate via compose
+	ActionNeedsDependentRestart Action = "needs-dependent-restart" // M2b: the dependents step
 	ActionWaitForParent         Action = "wait-for-parent"         // act only on the parent
 	ActionNotify                Action = "notify"                  // log + domain event, no action
 )
@@ -44,10 +44,12 @@ const (
 	ClassExitedOOM            Class = "exited-oom"
 	ClassExitedAlways         Class = "exited-always" // heal-exited=always
 	ClassExitedIntended       Class = "exited-intended"
-	ClassExitedManual         Class = "exited-manual"    // a kill was seen: someone stopped it
-	ClassExitedClean          Class = "exited-clean"     // exit 0 under an always-style policy
-	ClassExitedSignalled      Class = "exited-signalled" // 137 or 143 without OOM
-	ClassExitedNever          Class = "exited-never"     // heal-exited=never
+	ClassExitedManual         Class = "exited-manual"       // a kill was seen: someone stopped it
+	ClassExitedClean          Class = "exited-clean"        // exit 0 under an always-style policy
+	ClassExitedSignalled      Class = "exited-signalled"    // 137 or 143 without OOM
+	ClassExitedNever          Class = "exited-never"        // heal-exited=never
+	ClassExitedHostStopped    Class = "exited-host-stopped" // stopped by a daemon shutdown or reboot, restart policy "no": stays down (notify)
+	ClassExitedHostRestore    Class = "exited-host-restore" // stopped by a shutdown, policy restarts it: left to Docker's restore
 	ClassDead                 Class = "dead"
 	ClassStaleParentGone      Class = "stale-parent-gone"
 	ClassStaleParentRestarted Class = "stale-parent-restarted"
@@ -86,14 +88,26 @@ type Parent struct {
 
 // Input is everything Classify may look at.
 type Input struct {
-	Now            time.Time
-	C              docker.Container
-	Cfg            config.Container
-	CrashloopAfter time.Duration
-	Self           bool
-	Parents        []Parent // one per container: reference in network_mode, ipc or pid
-	Evidence       Evidence
-	LoopSince      time.Time // when the daemon first saw it restarting or its RestartCount rising; zero if not looping
+	Now      time.Time
+	C        docker.Container
+	Cfg      config.Container
+	Self     bool
+	Parents  []Parent // one per container: reference in network_mode, ipc or pid
+	Evidence Evidence
+	Loop     Loop // the crash-loop state the engine derived from RestartCount (rule 3)
+	// HostStopped: the container stopped inside a shutdown window (plan §3.3 rule 4): between 30 s before the
+	// previous run's last_seen, or the events-stream loss, and the daemon's restore. Whatever its exit code.
+	HostStopped bool
+}
+
+// Loop is the verdict of the crash-loop tracker (internal/engine): at least 3
+// RestartCount increases, the first at least CRASHLOOP_AFTER ago, and not yet
+// cleared by RECOVERY_PERIOD without a new increase. The rules do not compute it
+// because it needs memory between inspects; they only act on it.
+type Loop struct {
+	Active    bool
+	Since     time.Time // the first counted increase
+	Increases int
 }
 
 // Decision is the result of Classify.
@@ -181,7 +195,7 @@ func classifyRunning(in Input) Decision {
 	}
 	// A loop that crashes every ~15s is mostly `running`: the engine resets its
 	// restart backoff after a run of 10s, so it is rarely `restarting` for long.
-	if !in.LoopSince.IsZero() && in.Now.Sub(in.LoopSince) >= in.CrashloopAfter {
+	if in.Loop.Active {
 		return crashLoop(in)
 	}
 	switch in.C.Health {
@@ -191,24 +205,41 @@ func classifyRunning(in Input) Decision {
 	return Decision{Class: ClassOK, Action: ActionNone, Reason: "running"}
 }
 
-// Rule 3: restarting, or restarting over and over, for longer than CRASHLOOP_AFTER.
-// The age is measured by the daemon from when it first saw the loop, not from StartedAt.
+// Rule 3: a crash loop is RestartCount rising, not the `restarting` status, so a
+// container that is `restarting` and not (yet) a loop is only watched.
 func classifyRestarting(in Input) Decision {
-	if in.LoopSince.IsZero() || in.Now.Sub(in.LoopSince) < in.CrashloopAfter {
-		return Decision{Class: ClassRestarting, Action: ActionNone, Reason: "restarting; not yet a crash loop"}
+	if !in.Loop.Active {
+		return Decision{Class: ClassRestarting, Action: ActionNone, Reason: "restarting; not (yet) a crash loop"}
 	}
 	return crashLoop(in)
 }
 
 func crashLoop(in Input) Decision {
 	return Decision{Class: ClassCrashLoop, Action: ActionRestart,
-		Reason: fmt.Sprintf("crash loop for %s (restart count %d)", in.Now.Sub(in.LoopSince).Round(time.Second), in.C.RestartCount)}
+		Reason: fmt.Sprintf("crash loop for %s (%d restarts counted, restart count %d)",
+			in.Now.Sub(in.Loop.Since).Round(time.Second), in.Loop.Increases, in.C.RestartCount)}
 }
 
 // Rules 3 (on-failure exhausted) and 4 (exited without State.Error).
 func classifyExited(in Input) Decision {
 	c, ev := in.C, in.Evidence
 	signalled := c.ExitCode == exitSigkill || c.ExitCode == exitSigterm
+
+	// Stopped by the host (a daemon restart or a reboot): the exit code says nothing, because an app that handles
+	// SIGTERM may exit 1 or 0. The restart policy decides. "no" stays down, with one notification; the policies
+	// Docker restores are left to its restore (a failed restore has State.Error, so rule 1 handled it). Only
+	// heal-exited=always starts it.
+	if in.HostStopped {
+		switch {
+		case in.Cfg.HealExited == config.HealAlways:
+			return Decision{Class: ClassExitedAlways, Action: ActionStart, Reason: "heal-exited=always"}
+		case c.RestartPolicy == "no" || c.RestartPolicy == "":
+			return Decision{Class: ClassExitedHostStopped, Action: ActionNotify,
+				Reason: fmt.Sprintf("stopped by a daemon shutdown or reboot (exit %d) and restart policy is no: staying down", c.ExitCode)}
+		}
+		return Decision{Class: ClassExitedHostRestore, Action: ActionNone,
+			Reason: fmt.Sprintf("stopped by a daemon shutdown or reboot (exit %d): Docker's restore restarts it (policy %s)", c.ExitCode, c.RestartPolicy)}
+	}
 
 	if c.RestartPolicy == "on-failure" && c.MaxRetries > 0 && c.RestartCount >= c.MaxRetries &&
 		c.ExitCode != 0 && !signalled && !ev.ManualStop {
@@ -263,10 +294,10 @@ func policyName(c docker.Container) string {
 // with another container (network_mode/ipc/pid: container:<x>):
 //   - parent ID gone: never restart or start it. That fails and turns a
 //     running-but-disconnected dependent into an exited one (E1). It needs a
-//     recreate (M2).
+//     recreate (M2b).
 //   - parent not running, or busy with its own incident: act only on the parent.
-//   - a running dependent whose parent started later is stale: M2's dependents
-//     step restarts it, M1 only records it.
+//   - a running dependent whose parent started later is stale: M2b's dependents
+//     step restarts it; until then it is only recorded.
 func guardReferences(in Input, d Decision) Decision {
 	if in.C.Status == "removing" {
 		return d
@@ -295,7 +326,7 @@ func guardReferences(in Input, d Decision) Decision {
 			if d.Action == ActionRestart || d.Action == ActionStart ||
 				(d.Action == ActionNone && in.C.Running && (d.Class == ClassOK || d.Class == ClassStarting)) {
 				return Decision{Class: ClassStaleParentGone, Action: ActionNeedsRecreate, Cause: d.Cause,
-					Reason: fmt.Sprintf("%s: container:%s no longer exists (parent was recreated or removed); needs recreate (M2), not restarting", p.Kind, p.Ref)}
+					Reason: fmt.Sprintf("%s: container:%s no longer exists (parent was recreated or removed); needs recreate (M2b), not restarting", p.Kind, p.Ref)}
 			}
 			return d
 		}
@@ -317,7 +348,7 @@ func guardReferences(in Input, d Decision) Decision {
 			for _, p := range in.Parents {
 				if p.Running && !p.StartedAt.IsZero() && p.StartedAt.After(in.C.StartedAt) {
 					return Decision{Class: ClassStaleParentRestarted, Action: ActionNeedsDependentRestart,
-						Reason: fmt.Sprintf("parent %s started after this container; its namespace is stale; needs restart (M2 dependents step)", docker.ShortID(p.ID))}
+						Reason: fmt.Sprintf("parent %s started after this container; its namespace is stale; needs restart (M2b dependents step)", docker.ShortID(p.ID))}
 				}
 			}
 		}

@@ -19,11 +19,7 @@ out="${1:?usage: listener.sh <outfile> <stopfile> <project>...}"
 stop="${2:?stopfile}"
 shift 2
 (($#)) || m0_die "listener: no project"
-filters=()
-for p in "$@"; do
-  m0b_require_project "$p"
-  filters+=(--filter "label=com.docker.compose.project=$p")
-done
+for p in "$@"; do m0b_require_project "$p"; done
 umask 077
 
 mark() { printf '{"_marker":"%s","t":%s}\n' "$1" "$EPOCHREALTIME" >>"$out"; }
@@ -34,7 +30,8 @@ while [[ ! -e "$stop" ]]; do
     sleep 0.5
   done
   mark connect
-  docker events --since "$last" --filter type=container "${filters[@]}" --format '{{json .}}' >>"$out" 2>>"$out.err"
+  # One stream for all the projects, filtered here: repeated label filters of docker events are ANDed.
+  docker events --since "$last" --filter type=container --format '{{json .}}' 2>>"$out.err" | m0b_events_only_projects "$@" >>"$out"
   mark disconnect
   last=$(($(date +%s) - 1))
   sleep 0.5

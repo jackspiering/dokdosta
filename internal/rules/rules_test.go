@@ -143,46 +143,37 @@ var scenarios = []scenario{
 	},
 
 	// ---- restarting / crash loops ---------------------------------------------
+	// The loop verdict comes from the engine's RestartCount tracker (rule 3); the rules only act on it.
 	{
-		name: "restarting, first seen a minute ago", fixture: "e8-control-restarting",
-		input: func(in *rules.Input, _ map[string]docker.Container) { in.LoopSince = in.Now.Add(-time.Minute) },
-		want:  d(rules.ClassRestarting, rules.ActionNone),
-	},
-	{
-		name: "restarting, age unknown", fixture: "e8-control-restarting",
+		name: "restarting, no loop verdict", fixture: "e8-control-restarting",
 		want: d(rules.ClassRestarting, rules.ActionNone),
 	},
 	{
-		name: "restarting for 10 minutes: crash loop", fixture: "e8-control-restarting",
+		name: "restarting, loop verdict", fixture: "e8-control-restarting",
 		input: func(in *rules.Input, _ map[string]docker.Container) {
-			in.LoopSince = in.Now.Add(-10 * time.Minute)
+			in.Loop = rules.Loop{Active: true, Since: in.Now.Add(-10 * time.Minute), Increases: 4}
 		},
 		want: d(rules.ClassCrashLoop, rules.ActionRestart),
 	},
 	{
-		name: "restarting for 10 minutes (always policy)", fixture: "e9-loop-restarting",
+		name: "restarting (always policy), loop verdict", fixture: "e9-loop-restarting",
 		input: func(in *rules.Input, _ map[string]docker.Container) {
-			in.LoopSince = in.Now.Add(-10 * time.Minute)
+			in.Loop = rules.Loop{Active: true, Since: in.Now.Add(-10 * time.Minute), Increases: 4}
 		},
 		want: d(rules.ClassCrashLoop, rules.ActionRestart),
 	},
 	{
-		name: "running between restarts, loop going for 10 minutes", fixture: "e9-loop-restarting",
+		name: "running between restarts, loop verdict", fixture: "e9-loop-restarting",
 		mutate: func(c *docker.Container) { c.Status, c.Restarting = "running", false },
-		input:  func(in *rules.Input, _ map[string]docker.Container) { in.LoopSince = in.Now.Add(-10 * time.Minute) },
-		want:   d(rules.ClassCrashLoop, rules.ActionRestart),
+		input: func(in *rules.Input, _ map[string]docker.Container) {
+			in.Loop = rules.Loop{Active: true, Since: in.Now.Add(-10 * time.Minute), Increases: 4}
+		},
+		want: d(rules.ClassCrashLoop, rules.ActionRestart),
 	},
 	{
-		name: "running, no loop noticed", fixture: "e9-loop-restarting",
+		name: "running, no loop verdict", fixture: "e9-loop-restarting",
 		mutate: func(c *docker.Container) { c.Status, c.Restarting = "running", false },
 		want:   d(rules.ClassOK, rules.ActionNone),
-	},
-	{
-		name: "restarting just under the limit", fixture: "e9-loop-restarting",
-		input: func(in *rules.Input, _ map[string]docker.Container) {
-			in.LoopSince = in.Now.Add(-5*time.Minute + time.Second)
-		},
-		want: d(rules.ClassRestarting, rules.ActionNone),
 	},
 
 	// ---- unhealthy -------------------------------------------------------------
@@ -415,7 +406,7 @@ func TestInspectFixtures(t *testing.T) {
 			if sc.cfg != nil {
 				sc.cfg(&cfg)
 			}
-			in := rules.Input{Now: t0, C: c, Cfg: cfg, CrashloopAfter: 5 * time.Minute}
+			in := rules.Input{Now: t0, C: c, Cfg: cfg}
 			in.Parents = resolveParents(c, world)
 			if sc.input != nil {
 				sc.input(&in, world)
@@ -533,17 +524,23 @@ var eventVerdicts = map[string]rules.Verdict{
 // multiKeyEventVerdicts are the events fixtures that span several containers (M0b: a whole stack through a
 // daemon restart or a reboot), with the verdict per service.
 //
-// KNOWN PROBLEM, pinned on purpose: the shutdown fixtures come out as "manual-stop" for every container,
-// because the tracker reads the kill that Docker sends at a daemon shutdown as a person stopping it.
-// docs/m0b-findings.md ("Standalone M2 item: shutdown kills") says what M2 must do instead: such kills
-// must not set manual-stop markers or clear SUSPENDED. When M2 fixes it, change these expectations.
+// The shutdown fixtures used to come out as "manual-stop" for every container, because the tracker reads the
+// kill that Docker sends at a daemon shutdown as a person stopping it (M1; pinned here on purpose until M2a).
+// docs/m0b-findings.md ("Standalone M2 item: shutdown kills") and plan §3.3 say such kills must not set manual-stop
+// markers. M2a does that with mechanism a: the events stream ends right after them, and the tracker discards the
+// markers set in the 30 s before the loss. TestMultiKeyEventFixtures therefore appends that loss (see
+// streamLostAfter); TestShutdownFixturesAreManualStopsWithoutAStreamLoss keeps the old reading for a stream that
+// stays up, which is what the rejected burst rule would have got wrong (`docker compose stop`).
 var multiKeyEventVerdicts = map[string]map[string]rules.Verdict{
-	"m0b-daemon-restart-shutdown": allServices(rules.VerdictManualStop, "a-dep", "a-parent", "f-dep", "f-parent", "g-dep", "g-parent", "n-dep", "n-parent", "p-dep", "p-parent", "s-dep", "s-parent"),
-	"m0b-reboot-shutdown":         allServices(rules.VerdictManualStop, "a-dep", "a-parent", "f-dep", "f-parent", "g-dep", "g-parent", "n-dep", "n-parent", "p-dep", "p-parent", "s-dep", "s-parent"),
+	"m0b-daemon-restart-shutdown": allServices(rules.VerdictShutdownKill, "a-dep", "a-parent", "f-dep", "f-parent", "g-dep", "g-parent", "n-dep", "n-parent", "p-dep", "p-parent", "s-dep", "s-parent"),
+	"m0b-reboot-shutdown":         allServices(rules.VerdictShutdownKill, "a-dep", "a-parent", "f-dep", "f-parent", "g-dep", "g-parent", "n-dep", "n-parent", "p-dep", "p-parent", "s-dep", "s-parent"),
 	// Restored containers: only the ones that started (the failed ones emit no event at all).
 	"m0b-daemon-restart-boot": allServices(rules.VerdictRunning, "a-dep", "a-parent", "g-parent", "m-always", "p-dep", "p-parent", "s-dep", "s-parent"),
 	"m0b-reboot-boot":         allServices(rules.VerdictRunning, "a-dep", "a-parent", "g-parent", "m-always", "p-dep", "p-parent", "s-dep", "s-parent"),
 }
+
+// streamLostAfter says which fixtures end with the events stream being lost (the daemon went down).
+var streamLostAfter = map[string]bool{"m0b-daemon-restart-shutdown": true, "m0b-reboot-shutdown": true}
 
 func allServices(v rules.Verdict, services ...string) map[string]rules.Verdict {
 	out := map[string]rules.Verdict{}
@@ -553,12 +550,56 @@ func allServices(v rules.Verdict, services ...string) map[string]rules.Verdict {
 	return out
 }
 
-func TestMultiKeyEventFixtures(t *testing.T) {
-	for n, want := range multiKeyEventVerdicts {
+// The same fixtures with the stream still up are what `docker compose stop` looks like: deliberate stops.
+func TestShutdownFixturesAreManualStopsWithoutAStreamLoss(t *testing.T) {
+	for n := range streamLostAfter {
 		byKey := map[string][]rules.EventLine{}
 		for _, ev := range loadEvents(t, n) {
 			k := docker.StateKey("h", ev.Name, ev.Labels)
-			byKey[k] = append(byKey[k], rules.EventLine{Action: ev.Action, Detail: ev.Detail})
+			byKey[k] = append(byKey[k], rules.EventLine{Action: ev.Action, Detail: ev.Detail, At: ev.Time})
+		}
+		for k, seq := range byKey {
+			if got := rules.Summarize(seq); got != rules.VerdictManualStop {
+				t.Errorf("%s %s: verdict %q without a stream loss, want manual-stop", n, k, got)
+			}
+		}
+	}
+}
+
+func TestQuarantineKeepsAnOlderManualStop(t *testing.T) {
+	t0 := time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
+	old := []rules.EventLine{{Action: "kill", At: t0}, {Action: "die", At: t0}, {Action: rules.StreamLost, At: t0.Add(31 * time.Second)}}
+	if got := rules.Summarize(old); got != rules.VerdictManualStop {
+		t.Errorf("a stop 31s before the loss: %q", got)
+	}
+	recent := []rules.EventLine{{Action: "kill", At: t0}, {Action: "die", At: t0}, {Action: rules.StreamLost, At: t0.Add(29 * time.Second)}}
+	if got := rules.Summarize(recent); got != rules.VerdictShutdownKill {
+		t.Errorf("a stop 29s before the loss: %q", got)
+	}
+	afterStart := append(recent, rules.EventLine{Action: "start", At: t0.Add(time.Minute)})
+	if got := rules.Summarize(afterStart); got != rules.VerdictRunning {
+		t.Errorf("%q", got)
+	}
+}
+
+func TestMultiKeyEventFixtures(t *testing.T) {
+	for n, want := range multiKeyEventVerdicts {
+		byKey := map[string][]rules.EventLine{}
+		var last time.Time
+		for _, ev := range loadEvents(t, n) {
+			k := docker.StateKey("h", ev.Name, ev.Labels)
+			if ev.Time.IsZero() { // the scrubber rebases times onto 0, which the parser leaves unset
+				ev.Time = time.Unix(0, 0)
+			}
+			byKey[k] = append(byKey[k], rules.EventLine{Action: ev.Action, Detail: ev.Detail, At: ev.Time})
+			if ev.Time.After(last) {
+				last = ev.Time
+			}
+		}
+		if streamLostAfter[n] {
+			for k := range byKey {
+				byKey[k] = append(byKey[k], rules.EventLine{Action: rules.StreamLost, At: last.Add(time.Second)})
+			}
 		}
 		if len(byKey) != len(want) {
 			t.Errorf("%s: %d state keys, want %d", n, len(byKey), len(want))
@@ -648,5 +689,45 @@ func TestTrackerManualStopClearsOnStart(t *testing.T) {
 	tr.Apply("start", "") // Docker's own boot restart after a daemon shutdown clears it
 	if tr.Evidence().ManualStop || tr.Evidence().Known {
 		t.Fatalf("start should clear the marker: %+v", tr.Evidence())
+	}
+}
+
+// Plan v3.5 §3.3 rule 4: a container that stopped inside a shutdown window was stopped by the host, whatever its
+// exit code. An app that handles SIGTERM may exit 1 or 0; only the restart policy decides.
+func TestHostStoppedContainersAreJudgedByTheirRestartPolicy(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy string
+		exit   int
+		heal   config.HealExited
+		host   bool
+		err    string
+		want   rules.Class
+		act    rules.Action
+	}{
+		{"policy no, exits 1 on SIGTERM: stays down, one notification", "no", 1, config.HealCrashed, true, "", rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"policy no, exits 0 on SIGTERM", "no", 0, config.HealCrashed, true, "", rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"policy no, 137", "no", 137, config.HealCrashed, true, "", rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"policy no, heal-exited=never", "no", 1, config.HealNever, true, "", rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"policy no, heal-exited=always starts it", "no", 1, config.HealAlways, true, "", rules.ClassExitedAlways, rules.ActionStart},
+		{"unless-stopped, exits 1: left to Docker's restore", "unless-stopped", 1, config.HealCrashed, true, "", rules.ClassExitedHostRestore, rules.ActionNone},
+		{"always, exits 1: left to Docker's restore", "always", 1, config.HealCrashed, true, "", rules.ClassExitedHostRestore, rules.ActionNone},
+		{"on-failure, exits 1: left to Docker's restore", "on-failure", 1, config.HealCrashed, true, "", rules.ClassExitedHostRestore, rules.ActionNone},
+		{"a failed restore is rule 1, not host-stopped", "unless-stopped", 127, config.HealCrashed, true, "failed to create task for container: bind source path does not exist", rules.ClassStartFailed, rules.ActionStart},
+		// The same containers outside a shutdown window are crashes, as before.
+		{"policy no, exits 1, not in a window: a crash", "no", 1, config.HealCrashed, false, "", rules.ClassExitedCrashed, rules.ActionStart},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := docker.Container{
+				ID: "a1", Name: "p-web-1", Status: "exited", ExitCode: tc.exit, RestartPolicy: tc.policy, Error: tc.err,
+				Labels: map[string]string{docker.LabelProject: "p", docker.LabelService: "web"},
+			}
+			cfg := config.Container{OptedIn: true, Actions: []string{"restart", "recreate"}, HealExited: tc.heal}
+			got := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, HostStopped: tc.host})
+			if got.Class != tc.want || got.Action != tc.act {
+				t.Fatalf("got %s/%s (%s), want %s/%s", got.Class, got.Action, got.Reason, tc.want, tc.act)
+			}
+		})
 	}
 }
