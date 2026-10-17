@@ -36,6 +36,10 @@ const MetaLastSeen = "last_seen"
 // it, so it is inside the quarantine window all the same.
 const heartbeatEvery = 5 * time.Second
 
+// shutdownSpan caps how long after last_seen a container can still have been stopped by a daemon restart within the
+// same boot: the shutdown takes up to 15 s plus the stop timeouts, the restore under a minute.
+const shutdownSpan = 5 * time.Minute
+
 // BootIDPath is where Linux publishes the boot id (the same value on the host and in a container).
 const BootIDPath = "/proc/sys/kernel/random/boot_id"
 
@@ -145,10 +149,12 @@ func (d *Daemon) checkStartup() {
 	if read == nil {
 		read = readBootID
 	}
+	bootChanged := false
 	if id := strings.TrimSpace(read()); id != "" {
 		prev, had := d.o.Meta.Meta(MetaBootID)
 		d.o.Meta.SetMeta(MetaBootID, id)
 		if had && prev != id {
+			bootChanged = true
 			d.log.Info("new boot id: dropping manual-stop markers", "previous", prev, "current", id)
 			d.eng.DropAllMarkers("boot id changed: the host rebooted")
 			d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "new boot id")
@@ -162,6 +168,14 @@ func (d *Daemon) checkStartup() {
 				d.log.Info("the previous run ended: manual-stop markers set in the 30s before it are discarded (it may have been the daemon's shutdown)",
 					"last_seen", seen.UTC().Format(time.RFC3339), "count", len(cleared))
 			}
+			// Containers that stopped between 30 s before last_seen and the daemon's restore were stopped by the host.
+			// After a reboot the restore is whenever we are back; within one boot a daemon restart is over in
+			// minutes, so the window is capped (a crash while whalenurse was down for hours is not a shutdown).
+			end := now
+			if !bootChanged && seen.Add(shutdownSpan).Before(now) {
+				end = seen.Add(shutdownSpan)
+			}
+			d.eng.AddShutdownWindow(seen.Add(-rules.QuarantineWindow), end)
 			if gap > d.cfg.PollInterval {
 				d.log.Info("whalenurse was not running for a while: the daemon may be restoring containers", "gap", gap.Round(time.Second).String())
 				d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "whalenurse was down for "+gap.Round(time.Second).String())
@@ -376,6 +390,7 @@ func (d *Daemon) setEvents(up bool) {
 // evidence, which for a signal exit is notify-only.
 func (d *Daemon) StreamLost(at time.Time) {
 	d.streamLost = true
+	d.eng.OpenShutdownWindow(at.Add(-rules.QuarantineWindow))
 	if cleared := d.eng.QuarantineMarkers(at); len(cleared) > 0 {
 		d.log.Info("events stream lost: manual-stop markers set in the last 30s discarded", "count", len(cleared))
 	}
@@ -393,6 +408,7 @@ func (d *Daemon) StreamConnected() {
 	}
 	d.streamLost = false
 	now := d.clk.Now()
+	d.eng.CloseShutdownWindow(now)
 	d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "reconnected after a lost events stream")
 	d.reconnectAt = now.Add(d.cfg.StartupSettle)
 	d.log.Info("events stream reconnected after a loss; sweeping everything after the settle period", "sweep_at", d.reconnectAt.UTC().Format(time.RFC3339))
@@ -601,6 +617,8 @@ func (d *Daemon) process(ctx context.Context, key string) {
 		Self:     d.o.SelfID != "" && c.ID == d.o.SelfID,
 		Parents:  d.parentsOf(ctx, c),
 		Evidence: d.eng.Evidence(key),
+		// A container that stopped in a shutdown window was stopped by the host, whatever its exit code.
+		HostStopped: c.Status == "exited" && d.eng.HostStopped(c.FinishedAt),
 	}
 	dec := rules.Classify(in)
 	if dec.Class == rules.ClassSkip {

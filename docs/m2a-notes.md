@@ -14,6 +14,12 @@ Questions 1 and 2 were decided on 17 Oct 2026 (plan v3.5) and implemented in thi
 6. **The poll now inspects every opted-in container, every poll.** The container list carries no `RestartCount`, so otherwise a loop whose `die` events were missed is invisible, and the "same answer however often whalenurse inspects" requirement could not hold. Cost: one inspect per opted-in container per poll (60 s).
 7. **A dry run stores nothing.** `run --dry-run` does not open the store and does not need `/data`; its incidents, SUSPENDED states and pauses are in memory. Otherwise a dry run would leave fake state for the next real run.
 
+## Found on the throwaway VM (17 Oct 2026), fixed in v3.5
+
+The first `whalenurse-restart` run passed its checks but showed that after `systemctl restart docker` whalenurse **started** three `restart: "no"` test apps that exit 1 on SIGTERM: no marker (whalenurse had died before it saw the kills), a non-zero exit, so rule 4 called it a crash. The plan assumed exit 137/143 for containers stopped by a shutdown. Fixed by the *shutdown window* rule (plan §3.3 rule 4, v3.5): a container whose `FinishedAt` is inside the window is stopped by the host, and its restart policy decides. Tests: `TestAnAppThatExitsOneOnSigtermStaysDownAfterAStreamLossShutdown`, `TestHostStoppedWindowFromLastSeenAfterWhalenurseWasKilledToo` and friends. The same run showed the M0b event listener records nothing for more than one project (fixed in `listener.sh`/`m0b_listener_install`), and that whalenurse is usually killed before it sees its own neighbours' kills, so the persisted-marker case needs a deterministic step (`docker stop looper` right before the daemon restart).
+
+Limits: the window is in memory (a second restart of whalenurse minutes later forgets it); a crash that happens inside a window is taken for a shutdown; the single notification naming a down parent and its dependents is M2b.
+
 ## Upstream check (17 Oct 2026)
 
 | Item | Version | Source |
@@ -65,7 +71,7 @@ The static binary is about 19 MB with the SQLite driver (`CGO_ENABLED=0`, no cgo
 
 ## Not verified
 
-- **No real daemon shutdown or reboot with whalenurse running.** The shutdown handling is tested against the M0b fixtures and fake streams; whether the real sequence at shutdown matches needs a **[maintainer]** run on the throwaway VM: `test/m0/m0b/whalenurse-restart/` (whalenurse in a container, a suspended crash-looper, `sudo systemctl restart docker`; collect checks it is still SUSPENDED and that a `docker compose stop` is still a manual stop).
+- **No real daemon shutdown or reboot with whalenurse running.** The shutdown handling is tested against the M0b fixtures and fake streams; whether the real sequence at shutdown matches needs a **[maintainer]** run on the throwaway VM: `test/m0/m0b/whalenurse-restart/` (whalenurse in a container, a suspended crash-looper, `docker stop looper` and `sudo systemctl restart docker` back to back; collect requires `MarkersQuarantined`, the looper still SUSPENDED, and three `restart: "no"` apps that exit 1 on SIGTERM still exited and not started). Its first run (without the manual stop) passed, with a `docker compose stop` still a manual stop, but did not exercise the persisted marker.
 - The integration tests were not run locally (the plan forbids it); CI is their only run. The first run (`39050052452`) passed everything except the two tests that call the new CLI through the built binary, which failed because those calls did not get `WHALENURSE_CONTROL_SOCKET` (a test bug, fixed). The old tests, the ladder test, the control-socket test and `TestImage` (with `/data` as a named volume and the CLI through `docker exec`) passed on both stores on Engine 29.x / compose 5.6.0. The run that counts is the last one on the PR, which the PR description links.
 - A real `docker compose stop` of a project with whalenurse running is covered only by the fixture-based negative test.
 - SQLite under a bind-mounted `/data` with another owner, and on NFS, was not tried.

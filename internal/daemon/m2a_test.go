@@ -717,3 +717,172 @@ func TestFailedRetriesDuringAnOutageAreNotReconnects(t *testing.T) {
 		t.Fatalf("one loss and no reconnects expected, got lost=%d connected=%d", lost, connected)
 	}
 }
+
+// ---- containers stopped by the host (plan v3.5 §3.3 rule 4) ---------------------------------------------
+
+func TestAnAppThatExitsOneOnSigtermStaysDownAfterAStreamLossShutdown(t *testing.T) {
+	h := newHarness(t, func(c *config.Global) { settled(c); c.PollInterval = time.Minute }, nil)
+	h.d.StreamConnected() // the first connection
+	h.advance(2*time.Minute + time.Second)
+	web := h.running(hexID("a1"), "p", "web")
+	h.tick()
+
+	// The daemon shuts down: the app gets SIGTERM and exits 1 at the end of the shutdown; the stream is lost.
+	h.clk.Advance(5 * time.Second)
+	finished := h.clk.Now()
+	h.set(web.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 1, "no", finished
+	})
+	h.clk.Advance(10 * time.Second)
+	h.d.StreamLost(h.clk.Now())
+	h.clk.Advance(30 * time.Second) // the daemon is down, then back
+	h.d.StreamConnected()
+	h.advance(10 * time.Minute) // the sweep after the settle period, and several polls
+
+	h.wantCalls() // stays down
+	if h.count(engine.NotifyOnly) != 1 {
+		t.Fatalf("want exactly one notification, got %d: %v", h.count(engine.NotifyOnly), h.rec.Types())
+	}
+	for _, e := range h.rec.Events() {
+		if e.Type == engine.IncidentOpened {
+			t.Fatalf("a host-stopped container is not an incident: %+v", e)
+		}
+	}
+}
+
+func TestTheSameAppThatCrashedOutsideAShutdownIsStarted(t *testing.T) {
+	h := newHarness(t, func(c *config.Global) { settled(c); c.PollInterval = time.Minute }, nil)
+	h.d.StreamConnected()
+	h.advance(2*time.Minute + time.Second)
+	web := h.running(hexID("a1"), "p", "web")
+	h.tick()
+	h.clk.Advance(time.Hour)
+	// It exited 1 an hour ago, long before any stream loss: a crash (a window is not open).
+	h.set(web.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 1, "no", h.clk.Now().Add(-time.Hour)
+	})
+	h.d.StreamLost(h.clk.Now())
+	h.clk.Advance(30 * time.Second)
+	h.d.StreamConnected()
+	h.advance(5 * time.Minute)
+	h.wantCalls("start " + web.ID)
+}
+
+func TestPoliciesDockerRestoresAreLeftToItAndHealExitedAlwaysStartsThem(t *testing.T) {
+	h := newHarness(t, func(c *config.Global) { settled(c); c.PollInterval = time.Minute }, nil)
+	h.d.StreamConnected()
+	h.advance(2*time.Minute + time.Second)
+	for _, id := range []string{"a1", "b1", "c1"} {
+		h.running(hexID(id), "p", "svc-"+id)
+	}
+	h.running(hexID("d1"), "p", "svc-d1", config.LabelHealExited, "always")
+	h.tick()
+	h.clk.Advance(5 * time.Second)
+	fin := h.clk.Now()
+	for id, pol := range map[string]string{"a1": "always", "b1": "unless-stopped", "c1": "on-failure", "d1": "no"} {
+		h.set(hexID(id), func(c *docker.Container) {
+			c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 1, pol, fin
+		})
+	}
+	h.d.StreamLost(h.clk.Now())
+	h.clk.Advance(20 * time.Second)
+	h.d.StreamConnected()
+	h.advance(5 * time.Minute)
+	h.wantCalls("start " + hexID("d1")) // only heal-exited=always; the rest is Docker's restore
+}
+
+// The other way in: whalenurse itself was stopped by the shutdown (no stream loss, same boot id). The window
+// starts 30 s before last_seen and ends at the restore; the app exited 1 inside it.
+func TestHostStoppedWindowFromLastSeenAfterWhalenurseWasKilledToo(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		finished time.Duration // relative to last_seen
+		want     bool          // started by whalenurse?
+	}{
+		{"exited 4 s before last_seen (the shutdown)", -4 * time.Second, false},
+		{"exited 25 s before last_seen", -25 * time.Second, false},
+		{"exited 40 s before last_seen: a crash", -40 * time.Second, true},
+		{"exited after last_seen, before the restore", 15 * time.Second, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := openStore(t)
+			h := newHarnessOpts(t, func(c *config.Global) { c.PollInterval = time.Minute }, nil, nil)
+			h.start(h.withStore(st, "boot-A"))
+			web := h.running(hexID("a1"), "p", "web")
+			h.advance(30 * time.Second)
+			h.d.heartbeat(true)
+			lastSeen := h.clk.Now()
+			h.set(web.ID, func(c *docker.Container) {
+				c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 1, "no", lastSeen.Add(tc.finished)
+			})
+			h.clk.Advance(30 * time.Second) // the daemon restarts; whalenurse is restored with the rest
+			h.start(h.withStore(st, "boot-A"))
+			h.advance(5 * time.Minute)
+			if tc.want {
+				h.wantCalls("start " + web.ID)
+			} else {
+				h.wantCalls()
+				if h.count(engine.NotifyOnly) != 1 {
+					t.Fatalf("want one notification: %v", h.rec.Types())
+				}
+			}
+		})
+	}
+}
+
+func TestHostStoppedWindowIsCappedWithinOneBootAndOpenAfterAReboot(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		boot string
+		want bool
+	}{
+		{"same boot, whalenurse down for hours: the crash in the middle is not a shutdown", "boot-A", true},
+		{"after a reboot the whole downtime is the shutdown", "boot-B", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := openStore(t)
+			h := newHarnessOpts(t, func(c *config.Global) { c.PollInterval = time.Minute }, nil, nil)
+			h.start(h.withStore(st, "boot-A"))
+			web := h.running(hexID("a1"), "p", "web")
+			h.advance(30 * time.Second)
+			h.d.heartbeat(true)
+			h.clk.Advance(2 * time.Hour)
+			h.set(web.ID, func(c *docker.Container) {
+				c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 1, "no", h.clk.Now().Add(-time.Hour)
+			})
+			h.start(h.withStore(st, tc.boot))
+			h.advance(5 * time.Minute)
+			if tc.want {
+				h.wantCalls("start " + web.ID)
+			} else {
+				h.wantCalls()
+			}
+		})
+	}
+}
+
+// A parent left down by policy leaves its dependents down: no ladder for them (the wait-for-parent path), and the
+// parent is not started. (The single notification naming both is M2b.)
+func TestDependentsOfAParentLeftDownByPolicyStayDown(t *testing.T) {
+	h := newHarness(t, func(c *config.Global) { settled(c); c.PollInterval = time.Minute }, nil)
+	h.d.StreamConnected()
+	h.advance(2*time.Minute + time.Second)
+	parent := h.running(hexID("27"), "p", "parent")
+	dep := h.running(hexID("d1"), "p", "dep")
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+	h.tick()
+	h.clk.Advance(5 * time.Second)
+	fin := h.clk.Now()
+	h.set(parent.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 137, "no", fin
+	})
+	h.set(dep.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 137, "unless-stopped", fin
+		c.Error = "cannot join network namespace of a non running container: container p-parent-1 is exited"
+	})
+	h.d.StreamLost(h.clk.Now())
+	h.clk.Advance(20 * time.Second)
+	h.d.StreamConnected()
+	h.advance(10 * time.Minute)
+	h.wantCalls() // neither is started
+}

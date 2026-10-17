@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# The whalenurse-restart scenario (PLAN v3.5 §3.3, mechanism d): whalenurse in a container, built from this branch,
-# next to a crash-looper that it SUSPENDS. The maintainer step is `sudo systemctl restart docker`, which kills
-# whalenurse together with everything else. collect.sh then checks that
-#   - the looper is still SUSPENDED (the restore's `start` must not clear it), and
-#   - a `docker compose stop` of a test project, after the restore window, is still a manual stop (the rejected burst
-#     rule would have healed it).
+# The whalenurse-restart scenario (PLAN v3.5 §3.3, mechanism d and rule 4): whalenurse in a container, built from this
+# branch, next to a crash-looper that it SUSPENDS, and three `restart: "no"` apps that exit 1 on SIGTERM. The maintainer
+# step is `docker stop` of the looper (a real manual stop, so whalenurse sets and persists a marker) and, back to back,
+# `sudo systemctl restart docker`, which kills whalenurse together with everything else. The daemon's restore then
+# restarts the looper (restart: always), which without the heartbeat would be a `start` that follows a marker and
+# clears SUSPENDED. collect.sh requires that
+#   - the new run discarded the marker at startup (MarkersQuarantined),
+#   - the looper is still SUSPENDED, and
+#   - s1-s3 are still exited and were not started: stopped by the host, restart policy "no", exit code 1.
 # Source this file after lib.sh; do not run it. See stacks/nurse and stacks/nursestop.
 #
 # Safety: whalenurse acts on containers that carry whalenurse.enable=true, so prepare.sh refuses to continue if any
@@ -169,14 +172,17 @@ nurse_prepare() {
 
   echo "== persistence check (collect.sh must work from a fresh session)"
   m0b_persistence_check "$sc" "$(m0b_listener_unit "$sc")" || m0_die "something collect.sh needs would not survive: fix it before the step"
-  m0b_write_step "restart the Docker daemon: whalenurse is killed with everything else, then restored; the SUSPENDED crash-looper must stay SUSPENDED" \
+  m0b_write_step "stop the looper by hand, then restart the Docker daemon at once: whalenurse persists a manual-stop marker, is killed with everything else and restored; the looper must stay SUSPENDED" \
+    "docker stop -t 2 $(cid "$P" looper)" \
     'sudo systemctl restart docker'
   printf '%s\n' \
     'Notes:' \
     "  - Everything in $P and $SP, and the listener unit, stay in place until test/m0/m0b/teardown.sh." \
     "  - whalenurse's state is the named volume of project $P (its SQLite store); teardown.sh removes it with the project." \
-    '  - collect.sh waits (up to --watch seconds, default 240) for whalenurse to be back and for its restore window to close,' \
-    "    and only then runs 'docker compose stop' on $SP (once) to see whether it is still treated as a manual stop." \
+    '  - The step stops the looper (a manual stop: whalenurse sets a marker and persists it) and restarts the daemon right after,' \
+    '    so the marker is well inside the 30 s window; the restore starts the looper again (restart: always).' \
+    '  - collect.sh waits (up to --watch seconds, default 240) for whalenurse to be back and to have swept (settled), then checks' \
+    "    MarkersQuarantined, the looper still SUSPENDED, and s1-s3 of $SP still exited and not started." \
     ''
   m0b_print_collect "$sc" "--watch 240"
   echo "From a fresh session (also in $STATE/RESUME.txt):"
@@ -187,7 +193,7 @@ nurse_prepare() {
 
 # nurse_collect [--watch SECS] [state dir]
 nurse_collect() {
-  local sc=whalenurse-restart watch=240 dir="" P SP wn out sum t_step t_done t_daemon i t_stop svc key s st exit_code
+  local sc=whalenurse-restart watch=240 dir="" P SP wn out sum t_step t_done t_daemon i svc key s st exit_code
   local fails=0 warns=0
   while (($#)); do
     case "$1" in
@@ -291,16 +297,16 @@ nurse_collect() {
     fail "whalenurse acted on the looper after the step (ActionStarted)"
   fi
 
-  # ---- 3. was the dangerous sequence really exercised? (information, not a verdict)
+  # ---- 3. the dangerous sequence: a marker persisted by the previous run, then the restore's start
   if [[ "$(nurse_count_since "$out/whalenurse-log-since-step.ndjson" ManualStopMarked "$NURSE_LOOPER_KEY" "${t_step%.*}")" -ge 1 ]]; then
-    csay "info  whalenurse saw the shutdown kill of the looper before it died (a marker was set): the case mechanism d exists for"
-    if jq -e 'select(.type == "MarkersQuarantined")' "$out/whalenurse-log-since-step.ndjson" >/dev/null 2>&1; then
-      pass "the new run discarded those markers at startup: $(jq -r 'select(.type == "MarkersQuarantined") | .msg' "$out/whalenurse-log-since-step.ndjson" | head -1)"
-    else
-      fail "a shutdown-kill marker was set but the new run did not discard it (no MarkersQuarantined)"
-    fi
+    pass "the previous run saw the manual stop of the looper and set a marker (so a marker was persisted)"
   else
-    warn "whalenurse died before it saw the looper's kill, so this run did not exercise the persisted-marker case (run it again: prepare.sh, step, collect.sh)"
+    fail "the previous run never marked the manual stop of the looper (it died before the event, or the step did not stop it): the case is not exercised"
+  fi
+  if jq -e 'select(.type == "MarkersQuarantined")' "$out/whalenurse-log-since-step.ndjson" >/dev/null 2>&1; then
+    pass "the new run discarded the marker at startup: $(jq -r 'select(.type == "MarkersQuarantined") | .msg' "$out/whalenurse-log-since-step.ndjson" | head -1)"
+  else
+    fail "no MarkersQuarantined in the new run: the persisted marker was kept"
   fi
   if jq -e 'select(.msg | tostring | test("whalenurse was not running for a while"))' "$out/whalenurse-log-since-step.ndjson" >/dev/null 2>&1; then
     csay "info  the gap since last_seen exceeded the poll interval: a restore window was opened"
@@ -315,49 +321,30 @@ nurse_collect() {
   tee -a "$sum" <"$out/events-by-service.txt" >/dev/null
   m0b_journal "$t_step" "$EPOCHREALTIME" "$out/journal-raw.txt" >"$out/journal-how.txt" 2>&1 || true
 
-  # ---- 4. docker compose stop of a test project is still a manual stop
-  if nurse_restore_open "$out/status-after.json"; then
-    warn "the restore window is still open (until $(jq -r '.engine.restore_window_until' "$out/status-after.json")); run collect.sh again later for the compose stop check"
+  # ---- 4. stopped by the host, restart policy "no", exit code 1: stay down
+  if [[ "$(jq -r '.settled' "$out/status-after.json")" != true ]]; then
+    warn "whalenurse has not swept yet (still in its startup settle period); run collect.sh again in a minute"
     csay "RESULT: INCOMPLETE ($fails FAIL, $warns WARN)"
     return 1
   fi
-  # shellcheck disable=SC2154
-  t_stop="${t_compose_stop-}"
-  if [[ -z "$t_stop" ]]; then
-    t_stop="$EPOCHREALTIME"
-    m0b_set t_compose_stop "$t_stop"
-    csay "== docker compose stop of $SP (the burst of kill[15] that the rejected rule would have mistaken for a shutdown)"
-    # shellcheck disable=SC2154
-    dcs "$SP" "$stop_stack_dir" stop >"$out/compose-stop.txt" 2>&1 || true
-    sleep 45 # GRACE 5s + poll 15s + the cooldown, with room to spare
-  else
-    csay "== the compose stop was done at $(date -u -d "@${t_stop%.*}" +%T)Z (an earlier collect); evaluating again"
-  fi
-  nurse_status "$wn" "$out/status-after-stop.json" || fail "whalenurse stopped answering after the compose stop"
-  nurse_logs "$wn" "$t_stop" "$out/whalenurse-log-since-stop.ndjson"
   for svc in "${NURSE_STOP_SERVICES[@]}"; do
     key=$(nurse_key "$SP" "$svc")
     st=$(docker inspect --format '{{.State.Status}}' "$(cid "$SP" "$svc")")
     exit_code=$(docker inspect --format '{{.State.ExitCode}}' "$(cid "$SP" "$svc")")
     if [[ "$st" == exited && "$exit_code" == 1 ]]; then
-      pass "$svc: stopped by compose (exited, exit code 1) and still stopped"
+      pass "$svc: still exited (exit code 1) after the restore and the sweep"
     else
-      fail "$svc: status=$st exit=$exit_code (expected exited with 1: a healed container is the failure this checks for)"
+      fail "$svc: status=$st exit=$exit_code (expected exited with 1: running means whalenurse started it)"
     fi
-    if [[ "$(nurse_count_since "$out/whalenurse-log-since-stop.ndjson" ManualStopMarked "$key" "${t_stop%.*}")" -ge 1 ]]; then
-      pass "$svc: whalenurse set a manual-stop marker"
-    else
-      fail "$svc: no ManualStopMarked event (the kill was not read as a manual stop)"
-    fi
-    if [[ "$(nurse_count_since "$out/whalenurse-log-since-stop.ndjson" ActionStarted "$key" "${t_stop%.*}")" == 0 ]]; then
+    if [[ "$(nurse_count_since "$out/whalenurse-log-since-step.ndjson" ActionStarted "$key" "${t_step%.*}")" == 0 ]]; then
       pass "$svc: whalenurse did not start it"
     else
-      fail "$svc: whalenurse started it after the compose stop"
+      fail "$svc: whalenurse started it (ActionStarted since the step)"
     fi
-    if [[ "$(nurse_field "$out/status-after-stop.json" "$key" manual_stop)" == true ]]; then
-      pass "$svc: status shows the manual-stop marker"
+    if [[ "$(nurse_count_since "$out/whalenurse-log-since-step.ndjson" NotifyOnly "$key" "${t_step%.*}")" == 1 ]]; then
+      pass "$svc: exactly one notification (NotifyOnly)"
     else
-      fail "$svc: status shows no manual-stop marker"
+      fail "$svc: expected exactly one NotifyOnly since the step, got $(nurse_count_since "$out/whalenurse-log-since-step.ndjson" NotifyOnly "$key" "${t_step%.*}")"
     fi
   done
 

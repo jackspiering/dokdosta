@@ -87,6 +87,18 @@ seq_web=$(m0b_events_by_service "$tmp/norm.ndjson" '^web$')
 rel=$(m0b_events_rel "$tmp/norm.ndjson" 100 | paste -sd'|' -)
 [[ "$rel" == *"+1s"$'\t'"web"$'\t'"kill[sig 15]"* && "$rel" == *"+3s"$'\t'"-"$'\t'"<listener disconnect>"* ]] && ok "events: relative timeline with markers" || bad "events rel: $rel"
 
+# ---- the listener's project filter keeps two projects (docker events label filters would AND them)
+cat >"$tmp/proj-ev.ndjson" <<'JSON'
+{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"whalenurse-m0-b-nurse"}}}
+{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"whalenurse-m0-b-nursestop"}}}
+{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"whalenurse-m0-b-nurse2"}}}
+{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"immich"}}}
+{"Type":"container","Action":"kill","Actor":{"Attributes":{}}}
+JSON
+n=$(m0b_events_only_projects whalenurse-m0-b-nurse whalenurse-m0-b-nursestop <"$tmp/proj-ev.ndjson" | grep -c .)
+[[ "$n" == 2 ]] && ok "events filter: two projects kept, a similarly named and a foreign one dropped" || bad "events filter kept $n lines"
+refuse "events filter refuses a non-M0b project" m0b_events_only_projects immich
+
 # ---- expectation comparison
 printf 'service\tid\tstatus\texit\trestarts\thealth\tstarted\tfinished\tnetmode\terror\nfail\tabc\texited\t137\t0\t-\ts\tf\tbridge\tfailed to fulfil mount request\nok\tabd\trunning\t0\t0\t-\ts\tf\tbridge\t\nwrong\tabe\trunning\t0\t0\t-\ts\tf\tbridge\t\n' >"$tmp/table.tsv"
 printf 'dependent\tparent\tsame-netns\nok\tp\tsame\nwrong\tp\tDIFFERENT(a vs b)\n' >"$tmp/netns.tsv"

@@ -44,10 +44,12 @@ const (
 	ClassExitedOOM            Class = "exited-oom"
 	ClassExitedAlways         Class = "exited-always" // heal-exited=always
 	ClassExitedIntended       Class = "exited-intended"
-	ClassExitedManual         Class = "exited-manual"    // a kill was seen: someone stopped it
-	ClassExitedClean          Class = "exited-clean"     // exit 0 under an always-style policy
-	ClassExitedSignalled      Class = "exited-signalled" // 137 or 143 without OOM
-	ClassExitedNever          Class = "exited-never"     // heal-exited=never
+	ClassExitedManual         Class = "exited-manual"       // a kill was seen: someone stopped it
+	ClassExitedClean          Class = "exited-clean"        // exit 0 under an always-style policy
+	ClassExitedSignalled      Class = "exited-signalled"    // 137 or 143 without OOM
+	ClassExitedNever          Class = "exited-never"        // heal-exited=never
+	ClassExitedHostStopped    Class = "exited-host-stopped" // stopped by a daemon shutdown or reboot, restart policy "no": stays down (notify)
+	ClassExitedHostRestore    Class = "exited-host-restore" // stopped by a shutdown, policy restarts it: left to Docker's restore
 	ClassDead                 Class = "dead"
 	ClassStaleParentGone      Class = "stale-parent-gone"
 	ClassStaleParentRestarted Class = "stale-parent-restarted"
@@ -93,6 +95,9 @@ type Input struct {
 	Parents  []Parent // one per container: reference in network_mode, ipc or pid
 	Evidence Evidence
 	Loop     Loop // the crash-loop state the engine derived from RestartCount (rule 3)
+	// HostStopped: the container stopped inside a shutdown window (plan §3.3 rule 4): between 30 s before the
+	// previous run's last_seen, or the events-stream loss, and the daemon's restore. Whatever its exit code.
+	HostStopped bool
 }
 
 // Loop is the verdict of the crash-loop tracker (internal/engine): at least 3
@@ -219,6 +224,22 @@ func crashLoop(in Input) Decision {
 func classifyExited(in Input) Decision {
 	c, ev := in.C, in.Evidence
 	signalled := c.ExitCode == exitSigkill || c.ExitCode == exitSigterm
+
+	// Stopped by the host (a daemon restart or a reboot): the exit code says nothing, because an app that handles
+	// SIGTERM may exit 1 or 0. The restart policy decides. "no" stays down, with one notification; the policies
+	// Docker restores are left to its restore (a failed restore has State.Error, so rule 1 handled it). Only
+	// heal-exited=always starts it.
+	if in.HostStopped {
+		switch {
+		case in.Cfg.HealExited == config.HealAlways:
+			return Decision{Class: ClassExitedAlways, Action: ActionStart, Reason: "heal-exited=always"}
+		case c.RestartPolicy == "no" || c.RestartPolicy == "":
+			return Decision{Class: ClassExitedHostStopped, Action: ActionNotify,
+				Reason: fmt.Sprintf("stopped by a daemon shutdown or reboot (exit %d) and restart policy is no: staying down", c.ExitCode)}
+		}
+		return Decision{Class: ClassExitedHostRestore, Action: ActionNone,
+			Reason: fmt.Sprintf("stopped by a daemon shutdown or reboot (exit %d): Docker's restore restarts it (policy %s)", c.ExitCode, c.RestartPolicy)}
+	}
 
 	if c.RestartPolicy == "on-failure" && c.MaxRetries > 0 && c.RestartCount >= c.MaxRetries &&
 		c.ExitCode != 0 && !signalled && !ev.ManualStop {

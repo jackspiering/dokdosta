@@ -691,3 +691,43 @@ func TestTrackerManualStopClearsOnStart(t *testing.T) {
 		t.Fatalf("start should clear the marker: %+v", tr.Evidence())
 	}
 }
+
+// Plan v3.5 §3.3 rule 4: a container that stopped inside a shutdown window was stopped by the host, whatever its
+// exit code. An app that handles SIGTERM may exit 1 or 0; only the restart policy decides.
+func TestHostStoppedContainersAreJudgedByTheirRestartPolicy(t *testing.T) {
+	cases := []struct {
+		name   string
+		policy string
+		exit   int
+		heal   config.HealExited
+		host   bool
+		err    string
+		want   rules.Class
+		act    rules.Action
+	}{
+		{"policy no, exits 1 on SIGTERM: stays down, one notification", "no", 1, config.HealCrashed, true, "", rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"policy no, exits 0 on SIGTERM", "no", 0, config.HealCrashed, true, "", rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"policy no, 137", "no", 137, config.HealCrashed, true, "", rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"policy no, heal-exited=never", "no", 1, config.HealNever, true, "", rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"policy no, heal-exited=always starts it", "no", 1, config.HealAlways, true, "", rules.ClassExitedAlways, rules.ActionStart},
+		{"unless-stopped, exits 1: left to Docker's restore", "unless-stopped", 1, config.HealCrashed, true, "", rules.ClassExitedHostRestore, rules.ActionNone},
+		{"always, exits 1: left to Docker's restore", "always", 1, config.HealCrashed, true, "", rules.ClassExitedHostRestore, rules.ActionNone},
+		{"on-failure, exits 1: left to Docker's restore", "on-failure", 1, config.HealCrashed, true, "", rules.ClassExitedHostRestore, rules.ActionNone},
+		{"a failed restore is rule 1, not host-stopped", "unless-stopped", 127, config.HealCrashed, true, "failed to create task for container: bind source path does not exist", rules.ClassStartFailed, rules.ActionStart},
+		// The same containers outside a shutdown window are crashes, as before.
+		{"policy no, exits 1, not in a window: a crash", "no", 1, config.HealCrashed, false, "", rules.ClassExitedCrashed, rules.ActionStart},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := docker.Container{
+				ID: "a1", Name: "p-web-1", Status: "exited", ExitCode: tc.exit, RestartPolicy: tc.policy, Error: tc.err,
+				Labels: map[string]string{docker.LabelProject: "p", docker.LabelService: "web"},
+			}
+			cfg := config.Container{OptedIn: true, Actions: []string{"restart", "recreate"}, HealExited: tc.heal}
+			got := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, HostStopped: tc.host})
+			if got.Class != tc.want || got.Action != tc.act {
+				t.Fatalf("got %s/%s (%s), want %s/%s", got.Class, got.Action, got.Reason, tc.want, tc.act)
+			}
+		})
+	}
+}

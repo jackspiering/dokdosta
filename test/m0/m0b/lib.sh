@@ -276,6 +276,16 @@ m0b_events_by_service() {
       END {for (i = 1; i <= n; i++) printf "%-12s %s\n", k[i] ":", a[k[i]]}'
 }
 
+# m0b_events_only_projects <project>...: stdin -> stdout, keeps the docker events (one JSON object per line) of containers
+# in one of the projects. `docker events --filter label=...` cannot do this for more than one project: repeated label
+# filters are ANDed, so two projects match nothing (the first whalenurse-restart run recorded no events for that reason).
+m0b_events_only_projects() {
+  local re p
+  for p in "$@"; do m0b_require_project "$p"; done
+  re="^($(IFS='|'; echo "$*"))\$"
+  jq --unbuffered -c --arg re "$re" 'select((.Actor.Attributes["com.docker.compose.project"] // "") | test($re))'
+}
+
 # ---- the event listener (a user systemd unit; Linger=yes keeps it across logout and reboot) -----
 
 m0b_listener_unit() { printf '%s-%s.service' "$M0B_UNIT_PREFIX" "$1"; }

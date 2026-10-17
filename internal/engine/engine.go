@@ -118,6 +118,14 @@ type Engine struct {
 	reeval map[string]bool // keys the daemon should look at now (resume, unsuspend, pause expiry)
 
 	restoreUntil time.Time // a start or kill before this is a restore, not a person
+
+	shutdowns []shutdownWindow // when the host was shutting the containers down; see HostStopped
+}
+
+// shutdownWindow is a span in which a container that stopped was stopped by a daemon shutdown or reboot.
+type shutdownWindow struct {
+	from, to time.Time
+	open     bool // the events stream is still lost: no restore yet, so the window has no end
 }
 
 // New creates an Engine that publishes to bus.
@@ -295,6 +303,53 @@ func (e *Engine) RestoreWindowUntil() time.Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.restoreUntil
+}
+
+// AddShutdownWindow records a span in which containers were stopped by the host: from 30 s before the previous
+// run's last_seen to the daemon's restore (plan §3.3 rule 4).
+func (e *Engine) AddShutdownWindow(from, to time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.shutdowns = append(e.shutdowns, shutdownWindow{from: from, to: to})
+}
+
+// OpenShutdownWindow starts a window at an events-stream loss; it has no end until CloseShutdownWindow.
+func (e *Engine) OpenShutdownWindow(from time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, w := range e.shutdowns {
+		if w.open {
+			return
+		}
+	}
+	e.shutdowns = append(e.shutdowns, shutdownWindow{from: from, open: true})
+}
+
+// CloseShutdownWindow ends the open window when the stream is back: the daemon has restored its containers.
+func (e *Engine) CloseShutdownWindow(to time.Time) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for i := range e.shutdowns {
+		if e.shutdowns[i].open {
+			e.shutdowns[i].open, e.shutdowns[i].to = false, to
+		}
+	}
+}
+
+// HostStopped reports whether a container that finished at the given time was stopped by a daemon shutdown or
+// reboot, that is, inside a shutdown window.
+func (e *Engine) HostStopped(finishedAt time.Time) bool {
+	if finishedAt.IsZero() || finishedAt.Year() < 2000 {
+		return false
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for _, w := range e.shutdowns {
+		if !finishedAt.Before(w.from) && (w.open || !finishedAt.After(w.to)) {
+			return true
+		}
+	}
+	return false
 }
 
 // QuarantineMarkers discards every manual-stop marker set in the 30 s before lostAt
