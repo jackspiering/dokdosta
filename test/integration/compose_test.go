@@ -287,7 +287,7 @@ const wwwParent = `["sh", "-c", "mkdir -p /www; echo ok > /www/index.html; %stra
 // sidecarStack is a parent that serves on 127.0.0.1:8080 and a network_mode: service:parent sidecar. The parent is healthy
 // until /broken exists (writable layer, so only a recreate repairs it) or, with tmpfsFlag, until /ok/flag is removed (a
 // restart repairs it).
-func sidecarStack(t *testing.T, g *Guard, cli *docker.Moby, name string, tmpfsFlag bool, depHealthcheck string, depImage string) *stack {
+func sidecarStack(t *testing.T, g *Guard, cli *docker.Moby, name string, tmpfsFlag bool, depHealthcheck string, depImage string, depOptIn bool) *stack {
 	t.Helper()
 	parent := fmt.Sprintf(`
   parent:
@@ -321,15 +321,17 @@ func sidecarStack(t *testing.T, g *Guard, cli *docker.Moby, name string, tmpfsFl
 	if depImage == "" {
 		depImage = "busybox:1.37"
 	}
+	depLabels := "    labels:\n      whalenurse.enable: \"true\"\n"
+	if !depOptIn {
+		depLabels = "" // repaired by the dependents step all the same, because its parent is opted in (plan v3.6)
+	}
 	dep := fmt.Sprintf(`
   dep:
     image: %s
     network_mode: service:parent
-    labels:
-      whalenurse.enable: "true"
-    stop_grace_period: 2s
+%s    stop_grace_period: 2s
     command: %s
-%s`, depImage, loopCmd, depHealthcheck)
+%s`, depImage, depLabels, loopCmd, depHealthcheck)
 	s := newStack(t, g, cli, name, "services:"+parent+dep)
 	s.up()
 	waitFor(t, "parent to be healthy", 60*time.Second, func() bool { return s.container("parent").Health == "healthy" })
@@ -367,7 +369,7 @@ func sharesNamespace(t *testing.T, g *Guard, a, b string) bool {
 // pointing at a parent that is gone, is recreated by compose with the non-forced up and never restarted through the API.
 func TestDependentIsRecreatedAfterItsParentIsRecreated(t *testing.T) {
 	g, cli := requireIntegration(t)
-	s := sidecarStack(t, g, cli, "deprecreate", false, reachHealthcheck, "")
+	s := sidecarStack(t, g, cli, "deprecreate", false, reachHealthcheck, "", true)
 	waitFor(t, "dep to be healthy", 60*time.Second, func() bool { return s.container("dep").Health == "healthy" })
 	oldParent, oldDep := s.container("parent"), s.container("dep")
 	breakWritableLayer(t, g, s, "parent")
@@ -414,10 +416,11 @@ func TestDependentIsRecreatedAfterItsParentIsRecreated(t *testing.T) {
 }
 
 // E1 with the parent recreated by someone else before whalenurse looks: the sidecar is running, unhealthy (it only has a
-// loopback of its own), and a restart would turn it into an exited container. It is recreated instead.
+// loopback of its own), and a restart would turn it into an exited container. It is recreated instead. The sidecar is not
+// opted in itself: the dependents step repairs it because its parent is (plan v3.6).
 func TestStaleDependentOfAnExternallyRecreatedParentIsRecreatedNotRestarted(t *testing.T) {
 	g, cli := requireIntegration(t)
-	s := sidecarStack(t, g, cli, "depstale", false, reachHealthcheck, "")
+	s := sidecarStack(t, g, cli, "depstale", false, reachHealthcheck, "", false)
 	waitFor(t, "dep to be healthy", 60*time.Second, func() bool { return s.container("dep").Health == "healthy" })
 	oldParent, oldDep := s.container("parent"), s.container("dep")
 	s.compose("up", "-d", "--force-recreate", "--no-deps", "--pull", "never", "parent")
@@ -445,10 +448,10 @@ func TestStaleDependentOfAnExternallyRecreatedParentIsRecreatedNotRestarted(t *t
 }
 
 // A parent restarted through the API keeps its ID, and its sidecar keeps the old namespace: it is restarted too, not
-// recreated.
+// recreated. The sidecar is not opted in itself (plan v3.6).
 func TestDependentIsRestartedAfterItsParentIsRestarted(t *testing.T) {
 	g, cli := requireIntegration(t)
-	s := sidecarStack(t, g, cli, "deprestart", true, "", "")
+	s := sidecarStack(t, g, cli, "deprestart", true, "", "", false)
 	oldParent, oldDep := s.container("parent"), s.container("dep")
 	if _, err := g.Ctr(context.Background(), "exec", oldParent.ID, "rm", "/ok/flag"); err != nil {
 		t.Fatal(err)
@@ -485,7 +488,7 @@ func TestStaleDependentWithAMovedTagIsBlocked(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = g.Untag(context.Background(), tag) })
-	s := sidecarStack(t, g, cli, "depdrift", false, reachHealthcheck, tag)
+	s := sidecarStack(t, g, cli, "depdrift", false, reachHealthcheck, tag, true)
 	oldParent, oldDep := s.container("parent"), s.container("dep")
 	s.compose("up", "-d", "--force-recreate", "--no-deps", "--pull", "never", "parent")
 	if s.container("parent").ID == oldParent.ID {

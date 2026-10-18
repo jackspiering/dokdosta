@@ -750,3 +750,207 @@ func TestHealExitedAlwaysStartsTheParentThenItsDependents(t *testing.T) {
 	h.advance(10 * time.Minute)
 	h.wantCalls("start "+parent.ID, "start "+dep.ID)
 }
+
+// ---- plan v3.6 decisions ------------------------------------------------------------------------------------------
+
+// noOptIn removes the opt-in label of a container.
+func (h *cfH) noOptIn(id string) docker.Container {
+	return h.set(id, func(c *docker.Container) { delete(c.Labels, config.LabelEnable) })
+}
+
+// The dependents step repairs the dependents of an opted-in parent even when they are not opted in themselves.
+func TestSidecarThatIsNotOptedInFollowsItsOptedInParent(t *testing.T) {
+	t.Run("parent recreated", func(t *testing.T) {
+		h := newCompose(t, nil, nil, docker.ServerInfo{})
+		_, dep := h.pair()
+		h.noOptIn(dep.ID)
+		var newParent docker.Container
+		h.cf.OnUp = func(compose.Project) error {
+			h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+			return nil
+		}
+		h.tick()
+		newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+		h.advance(3 * time.Minute)
+		if got := h.verbs(); got != "up dep" {
+			t.Fatalf("%q", got)
+		}
+		h.wantCalls()
+	})
+	t.Run("parent restarted", func(t *testing.T) {
+		h := newCompose(t, nil, nil, docker.ServerInfo{})
+		parent, dep := h.pair()
+		h.noOptIn(dep.ID)
+		h.set(parent.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now().Add(-time.Minute) })
+		h.fake.OnMutate = func(f *docker.Fake, verb, id string) {
+			f.Update(id, func(c *docker.Container) { c.StartedAt = h.clk.Now() })
+		}
+		h.tick()
+		h.advance(3 * time.Minute)
+		h.wantCalls("restart " + dep.ID)
+	})
+	t.Run("unhealthy only because the parent restarted", func(t *testing.T) {
+		h := newCompose(t, nil, nil, docker.ServerInfo{})
+		parent, dep := h.pair()
+		h.noOptIn(dep.ID)
+		h.set(parent.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now().Add(-time.Minute) })
+		h.set(dep.ID, unhealthy)
+		h.fake.OnMutate = func(f *docker.Fake, verb, id string) {
+			f.Update(id, func(c *docker.Container) { c.StartedAt, c.Health = h.clk.Now(), "healthy" })
+		}
+		h.tick()
+		h.advance(3 * time.Minute)
+		h.wantCalls("restart " + dep.ID)
+	})
+}
+
+func TestSidecarLabelledEnableFalseIsNeverTouched(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent, dep := h.pair()
+	h.set(dep.ID, func(c *docker.Container) { c.Labels[config.LabelEnable] = "false" })
+	h.set(parent.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now().Add(-time.Minute) })
+	h.tick()
+	h.advance(3 * time.Minute)
+	h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.advance(3 * time.Minute)
+	h.wantCalls()
+	if len(h.cf.Calls()) != 0 || h.count(engine.IncidentOpened) != 0 {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+}
+
+// Its own failures need its own opt-in: the dependents step does not turn into a ladder for it.
+func TestSidecarThatIsNotOptedInIsNotHealedForItsOwnFailures(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	h.noOptIn(dep.ID)
+	h.tick()
+	h.set(dep.ID, unhealthy)
+	h.advance(10 * time.Minute)
+	h.wantCalls()
+	if len(h.cf.Calls()) != 0 || h.count(engine.IncidentOpened) != 0 {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+	h.set(dep.ID, func(c *docker.Container) { c.Health = ""; c.Status, c.Running, c.ExitCode = "exited", false, 1 })
+	h.advance(10 * time.Minute)
+	h.wantCalls()
+}
+
+func TestSidecarOfAParentThatIsNotOptedInIsNotTouched(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent, dep := h.pair()
+	h.noOptIn(dep.ID)
+	h.noOptIn(parent.ID)
+	h.set(parent.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now().Add(-time.Minute) })
+	h.tick()
+	h.advance(5 * time.Minute)
+	h.wantCalls()
+}
+
+// Repairing a sidecar after each of its parent's restarts is not flapping.
+func TestDependentRepairsDoNotFlapTheSidecar(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent, dep := h.pair()
+	h.fake.OnMutate = func(f *docker.Fake, verb, id string) {
+		f.Update(id, func(c *docker.Container) { c.StartedAt = h.clk.Now() })
+	}
+	h.tick()
+	for i := 0; i < 6; i++ { // FLAP_LIMIT is 3
+		h.set(parent.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now() }) // the parent restarted (by anything)
+		h.advance(20 * time.Minute)
+	}
+	if got := len(h.fake.CallsOn(dep.ID)); got != 6 {
+		t.Fatalf("the sidecar should be restarted after each of the 6 parent restarts, got %d", got)
+	}
+	if h.count(engine.Suspended) != 0 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+}
+
+// warn overrides verified drift only; "can't verify" stays blocking.
+func TestWarnModeDoesNotOverrideWhatCouldNotBeVerified(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setup func(h *cfH)
+		want  string
+	}{
+		{"no check could be made", func(h *cfH) {
+			h.cf.OracleFn = func(compose.Project, string) (compose.Oracle, error) { return compose.Oracle{}, compose.ErrUnparseable }
+			h.cf.HashFn = func(compose.Project) (string, error) { return "", fmt.Errorf("boom") }
+		}, "unverified:"},
+		{"the image cannot be resolved", func(h *cfH) {
+			h.cf.OracleFn = func(compose.Project, string) (compose.Oracle, error) { return compose.Oracle{}, compose.ErrUnparseable }
+			h.cf.HashFn = func(compose.Project) (string, error) { return "h-web", nil }
+			h.fake.SetImage("web:1", "")
+		}, "unverified:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCompose(t, func(c *config.Global) { c.DriftGuard = config.DriftWarn }, nil, docker.ServerInfo{})
+			web := h.svc(hexID("a1"), "p", "web")
+			tc.setup(h)
+			h.tick()
+			h.set(web.ID, unhealthy)
+			h.advance(6 * time.Minute)
+			b := h.events(engine.DriftBlocked)
+			if len(b) != 1 || !strings.Contains(b[0].Message, tc.want) || !strings.Contains(b[0].Message, "does not override") {
+				t.Fatalf("%+v", b)
+			}
+			if h.cf.Count("recreate") != 0 || h.count(engine.DriftWarned) != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+		})
+	}
+	// Version skew of the bundled compose is "can't verify" too.
+	bundled := compose.NewFake()
+	bundled.Bin = compose.Binary{Path: compose.BundledPath, Source: compose.SourceBundled, Version: compose.Version{Major: 5, Minor: 6}}
+	bundled.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
+	h := newCompose(t, func(c *config.Global) { c.DriftGuard = config.DriftWarn }, bundled, docker.ServerInfo{})
+	web := h.svc(hexID("a1"), "p", "web", compose.LabelVersion, "5.2.0")
+	h.tick()
+	h.set(web.ID, unhealthy)
+	h.advance(6 * time.Minute)
+	if len(h.events(engine.DriftBlocked)) != 1 || bundled.Count("recreate") != 0 {
+		t.Fatalf("skew must block under warn: %v", h.rec.Types())
+	}
+}
+
+// Verified drift mixed with a check that could not be made still blocks under warn.
+func TestWarnModeBlocksWhenAnyFindingIsUnverified(t *testing.T) {
+	h := newCompose(t, func(c *config.Global) { c.DriftGuard = config.DriftWarn }, nil, docker.ServerInfo{})
+	web := h.svc(hexID("a1"), "p", "web")
+	h.cf.OracleFn = func(compose.Project, string) (compose.Oracle, error) { return compose.Oracle{}, compose.ErrUnparseable }
+	h.cf.HashFn = func(compose.Project) (string, error) { return "h-edited", nil } // verified config drift
+	h.fake.SetImage("web:1", "")                                                   // and the image cannot be resolved
+	h.tick()
+	h.set(web.ID, unhealthy)
+	h.advance(6 * time.Minute)
+	if len(h.events(engine.DriftBlocked)) != 1 || h.cf.Count("recreate") != 0 {
+		t.Fatalf("%v / %s", h.rec.Types(), h.verbs())
+	}
+}
+
+// An upgraded host plugin is information in the drift message.
+func TestUpgradedHostPluginIsNotedInTheDriftMessage(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{}) // host plugin 5.6.0
+	web := h.svc(hexID("a1"), "p", "web", compose.LabelVersion, "5.2.0")
+	h.cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
+	h.tick()
+	h.set(web.ID, unhealthy)
+	h.advance(6 * time.Minute)
+	b := h.events(engine.DriftBlocked)
+	if len(b) != 1 || !strings.Contains(b[0].Message, "config: compose would recreate") ||
+		!strings.Contains(b[0].Message, "compose upgraded from 5.2.0 to 5.6.0 since this container was created") {
+		t.Fatalf("%+v", b)
+	}
+	// ... and it is still verified drift: warn recreates.
+	h2 := newCompose(t, func(c *config.Global) { c.DriftGuard = config.DriftWarn }, nil, docker.ServerInfo{})
+	web2 := h2.svc(hexID("a1"), "p", "web", compose.LabelVersion, "5.2.0")
+	h2.cf.OracleFn = h.cf.OracleFn
+	h2.cf.OnRecreate = func(compose.Project) error { h2.replace("p", "web", nil); return nil }
+	h2.tick()
+	h2.set(web2.ID, unhealthy)
+	h2.advance(6 * time.Minute)
+	if h2.cf.Count("recreate") != 1 || h2.count(engine.DriftWarned) != 1 {
+		t.Fatalf("%v", h2.rec.Types())
+	}
+}

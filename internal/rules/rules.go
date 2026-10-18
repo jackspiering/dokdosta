@@ -97,6 +97,10 @@ type Input struct {
 	Parents  []Parent // one per container: reference in network_mode, ipc or pid
 	Evidence Evidence
 	Loop     Loop // the crash-loop state the engine derived from RestartCount (rule 3)
+	// DependentOfOptedIn: a container: parent of this container (found, or named by its depends_on label when its ID is
+	// gone) is opted in. Such a container is repaired by the dependents step even when it is not opted in itself, unless
+	// it is labelled whalenurse.enable=false; its own failures are still its own business (plan v3.6).
+	DependentOfOptedIn bool
 	// HostStopped: the container stopped inside a shutdown window (plan §3.3 rule 4): between 30 s before the
 	// previous run's last_seen, or the events-stream loss, and the daemon's restore. Whatever its exit code.
 	HostStopped bool
@@ -145,14 +149,39 @@ func Classify(in Input) Decision {
 		return skip(SkipOneOff, "compose run container")
 	case c.Labels[docker.LabelSwarmTaskID] != "":
 		return skip(SkipSwarm, "swarm task")
-	case !in.Cfg.OptedIn:
+	case in.Cfg.Disabled:
+		return skip(SkipNotOptedIn, "whalenurse.enable=false")
+	case !in.Cfg.OptedIn && !in.DependentOfOptedIn:
 		return skip(SkipNotOptedIn, "not opted in")
 	case c.Status == "removing":
 		return skip(SkipRemoving, "being removed")
 	case c.Paused || c.Status == "paused":
 		return skip(SkipDockerPause, "paused with docker pause")
 	}
-	return guardReferences(in, classifyState(in))
+	d := guardReferences(in, classifyState(in))
+	if !in.Cfg.OptedIn && d.Class == ClassUnhealthy && d.Action == ActionRestart {
+		// Not opted in: an unhealthy sidecar is its own business, unless it is unhealthy because its parent restarted
+		// after it (the namespace it holds is stale); then the dependents step restarts it.
+		for _, p := range in.Parents {
+			if p.Found && p.Running && !p.Busy && !p.StartedAt.IsZero() && p.StartedAt.After(c.StartedAt) {
+				d = Decision{Class: ClassStaleParentRestarted, Action: ActionRestart,
+					Reason: fmt.Sprintf("parent %s started after this container; its namespace is stale; restarting it", docker.ShortID(p.ID))}
+				break
+			}
+		}
+	}
+	if !in.Cfg.OptedIn && !d.IsDependentStep() {
+		// Not opted in, but its parent is: only the dependents step may touch it.
+		return skip(SkipNotOptedIn, "not opted in (only the dependents step of an opted-in parent repairs it)")
+	}
+	return d
+}
+
+// IsDependentStep reports whether the decision is the dependents step of plan §3.5: a container made stale by its parent
+// being restarted or recreated. It is repaired as part of the parent's incident, so it does not count toward the
+// container's own flap limit, and it needs no opt-in of its own.
+func (d Decision) IsDependentStep() bool {
+	return d.Action == ActionRecreateStale || d.Class == ClassStaleParentRestarted
 }
 
 func skip(reason, text string) Decision {

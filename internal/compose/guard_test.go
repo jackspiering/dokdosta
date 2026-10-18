@@ -202,3 +202,40 @@ func TestGuardAcceptsTheIndexIDInTheLabel(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+func TestFindingsThatWarnMayOverride(t *testing.T) {
+	for check, want := range map[string]bool{CheckConfig: true, CheckImage: true, CheckSkew: false, CheckUnverified: false} {
+		if (Finding{Check: check}).Verified() != want {
+			t.Errorf("%s verified = %v", check, !want)
+		}
+	}
+}
+
+// An upgraded host plugin is information in the drift message, not a block of its own (plan v3.6).
+func TestGuardNotesAnUpgradedHostPlugin(t *testing.T) {
+	f := NewFake() // host plugin 5.6.0
+	f.OracleFn = func(_ Project, name string) (Oracle, error) { return Recreated(name), nil }
+	in := guardIn(false)
+	in.Labels[LabelVersion] = "5.2.0"
+	g := Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgOld}}
+	got := g.Check(context.Background(), in)
+	if len(got) != 1 || got[0].Check != CheckConfig || !got[0].Verified() ||
+		!strings.Contains(got[0].Cause, "compose upgraded from 5.2.0 to 5.6.0 since this container was created") {
+		t.Fatalf("%v", got)
+	}
+	// Same release: no note. No version label: no note.
+	in.Labels[LabelVersion] = "5.6.0"
+	if got = g.Check(context.Background(), in); len(got) != 1 || strings.Contains(got[0].Cause, "upgraded") {
+		t.Fatalf("%v", got)
+	}
+	delete(in.Labels, LabelVersion)
+	if got = g.Check(context.Background(), in); len(got) != 1 || strings.Contains(got[0].Cause, "upgraded") {
+		t.Fatalf("%v", got)
+	}
+	// An upgrade without drift is not a finding at all.
+	in.Labels[LabelVersion] = "5.2.0"
+	f.OracleFn = nil
+	if got = g.Check(context.Background(), in); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+}

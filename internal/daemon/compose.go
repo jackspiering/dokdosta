@@ -214,18 +214,49 @@ func dependsOn(label string) []string {
 
 // driftFindings runs the drift guard (plan §3.6) for the container about to be recreated and returns what it found as
 // text, one entry per finding. It reads only: the dry-run oracle, `config --hash` and an image inspect.
-func (d *Daemon) driftFindings(ctx context.Context, c docker.Container, p compose.Project) []string {
+func (d *Daemon) driftFindings(ctx context.Context, c docker.Container, p compose.Project) []compose.Finding {
 	cs := d.cs()
 	gctx, cancel := context.WithTimeout(ctx, guardTimeout)
 	defer cancel()
 	in := compose.GuardInput{
 		Project: p, ContainerName: c.Name, Labels: c.Labels, ImageRef: c.Image, Arch: cs.server.Arch, RefHolder: holdsReference(c),
 	}
-	var out []string
-	for _, f := range (compose.Guard{Compose: d.o.Compose, Images: d.rd}).Check(gctx, in) {
-		out = append(out, f.String())
+	return (compose.Guard{Compose: d.o.Compose, Images: d.rd}).Check(gctx, in)
+}
+
+// parentOptedIn reports whether a container: parent of c is opted in. A parent that is gone (that is why a dependent is
+// stale) is found through the services named in c's depends_on label.
+func (d *Daemon) parentOptedIn(c docker.Container) bool {
+	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
+		ref := docker.ContainerRef(mode)
+		if ref == "" {
+			continue
+		}
+		found := false
+		for _, s := range d.idx.all {
+			if docker.MatchesRef(s.ID, s.Name, ref) {
+				found = true
+				if pc, _ := config.ParseLabels(s.Labels, d.cfg.Mode); pc.OptedIn {
+					return true
+				}
+			}
+		}
+		if found {
+			continue
+		}
+		project := c.Labels[docker.LabelProject]
+		for _, dep := range dependsOn(c.Labels[compose.LabelDependsOn]) {
+			for _, s := range d.idx.all {
+				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || s.Labels[docker.LabelOneOff] == "True" {
+					continue
+				}
+				if pc, _ := config.ParseLabels(s.Labels, d.cfg.Mode); pc.OptedIn {
+					return true
+				}
+			}
+		}
 	}
-	return out
+	return false
 }
 
 // requestDependentSweep asks for the dependents of whatever was just acted on to be looked at at the given time (plan
@@ -268,10 +299,20 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 	}
 
 	// The drift guard, before the recreate (plan §3.6). It runs in dry-run too: it only reads.
-	if findings := d.driftFindings(ctx, c, p); len(findings) > 0 {
-		if d.cfg.DriftGuard == config.DriftWarn {
-			d.eng.Warned(t, findings)
-		} else {
+	if fs := d.driftFindings(ctx, c, p); len(fs) > 0 {
+		var findings []string
+		verifiedOnly := true
+		for _, f := range fs {
+			findings = append(findings, f.String())
+			verifiedOnly = verifiedOnly && f.Verified()
+		}
+		switch {
+		case d.cfg.DriftGuard == config.DriftWarn && verifiedOnly:
+			d.eng.Warned(t, findings) // warn overrides verified drift only
+		default:
+			if d.cfg.DriftGuard == config.DriftWarn {
+				findings = append(findings, "WHALENURSE_DRIFT_GUARD=warn does not override a check that could not be made")
+			}
 			d.eng.Blocked(t, dec, findings)
 			return
 		}

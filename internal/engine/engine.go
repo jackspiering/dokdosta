@@ -589,7 +589,8 @@ func (e *Engine) flapLimit(cfg config.Container) int {
 func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Container, o Obs, now time.Time) Plan {
 	st.advisory = ""
 	if st.incident == nil {
-		// Flap count: closing an incident does not reset it, only the window expiring does.
+		// Flap count: closing an incident does not reset it, only the window expiring does. A dependent repaired by the
+		// dependents step belongs to its parent's incident and is not counted (plan v3.6).
 		cut := now.Add(-e.p.FlapWindow)
 		kept := st.flaps[:0]
 		for _, f := range st.flaps {
@@ -597,12 +598,15 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 				kept = append(kept, f)
 			}
 		}
-		st.flaps = append(kept, now)
+		st.flaps = kept
+		if !d.IsDependentStep() {
+			st.flaps = append(st.flaps, now)
+		}
 		st.incident = &incident{opened: now, class: d.Class}
 		st.dirty = true
 		e.emit(t, IncidentOpened, d.Reason, map[string]string{"class": string(d.Class), "action": string(d.Action)})
 		// More than FLAP_LIMIT incidents within FLAP_WINDOW: SUSPENDED, whatever became of the last ones.
-		if limit := e.flapLimit(cfg); len(st.flaps) > limit {
+		if limit := e.flapLimit(cfg); !d.IsDependentStep() && len(st.flaps) > limit {
 			st.incident.spent, st.incident.spentReason = true, ReasonFlapping
 			e.suspend(t, st, fmt.Sprintf("flapping: %d incidents within %s (limit %d): %s", len(st.flaps), e.p.FlapWindow, limit, d.Reason), d)
 			return Plan{}

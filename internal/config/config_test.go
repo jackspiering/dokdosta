@@ -125,3 +125,22 @@ func TestFlapLimitLabel(t *testing.T) {
 		t.Fatalf("%+v %v", c, w)
 	}
 }
+
+func TestDisabledLabelIsDistinctFromNotOptedIn(t *testing.T) {
+	for _, tc := range []struct {
+		mode     Mode
+		labels   map[string]string
+		opted, d bool
+	}{
+		{ModeLabel, nil, false, false},
+		{ModeLabel, map[string]string{LabelEnable: "true"}, true, false},
+		{ModeLabel, map[string]string{LabelEnable: "false"}, false, true},
+		{ModeAll, nil, true, false},
+		{ModeAll, map[string]string{LabelEnable: "false"}, false, true},
+	} {
+		c, _ := ParseLabels(tc.labels, tc.mode)
+		if c.OptedIn != tc.opted || c.Disabled != tc.d {
+			t.Errorf("%v %v: opted=%v disabled=%v", tc.mode, tc.labels, c.OptedIn, c.Disabled)
+		}
+	}
+}

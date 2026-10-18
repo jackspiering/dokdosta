@@ -175,3 +175,49 @@ func TestNoteReachesTheStream(t *testing.T) {
 		t.Fatal(rec.Types())
 	}
 }
+
+// A dependent repaired by the dependents step belongs to its parent's incident: it does not count toward its own flap
+// limit (plan v3.6). Its own failures do.
+func TestDependentStepDoesNotCountTowardTheFlapLimit(t *testing.T) {
+	e, clk, rec := newEngine(t, 0)
+	stale := rules.Decision{Class: rules.ClassStaleParentRestarted, Action: rules.ActionRestart, Reason: "parent restarted"}
+	for i := 0; i < 6; i++ { // FlapLimit is 3
+		if p := run(e, stale, cfg, noHCRecreate); p.Act != rules.ActionRestart {
+			t.Fatalf("round %d: %+v", i, p)
+		}
+		clk.Advance(31 * time.Second)
+		e.Evaluate(tgt, ok, cfg, noHCRecreate) // recovering
+		clk.Advance(11 * time.Minute)
+		e.Evaluate(tgt, ok, cfg, noHCRecreate) // recovered: the incident closes
+	}
+	if rec.Count(Suspended) != 0 || rec.Count(Recovered) != 6 {
+		t.Fatalf("%v", rec.Types())
+	}
+	for _, k := range e.Status().Keys {
+		if k.Key == tgt.Key && k.Flaps != 0 {
+			t.Fatalf("flaps = %d", k.Flaps)
+		}
+	}
+	gone := rules.Decision{Class: rules.ClassStaleParentGone, Action: rules.ActionRecreateStale, Reason: "gone"}
+	for i := 0; i < 6; i++ {
+		run(e, gone, cfg, noHCRecreate)
+		clk.Advance(31 * time.Second)
+		e.Evaluate(tgt, ok, cfg, noHCRecreate)
+		clk.Advance(11 * time.Minute)
+		e.Evaluate(tgt, ok, cfg, noHCRecreate)
+	}
+	if rec.Count(Suspended) != 0 {
+		t.Fatalf("%v", rec.Types())
+	}
+	// Its own failures still flap.
+	for i := 0; i < 4; i++ {
+		run(e, bad, cfg, noHCRecreate)
+		clk.Advance(31 * time.Second)
+		e.Evaluate(tgt, ok, cfg, noHCRecreate)
+		clk.Advance(11 * time.Minute)
+		e.Evaluate(tgt, ok, cfg, noHCRecreate)
+	}
+	if rec.Count(Suspended) != 1 {
+		t.Fatalf("its own incidents still count: %v", rec.Types())
+	}
+}

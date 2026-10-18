@@ -31,6 +31,11 @@ type Finding struct {
 
 func (f Finding) String() string { return f.Check + ": " + f.Cause }
 
+// Verified reports whether the finding is real drift that was established (config or image). The others (a check that
+// could not be made, a version skew that makes drift unverifiable) are "can't verify": WHALENURSE_DRIFT_GUARD=warn does
+// not override them (plan v3.6).
+func (f Finding) Verified() bool { return f.Check == CheckConfig || f.Check == CheckImage }
+
 // ImageResolver returns what an image reference resolves to for linux/<arch> (internal/docker implements it).
 type ImageResolver interface {
 	ImageID(ctx context.Context, ref, arch string) (string, error)
@@ -90,7 +95,7 @@ func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
 		if msg := g.skew(in); msg != "" {
 			out = append(out, Finding{CheckSkew, msg})
 		} else {
-			out = append(out, Finding{CheckConfig, configDrift})
+			out = append(out, Finding{CheckConfig, configDrift + g.upgraded(in)})
 		}
 	}
 	return out
@@ -133,6 +138,19 @@ func (g Guard) skew(in GuardInput) string {
 		return ""
 	}
 	return fmt.Sprintf("can't verify drift (compose %s on host vs %s in whalenurse): the container was made by another compose release than the bundled one, and compose sees a change", have, b.Version)
+}
+
+// upgraded is information for a config-drift message when the compose in use is not the release that made the container
+// (the host plugin was upgraded since): the change may be the hash layout rather than an edit. It is not a block of its
+// own (plan v3.6); the bundled compose is handled by skew.
+func (g Guard) upgraded(in GuardInput) string {
+	b := g.Compose.Binary()
+	have := strings.TrimSpace(in.Labels[LabelVersion])
+	if have == "" || b.Version.IsZero() || SameRelease(have, b.Version) {
+		return ""
+	}
+	v, _ := ParseVersion(have)
+	return fmt.Sprintf(" (compose upgraded from %s to %s since this container was created, so this may be a changed hash layout rather than an edit)", v, b.Version)
 }
 
 // imageCheck compares the container's com.docker.compose.image label with what its image reference resolves to now. It

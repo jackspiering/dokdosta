@@ -562,8 +562,8 @@ func (d *Daemon) poll(ctx context.Context) {
 	now := d.clk.Now()
 	for _, s := range d.idx.all {
 		cfg, _ := config.ParseLabels(s.Labels, d.cfg.Mode)
-		if !cfg.OptedIn {
-			continue
+		if !cfg.OptedIn && (cfg.Disabled || !hasRef(s)) {
+			continue // a sidecar that is not opted in is still looked at: its opted-in parent may have left it stale
 		}
 		d.schedule(d.keyOf(s), now.Add(d.cfg.Grace))
 	}
@@ -627,9 +627,10 @@ func (d *Daemon) process(ctx context.Context, key string) {
 
 	in := rules.Input{
 		Now: now, C: c, Cfg: cfg,
-		Self:     d.o.SelfID != "" && c.ID == d.o.SelfID,
-		Parents:  d.parentsOf(ctx, c),
-		Evidence: d.eng.Evidence(key),
+		DependentOfOptedIn: !cfg.OptedIn && !cfg.Disabled && d.parentOptedIn(c),
+		Self:               d.o.SelfID != "" && c.ID == d.o.SelfID,
+		Parents:            d.parentsOf(ctx, c),
+		Evidence:           d.eng.Evidence(key),
 		// A container that stopped in a shutdown window was stopped by the host, whatever its exit code.
 		HostStopped: c.Status == "exited" && d.eng.HostStopped(c.FinishedAt),
 	}

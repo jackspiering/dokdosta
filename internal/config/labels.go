@@ -36,6 +36,7 @@ const (
 // Container is the effective per-container configuration.
 type Container struct {
 	OptedIn    bool
+	Disabled   bool     // whalenurse.enable=false: left alone entirely, even as a dependent of an opted-in parent
 	Actions    []string // ladder rungs, in order
 	HealExited HealExited
 	Cooldown   time.Duration // 0: use the global base
@@ -69,7 +70,7 @@ func ParseLabels(labels map[string]string, mode Mode) (Container, []string) {
 		if err != nil {
 			warn("%s=%q is not a boolean; container is %s", LabelEnable, v, map[bool]string{true: "kept in scope", false: "not opted in"}[c.OptedIn])
 		} else {
-			c.OptedIn = b
+			c.OptedIn, c.Disabled = b, !b
 		}
 	}
 	if v, ok := labels[LabelActions]; ok {
