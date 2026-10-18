@@ -12,20 +12,22 @@ import (
 	"github.com/jackspiering/whalenurse/internal/docker"
 )
 
-// Action is what the rules want done. Restart and Start are the only actions
-// performed until M2b; NeedsRecreate and NeedsDependentRestart are recorded and
-// logged and take effect in M2b.
+// Action is what the rules want done.
 type Action string
 
 const (
-	ActionNone                  Action = "none"
-	ActionRestart               Action = "restart"                 // API restart: running, unhealthy or crash-looping
-	ActionStart                 Action = "start"                   // API start: created or exited
-	ActionNeedsRecreate         Action = "needs-recreate"          // M2b: recreate via compose
-	ActionNeedsDependentRestart Action = "needs-dependent-restart" // M2b: the dependents step
-	ActionWaitForParent         Action = "wait-for-parent"         // act only on the parent
-	ActionNotify                Action = "notify"                  // log + domain event, no action
+	ActionNone          Action = "none"
+	ActionRestart       Action = "restart"         // API restart: running, unhealthy, crash-looping, or a dependent whose parent restarted later
+	ActionStart         Action = "start"           // API start: created or exited
+	ActionRecreate      Action = "recreate"        // compose --force-recreate, skipping the restart rung that cannot help (a network that is gone)
+	ActionRecreateStale Action = "recreate-stale"  // a dependent whose parent was recreated: compose up without --force-recreate (plan §3.5)
+	ActionNeedsRecreate Action = "needs-recreate"  // advisory: a recreate is what it needs, but none is available (version gate, no usable compose labels)
+	ActionWaitForParent Action = "wait-for-parent" // act only on the parent
+	ActionNotify        Action = "notify"          // log + domain event, no action
 )
+
+// IsRecreate reports whether the action is carried out by compose rather than the Docker API.
+func (a Action) IsRecreate() bool { return a == ActionRecreate || a == ActionRecreateStale }
 
 // Class names the condition found. Skip reasons use ClassSkip plus Skip.
 type Class string
@@ -95,6 +97,10 @@ type Input struct {
 	Parents  []Parent // one per container: reference in network_mode, ipc or pid
 	Evidence Evidence
 	Loop     Loop // the crash-loop state the engine derived from RestartCount (rule 3)
+	// DependentOfOptedIn: a container: parent of this container (found, or named by its depends_on label when its ID is
+	// gone) is opted in. Such a container is repaired by the dependents step even when it is not opted in itself, unless
+	// it is labelled whalenurse.enable=false; its own failures are still its own business (plan v3.6).
+	DependentOfOptedIn bool
 	// HostStopped: the container stopped inside a shutdown window (plan §3.3 rule 4): between 30 s before the
 	// previous run's last_seen, or the events-stream loss, and the daemon's restore. Whatever its exit code.
 	HostStopped bool
@@ -117,6 +123,9 @@ type Decision struct {
 	Cause  Cause  // set when Class is ClassStartFailed
 	Skip   string // set when Class is ClassSkip
 	Reason string
+	// Dependents names the containers that depend on this one, for the single notification about a parent that stays
+	// down (rule 4): the daemon fills it in, the rules never look the others up.
+	Dependents []string
 }
 
 func (d Decision) String() string {
@@ -140,14 +149,39 @@ func Classify(in Input) Decision {
 		return skip(SkipOneOff, "compose run container")
 	case c.Labels[docker.LabelSwarmTaskID] != "":
 		return skip(SkipSwarm, "swarm task")
-	case !in.Cfg.OptedIn:
+	case in.Cfg.Disabled:
+		return skip(SkipNotOptedIn, "whalenurse.enable=false")
+	case !in.Cfg.OptedIn && !in.DependentOfOptedIn:
 		return skip(SkipNotOptedIn, "not opted in")
 	case c.Status == "removing":
 		return skip(SkipRemoving, "being removed")
 	case c.Paused || c.Status == "paused":
 		return skip(SkipDockerPause, "paused with docker pause")
 	}
-	return guardReferences(in, classifyState(in))
+	d := guardReferences(in, classifyState(in))
+	if !in.Cfg.OptedIn && d.Class == ClassUnhealthy && d.Action == ActionRestart {
+		// Not opted in: an unhealthy sidecar is its own business, unless it is unhealthy because its parent restarted
+		// after it (the namespace it holds is stale); then the dependents step restarts it.
+		for _, p := range in.Parents {
+			if p.Found && p.Running && !p.Busy && !p.StartedAt.IsZero() && p.StartedAt.After(c.StartedAt) {
+				d = Decision{Class: ClassStaleParentRestarted, Action: ActionRestart,
+					Reason: fmt.Sprintf("parent %s started after this container; its namespace is stale; restarting it", docker.ShortID(p.ID))}
+				break
+			}
+		}
+	}
+	if !in.Cfg.OptedIn && !d.IsDependentStep() {
+		// Not opted in, but its parent is: only the dependents step may touch it.
+		return skip(SkipNotOptedIn, "not opted in (only the dependents step of an opted-in parent repairs it)")
+	}
+	return d
+}
+
+// IsDependentStep reports whether the decision is the dependents step of plan §3.5: a container made stale by its parent
+// being restarted or recreated. It is repaired as part of the parent's incident, so it does not count toward the
+// container's own flap limit, and it needs no opt-in of its own.
+func (d Decision) IsDependentStep() bool {
+	return d.Action == ActionRecreateStale || d.Class == ClassStaleParentRestarted
 }
 
 func skip(reason, text string) Decision {
@@ -165,9 +199,12 @@ func classifyState(in Input) Decision {
 		cause := ClassifyStartError(c.Error)
 		d := Decision{Class: ClassStartFailed, Action: ActionStart, Cause: cause, Reason: "failed start (" + string(cause) + "): " + trim(c.Error)}
 		switch cause {
-		case CauseParentGone, CauseNetworkGone:
-			// Restarting cannot work: the thing it referenced no longer exists.
-			d.Action = ActionNeedsRecreate
+		case CauseParentGone:
+			// Restarting cannot work: the parent it referenced no longer exists. Recreate the dependent (plan §3.5).
+			d.Action = ActionRecreateStale
+		case CauseNetworkGone:
+			// Restarting cannot work either; the recreate is rung 2 of an ordinary ladder, the drift guard included.
+			d.Action = ActionRecreate
 		}
 		// CauseParentStopped stays a Start; guardReferences turns it into
 		// "wait for the parent" until the parent runs, then it is a plain start.
@@ -293,11 +330,11 @@ func policyName(c docker.Container) string {
 // guardReferences enforces plan §3.5 for containers that share a namespace
 // with another container (network_mode/ipc/pid: container:<x>):
 //   - parent ID gone: never restart or start it. That fails and turns a
-//     running-but-disconnected dependent into an exited one (E1). It needs a
-//     recreate (M2b).
+//     running-but-disconnected dependent into an exited one (E1). It is recreated
+//     with a non-forced `up` (ActionRecreateStale).
 //   - parent not running, or busy with its own incident: act only on the parent.
-//   - a running dependent whose parent started later is stale: M2b's dependents
-//     step restarts it; until then it is only recorded.
+//   - a running dependent whose parent started later is stale: restart it through
+//     the API (ClassStaleParentRestarted), the dependents step.
 func guardReferences(in Input, d Decision) Decision {
 	if in.C.Status == "removing" {
 		return d
@@ -323,37 +360,45 @@ func guardReferences(in Input, d Decision) Decision {
 		if !p.Found {
 			// Parent ID gone. Regardless of what else is wrong, an API restart/start
 			// is forbidden, and a running dependent is silently stale.
-			if d.Action == ActionRestart || d.Action == ActionStart ||
+			if d.Action == ActionRecreateStale {
+				return d // rule 1 already said so, with its own class and cause
+			}
+			if d.Action == ActionRestart || d.Action == ActionStart || d.Action.IsRecreate() ||
 				(d.Action == ActionNone && in.C.Running && (d.Class == ClassOK || d.Class == ClassStarting)) {
-				return Decision{Class: ClassStaleParentGone, Action: ActionNeedsRecreate, Cause: d.Cause,
-					Reason: fmt.Sprintf("%s: container:%s no longer exists (parent was recreated or removed); needs recreate (M2b), not restarting", p.Kind, p.Ref)}
+				return Decision{Class: ClassStaleParentGone, Action: ActionRecreateStale, Cause: d.Cause,
+					Reason: fmt.Sprintf("%s: container:%s no longer exists (parent was recreated or removed); recreating it, never restarting", p.Kind, p.Ref)}
 			}
 			return d
 		}
 	}
-	switch d.Action {
-	case ActionRestart, ActionStart:
+	switch {
+	case d.Action == ActionRestart || d.Action == ActionStart || d.Action.IsRecreate():
 		for _, p := range in.Parents {
 			if !p.Running || p.Busy {
-				why := "is not running"
-				if p.Busy {
-					why = "has an incident open or an action in flight"
-				}
-				return Decision{Class: ClassWaitingForParent, Action: ActionWaitForParent, Cause: d.Cause,
-					Reason: fmt.Sprintf("parent %s %s; acting on the parent only", docker.ShortID(p.ID), why)}
+				return waitForParent(d, p)
 			}
 		}
-	case ActionNone:
-		if in.C.Running && (d.Class == ClassOK) {
-			for _, p := range in.Parents {
-				if p.Running && !p.StartedAt.IsZero() && p.StartedAt.After(in.C.StartedAt) {
-					return Decision{Class: ClassStaleParentRestarted, Action: ActionNeedsDependentRestart,
-						Reason: fmt.Sprintf("parent %s started after this container; its namespace is stale; needs restart (M2b dependents step)", docker.ShortID(p.ID))}
+	case d.Action == ActionNone && in.C.Running && d.Class == ClassOK:
+		for _, p := range in.Parents {
+			if p.Running && !p.StartedAt.IsZero() && p.StartedAt.After(in.C.StartedAt) {
+				if p.Busy {
+					return waitForParent(d, p)
 				}
+				return Decision{Class: ClassStaleParentRestarted, Action: ActionRestart,
+					Reason: fmt.Sprintf("parent %s started after this container; its namespace is stale; restarting it", docker.ShortID(p.ID))}
 			}
 		}
 	}
 	return d
+}
+
+func waitForParent(d Decision, p Parent) Decision {
+	why := "is not running"
+	if p.Busy {
+		why = "has an incident open or an action in flight"
+	}
+	return Decision{Class: ClassWaitingForParent, Action: ActionWaitForParent, Cause: d.Cause,
+		Reason: fmt.Sprintf("parent %s %s; acting on the parent only", docker.ShortID(p.ID), why)}
 }
 
 func trim(s string) string {

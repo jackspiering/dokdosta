@@ -19,6 +19,7 @@ type Status struct {
 	Settled      bool          `json:"settled"`
 	Healthy      bool          `json:"healthy"`
 	HealthDetail string        `json:"health_detail,omitempty"`
+	Compose      ComposeStatus `json:"compose"`
 	Engine       engine.Status `json:"engine"`
 }
 
@@ -28,7 +29,7 @@ func (d *Daemon) Status() any {
 	return Status{
 		Host: d.cfg.HostID, Mode: string(d.cfg.Mode), DryRun: d.cfg.DryRun, Persistent: d.o.Persist != nil,
 		EventsUp: d.eventsUp.Load(), Settled: d.settledFlag.Load(), Healthy: ok, HealthDetail: detail,
-		Engine: d.eng.Status(),
+		Compose: d.composeStatus(), Engine: d.eng.Status(),
 	}
 }
 

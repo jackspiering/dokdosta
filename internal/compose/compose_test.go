@@ -1,0 +1,370 @@
+package compose
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+)
+
+// recRunner records every command and answers from a table.
+type recRunner struct {
+	cmds []Command
+	out  func(Command) (Result, error)
+}
+
+func (r *recRunner) Run(_ context.Context, c Command) (Result, error) {
+	r.cmds = append(r.cmds, c)
+	if r.out != nil {
+		return r.out(c)
+	}
+	return Result{}, nil
+}
+
+func proj() Project {
+	return Project{Name: "whalenurse-test-x", WorkingDir: "/opt/stacks/x", ConfigFiles: []string{"/opt/stacks/x/compose.yaml", "/opt/stacks/x/override.yaml"},
+		EnvFiles: []string{"/opt/stacks/x/.env"}, Service: "web"}
+}
+
+func TestParseVersion(t *testing.T) {
+	for in, want := range map[string]Version{
+		"5.6.0": {5, 6, 0}, "v5.6.0": {5, 6, 0}, "Docker Compose version v5.2.0\n": {5, 2, 0}, "29.9.1": {29, 9, 1},
+		"28.1.0-rc.1": {28, 1, 0}, "28.1": {28, 1, 0}, "2.38.2": {2, 38, 2}, "  v5.10.3+dev ": {5, 10, 3},
+	} {
+		if got, ok := ParseVersion(in); !ok || got != want {
+			t.Errorf("ParseVersion(%q) = %v, %v; want %v", in, got, ok, want)
+		}
+	}
+	for _, in := range []string{"", "dev", "latest", "v5"} {
+		if _, ok := ParseVersion(in); ok {
+			t.Errorf("ParseVersion(%q) should fail", in)
+		}
+	}
+}
+
+func TestVersionOrder(t *testing.T) {
+	if !(Version{5, 1, 9}).Less(MinCompose) || (Version{5, 2, 0}).Less(MinCompose) || (Version{5, 10, 0}).Less(MinCompose) {
+		t.Fatal("ordering by component, not by string")
+	}
+	if !(Version{28, 0, 4}).Less(MinEngine) || (Version{28, 1, 0}).Less(MinEngine) || (Version{29, 9, 1}).Less(MinEngine) {
+		t.Fatal("engine minimum is 28.1.0")
+	}
+}
+
+func TestCheckVersions(t *testing.T) {
+	ok := &Binary{Path: "/host/docker-compose", Source: SourceHost, Version: Version{5, 2, 0}}
+	for _, tc := range []struct {
+		name, engine string
+		bin          *Binary
+		want         bool
+		reason       string
+	}{
+		{"both at the minimum", "28.1.0", ok, true, ""},
+		{"newer", "29.9.1", &Binary{Version: Version{5, 6, 0}}, true, ""},
+		{"engine 28.0.4", "28.0.4", ok, false, "Docker Engine 28.0.4 is older than 28.1.0"},
+		{"engine 25", "25.0.5", ok, false, "older than 28.1.0"},
+		{"compose 5.1.0", "29.9.1", &Binary{Path: "/p", Version: Version{5, 1, 0}}, false, "Docker Compose 5.1.0 (/p) is older than 5.2.0"},
+		{"compose v2 on the runner", "29.9.1", &Binary{Path: "/p", Version: Version{2, 38, 2}}, false, "Compose 2.38.2"},
+		{"no compose", "29.9.1", nil, false, "no docker compose binary"},
+		{"unreadable compose version", "29.9.1", &Binary{Path: "/p", Raw: "garbage"}, false, "cannot be read"},
+		{"unreadable engine version", "", ok, false, "cannot be read"},
+		{"both old", "25.0.0", &Binary{Version: Version{2, 0, 0}}, false, "Engine 25.0.0"},
+	} {
+		g := CheckVersions(tc.engine, tc.bin)
+		if g.Recreate != tc.want || !strings.Contains(g.Reason, tc.reason) || (tc.want && g.Reason != "") {
+			t.Errorf("%s: %+v", tc.name, g)
+		}
+	}
+}
+
+func TestProjectFromLabels(t *testing.T) {
+	good := map[string]string{
+		LabelProject: "p", LabelService: "web", LabelWorkingDir: "/opt/stacks/p",
+		LabelConfigFiles: "/opt/stacks/p/compose.yaml, /opt/stacks/p/o.yaml", LabelEnvFile: "/opt/stacks/p/.env",
+	}
+	p, err := ProjectFromLabels(good)
+	if err != nil || p.Name != "p" || p.Service != "web" || len(p.ConfigFiles) != 2 || p.ConfigFiles[1] != "/opt/stacks/p/o.yaml" || len(p.EnvFiles) != 1 {
+		t.Fatalf("%+v %v", p, err)
+	}
+	for _, drop := range []string{LabelProject, LabelService, LabelWorkingDir, LabelConfigFiles} {
+		l := map[string]string{}
+		for k, v := range good {
+			if k != drop {
+				l[k] = v
+			}
+		}
+		if _, err := ProjectFromLabels(l); err == nil || !strings.Contains(err.Error(), drop) {
+			t.Errorf("without %s: %v", drop, err)
+		}
+	}
+	// No env file is fine.
+	delete(good, LabelEnvFile)
+	if p, err := ProjectFromLabels(good); err != nil || len(p.EnvFiles) != 0 {
+		t.Fatalf("%+v %v", p, err)
+	}
+}
+
+func TestReadableNamesTheIdenticalPathMount(t *testing.T) {
+	dir := t.TempDir()
+	f := dir + "/compose.yaml"
+	if err := os.WriteFile(f, []byte("services: {}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ok := Project{Name: "p", WorkingDir: dir, ConfigFiles: []string{f}}
+	if err := ok.Readable(nil); err != nil {
+		t.Fatal(err)
+	}
+	missing := Project{Name: "p", WorkingDir: "/nonexistent/stack", ConfigFiles: []string{"/nonexistent/stack/compose.yaml"}, EnvFiles: []string{"/nonexistent/stack/.env"}}
+	err := missing.Readable(nil)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"/nonexistent/stack does not exist", "compose file /nonexistent/stack/compose.yaml", "env file", "identical host path", ":ro"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("%q missing from: %v", want, err)
+		}
+	}
+	notDir := Project{Name: "p", WorkingDir: f, ConfigFiles: []string{f}}
+	if err := notDir.Readable(nil); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("%v", err)
+	}
+}
+
+// Every command line is built here, so this is where "never down, always --no-deps --pull never --no-build" is pinned.
+func TestCommandLines(t *testing.T) {
+	r := &recRunner{out: func(c Command) (Result, error) {
+		if slices.Contains(c.Args, "config") {
+			return Result{Stdout: []byte("web abc123\n")}, nil
+		}
+		return Result{Stderr: []byte(`{"id":"Container c-web-1","status":"Done","text":"Running"}` + "\n")}, nil
+	}}
+	c := New(Binary{Path: "/host/docker-compose", Source: SourceHost}, r)
+	p := proj()
+	ctx := context.Background()
+	if err := c.Recreate(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Up(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.DryRunUp(ctx, p, "c-web-1"); err != nil {
+		t.Fatal(err)
+	}
+	if h, err := c.ConfigHash(ctx, p); err != nil || h != "abc123" {
+		t.Fatalf("%q %v", h, err)
+	}
+	base := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env "
+	want := []string{
+		base + "up -d --force-recreate --no-deps --pull never --no-build web",
+		base + "up -d --no-deps --pull never --no-build web",
+		base + "--dry-run --progress json up -d --no-deps --pull never --no-build web",
+		base + "config --hash=web",
+	}
+	if len(r.cmds) != len(want) {
+		t.Fatalf("%d commands", len(r.cmds))
+	}
+	for i, w := range want {
+		if got := strings.Join(r.cmds[i].Args, " "); got != w {
+			t.Errorf("command %d:\n got %s\nwant %s", i, got, w)
+		}
+		if r.cmds[i].Bin != "/host/docker-compose" || r.cmds[i].Dir != "/" {
+			t.Errorf("command %d: %+v", i, r.cmds[i])
+		}
+	}
+	for _, cmd := range r.cmds {
+		for _, bad := range []string{"down", "rm", "pull", "build", "run", "stop", "kill"} {
+			if slices.Contains(cmd.Args, bad) {
+				t.Errorf("%s contains %q", cmd, bad)
+			}
+		}
+		if slices.Contains(cmd.Args, "up") && (!slices.Contains(cmd.Args, "--no-deps") || !slices.Contains(cmd.Args, "--no-build") ||
+			strings.Join(cmd.Args, " ") == "" || !strings.Contains(strings.Join(cmd.Args, " "), "--pull never")) {
+			t.Errorf("an up without --no-deps --pull never --no-build: %s", cmd)
+		}
+	}
+	// Names with odd characters are single arguments, not shell text.
+	p.Service = "we b;rm -rf /"
+	r.cmds = nil
+	_ = c.Recreate(ctx, p)
+	if !slices.Contains(r.cmds[0].Args, "we b;rm -rf /") {
+		t.Fatalf("%v", r.cmds[0].Args)
+	}
+}
+
+func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
+	env := ChildEnv([]string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "COMPOSE_PROJECT_NAME=evil", "COMPOSE_FILE=/x", "COMPOSE_PROFILES=a",
+		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "WHALENURSE_NOTIFY_URLS=secret://", "NO_COLOR=0"})
+	got := strings.Join(env, "\n")
+	for _, bad := range []string{"COMPOSE_", "DOCKER_CONTEXT", "DOCKER_CONFIG", "WHALENURSE_", "NO_COLOR=0"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("%s survived: %v", bad, env)
+		}
+	}
+	for _, keep := range []string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "NO_COLOR=1"} {
+		if !slices.Contains(env, keep) {
+			t.Errorf("%s missing: %v", keep, env)
+		}
+	}
+}
+
+func TestDryRunActorRunsNothing(t *testing.T) {
+	var verbs []string
+	d := DryRun{Would: func(v string, _ Project) { verbs = append(verbs, v) }}
+	if d.Recreate(context.Background(), proj()) != nil || d.Up(context.Background(), proj()) != nil || fmt.Sprint(verbs) != "[recreate up]" {
+		t.Fatal(verbs)
+	}
+}
+
+// ---- the oracle ------------------------------------------------------------------------------------------------
+
+// The texts E5 recorded for compose v5.6.0 (docs/m0-findings.md): one JSON object per line, on stderr.
+const (
+	oracleUnchanged = `{"id":"Container wn-web-1","status":"Done","text":"Running"}` + "\n"
+	oracleChanged   = `{"id":"Container wn-web-1","status":"Working","text":"Recreate"}
+{"id":"Container wn-web-1","status":"Done","text":"Recreated"}
+{"id":"Container wn-web-1","status":"Working","text":"Starting"}
+{"id":"Container wn-web-1","status":"Done","text":"Started"}
+`
+	oracleStopped = `{"id":"Container wn-web-1","status":"Working","text":"Starting"}
+{"id":"Container wn-web-1","status":"Done","text":"Started"}
+`
+)
+
+func TestParseOracle(t *testing.T) {
+	for _, tc := range []struct {
+		name, out string
+		recreate  bool
+		err       error
+		texts     string
+	}{
+		{"unchanged", oracleUnchanged, false, nil, "Running"},
+		{"changed config or image", oracleChanged, true, nil, "Recreate, Recreated, Starting, Started"},
+		{"stopped, config unchanged: Starting is not drift", oracleStopped, false, nil, "Starting, Started"},
+		{"the old container is renamed to <id>_<name> while it is recreated", `{"id":"Container 4f2a9b1c_wn-web-1","status":"Working","text":"Recreate"}` + "\n", true, nil, "Recreate"},
+		{"other containers are ignored", `{"id":"Container other-1","status":"Done","text":"Recreate"}` + "\n" + oracleUnchanged, false, nil, "Running"},
+		{"noise around the lines", "time=... level=warning msg=x\n" + oracleChanged + "\nnot json\n", true, nil, "Recreate, Recreated, Starting, Started"},
+		{"an old compose printed null", "null\n", false, ErrUnparseable, ""},
+		{"empty", "", false, ErrUnparseable, ""},
+		{"plain text progress", " Container wn-web-1  Running \n", false, ErrUnparseable, ""},
+		{"parsed, but nothing about this container", `{"id":"Network wn_default","status":"Done","text":"Resource is up-to-date"}` + "\n", false, ErrUnparseable, ""},
+		{"a line without text", `{"id":"Container wn-web-1","status":"Done"}` + "\n", false, ErrUnparseable, ""},
+	} {
+		o, err := ParseOracle([]byte(tc.out), "wn-web-1")
+		if !errors.Is(err, tc.err) {
+			t.Errorf("%s: error %v, want %v", tc.name, err, tc.err)
+			continue
+		}
+		if err == nil && (o.WouldRecreate() != tc.recreate || strings.Join(o.Texts(), ", ") != tc.texts) {
+			t.Errorf("%s: recreate=%v texts=%v", tc.name, o.WouldRecreate(), o.Texts())
+		}
+	}
+}
+
+func TestOracleIsReadFromStderrToo(t *testing.T) {
+	r := &recRunner{out: func(Command) (Result, error) {
+		return Result{Stdout: []byte("noise\n"), Stderr: []byte(oracleChanged)}, nil
+	}}
+	o, err := New(Binary{Path: "c"}, r).DryRunUp(context.Background(), proj(), "wn-web-1")
+	if err != nil || !o.WouldRecreate() {
+		t.Fatalf("%v %v", o, err)
+	}
+	r.out = func(Command) (Result, error) { return Result{Stdout: []byte(oracleChanged)}, nil }
+	if o, err = New(Binary{Path: "c"}, r).DryRunUp(context.Background(), proj(), "wn-web-1"); err != nil || !o.WouldRecreate() {
+		t.Fatalf("stdout too: %v %v", o, err)
+	}
+}
+
+func TestParseConfigHash(t *testing.T) {
+	out := []byte("db 1111aaaa2222bbbb\nweb 427fb0d10b7c52fc\n")
+	if h, err := ParseConfigHash(out, "web"); err != nil || h != "427fb0d10b7c52fc" {
+		t.Fatalf("%q %v", h, err)
+	}
+	if _, err := ParseConfigHash(out, "nope"); err == nil {
+		t.Fatal("a missing service is an error")
+	}
+	if _, err := ParseConfigHash([]byte(""), "web"); err == nil {
+		t.Fatal("empty output is an error")
+	}
+}
+
+// ---- binary lookup ---------------------------------------------------------------------------------------------
+
+type fakeInfo struct{ dir bool }
+
+func (fakeInfo) Name() string       { return "f" }
+func (fakeInfo) Size() int64        { return 1 }
+func (fakeInfo) Mode() os.FileMode  { return 0o755 }
+func (fakeInfo) ModTime() time.Time { return time.Time{} }
+func (f fakeInfo) IsDir() bool      { return f.dir }
+func (fakeInfo) Sys() any           { return nil }
+
+func TestResolveOrder(t *testing.T) {
+	versions := map[string]string{"/env/c": "5.9.0\n", "/host/docker-compose": "v5.6.0\n", BundledPath: "5.4.0\n", HostPluginDirs[0]: "5.3.0\n"}
+	broken := map[string]bool{}
+	present := map[string]bool{}
+	for p := range versions {
+		present[p] = true
+	}
+	mk := func(env string) Lookup {
+		return Lookup{
+			Env: env,
+			Stat: func(p string) (os.FileInfo, error) {
+				if present[p] {
+					return fakeInfo{}, nil
+				}
+				return nil, os.ErrNotExist
+			},
+			Runner: &recRunner{out: func(c Command) (Result, error) {
+				if broken[c.Bin] {
+					return Result{}, errors.New("exec format error")
+				}
+				return Result{Stdout: []byte(versions[c.Bin])}, nil
+			}},
+		}
+	}
+	ctx := context.Background()
+	check := func(env, wantPath string, wantSrc Source, wantV Version) {
+		t.Helper()
+		b, _, err := Resolve(ctx, mk(env))
+		if err != nil || b.Path != wantPath || b.Source != wantSrc || b.Version != wantV {
+			t.Fatalf("env=%q: %+v %v", env, b, err)
+		}
+	}
+	check("/env/c", "/env/c", SourceEnv, Version{5, 9, 0})
+	check("", "/host/docker-compose", SourceHost, Version{5, 6, 0})
+	delete(present, "/host/docker-compose")
+	check("", BundledPath, SourceBundled, Version{5, 4, 0})
+	broken[BundledPath] = true // exists but does not run: next
+	check("", HostPluginDirs[0], SourceHost, Version{5, 3, 0})
+	delete(present, HostPluginDirs[0])
+	if b, notes, err := Resolve(ctx, mk("")); err == nil || b != nil || len(notes) < 3 {
+		t.Fatalf("nothing found must be an error with notes: %v %v %v", b, notes, err)
+	}
+	// An explicit WHALENURSE_COMPOSE_BIN that does not work is an error, never a reason to use another binary.
+	present["/host/docker-compose"] = true
+	if b, _, err := Resolve(ctx, mk("/env/missing")); err == nil || b != nil || !strings.Contains(err.Error(), "WHALENURSE_COMPOSE_BIN=/env/missing") {
+		t.Fatalf("%v %v", b, err)
+	}
+	// A directory is not a binary.
+	l := mk("")
+	l.Stat = func(string) (os.FileInfo, error) { return fakeInfo{dir: true}, nil }
+	if b, _, err := Resolve(ctx, l); err == nil || b != nil {
+		t.Fatalf("%v %v", b, err)
+	}
+	// The source comes from the path that matched, not from the version.
+	present[BundledPath], broken[BundledPath] = true, false
+	delete(present, "/host/docker-compose")
+	versions[BundledPath] = "5.6.0"
+	if b, _, _ := Resolve(ctx, mk("")); b.Source != SourceBundled {
+		t.Fatalf("%+v", b)
+	}
+	// An unreadable version still resolves (the gate then disables the rungs: fail closed).
+	versions[BundledPath] = "garbage"
+	if b, _, err := Resolve(ctx, mk("")); err != nil || !b.Version.IsZero() || b.Raw != "garbage" {
+		t.Fatalf("%+v %v", b, err)
+	}
+}

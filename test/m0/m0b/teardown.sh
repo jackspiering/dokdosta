@@ -19,4 +19,9 @@ while IFS= read -r img; do
   echo "rmi $img"
   m0_rmi "$img"
 done < <(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '^whalenurse-m0/whalenurse:' || true)
+# The stack directory of the whalenurse-recreate scenario (a fixed path under /tmp, created by prepare.sh).
+if [[ -d /tmp/whalenurse-m0-b-recreate ]]; then
+  echo "rm -r /tmp/whalenurse-m0-b-recreate"
+  rm -rf /tmp/whalenurse-m0-b-recreate
+fi
 echo "teardown done"

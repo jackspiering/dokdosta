@@ -1,5 +1,15 @@
-# whalenurse M2a: restart, SUSPENDED after one pass, pause/unsuspend through `docker exec whalenurse /whalenurse ...`. Replace GID with the group of the Docker socket:
-#   stat -c %g /var/run/docker.sock
+# whalenurse M2b: restart, then recreate from the stack's own compose files, with a drift guard. Replace GID with the group
+# of the Docker socket (stat -c %g /var/run/docker.sock) and /opt/stacks with the directory that holds your stacks.
+#
+# THE TWO MOUNTS THAT MAKE RECREATE WORK, both read-only:
+#   1. the host's compose plugin at /host/docker-compose. whalenurse uses it first (it is the compose that made your
+#      containers); without it the bundled copy in the image is used, and a container made by another compose release
+#      is then reported as "can't verify drift" instead of being recreated. The host path is usually
+#      /usr/libexec/docker/cli-plugins/docker-compose (docker info shows it).
+#   2. the stacks root at the IDENTICAL path as on the host. Compose passes host paths to the daemon for relative bind
+#      mounts, so /opt/stacks must be /opt/stacks inside the container too, not /stacks. Also mount anything else
+#      compose reads from outside it: env_file paths with ../, include:/extends: files, file-based secrets and configs.
+# Without them whalenurse still restarts; it says why the recreate rung is skipped and SUSPENDS after the restart.
 services:
   whalenurse:
     image: ghcr.io/jackspiering/whalenurse:latest # not published until M6; build it with `docker build -t whalenurse .`
@@ -14,10 +24,15 @@ services:
       # Root-equivalent access to the host. Read docs/running.md.
       - /var/run/docker.sock:/var/run/docker.sock
       - whalenurse-data:/data # the state store; the image makes /data writable for the nonroot user
+      - /usr/libexec/docker/cli-plugins/docker-compose:/host/docker-compose:ro
+      - /opt/stacks:/opt/stacks:ro # identical path on both sides
     environment:
       WHALENURSE_DRY_RUN: "true" # log decisions only; remove once they look right
+      # WHALENURSE_DRIFT_GUARD: strict # strict (default): a recreate that would deploy a compose edit or a moved image tag
+      #                                # is skipped and the container is SUSPENDED; warn: recreate anyway and say so
 
-  # An opted-in container: whalenurse restarts it when it turns unhealthy, and suspends it if that does not help.
+  # An opted-in container: whalenurse restarts it when it turns unhealthy, recreates it from its compose files if that does
+  # not help, and suspends it if nothing does. network_mode: service:<parent> sidecars follow their parent.
   # example:
   #   labels:
   #     whalenurse.enable: "true"

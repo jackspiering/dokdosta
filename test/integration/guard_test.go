@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/docker"
 )
 
@@ -215,5 +216,125 @@ func TestGuardedActorRefusesOtherProjects(t *testing.T) {
 	}
 	if got := fmt.Sprint(f.Calls()); !strings.Contains(got, "restart") || len(f.Calls()) != 2 {
 		t.Fatal(got)
+	}
+}
+
+// ---- the compose filter and the image helpers (M2b) ----------------------------------------------------------------
+
+const goodUp = "-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env up -d --force-recreate --no-deps --pull never --no-build web"
+
+func TestComposeFilterAcceptsExactlyWhatTheComposePackageBuilds(t *testing.T) {
+	for _, ok := range []string{
+		goodUp,
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml up -d --no-deps --pull never --no-build web",
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --dry-run --progress json up -d --no-deps --pull never --no-build web",
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --hash=web",
+		"-p whalenurse-test-a version --short",
+		"-p whalenurse-test-a version",
+	} {
+		if err := CheckComposeCommand(strings.Fields(ok)); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
+	}
+}
+
+func TestComposeFilterRefuses(t *testing.T) {
+	for name, args := range map[string]string{
+		"down":                       "-p whalenurse-test-a down -v",
+		"down after the files":       "-p whalenurse-test-a --project-directory /s -f /s/c.yaml down",
+		"rm":                         "-p whalenurse-test-a rm -f web",
+		"pull":                       "-p whalenurse-test-a pull web",
+		"build":                      "-p whalenurse-test-a build web",
+		"run":                        "-p whalenurse-test-a run web",
+		"stop":                       "-p whalenurse-test-a stop web",
+		"another project":            "-p prod up -d --no-deps --pull never --no-build web",
+		"an m0 project":              "-p whalenurse-m0-e1 up -d --no-deps --pull never --no-build web",
+		"no project":                 "up -d --no-deps --pull never --no-build web",
+		"project via --project-name": "--project-name whalenurse-test-a up -d --no-deps --pull never --no-build web",
+		"up may pull":                "-p whalenurse-test-a up -d --no-deps --pull always --no-build web",
+		"up pull missing":            "-p whalenurse-test-a up -d --no-deps --pull missing --no-build web",
+		"up without --pull":          "-p whalenurse-test-a up -d --no-deps --no-build web",
+		"up may build":               "-p whalenurse-test-a up -d --no-deps --pull never --build web",
+		"up without --no-build":      "-p whalenurse-test-a up -d --no-deps --pull never web",
+		"up with dependencies":       "-p whalenurse-test-a up -d --pull never --no-build web",
+		"up attached":                "-p whalenurse-test-a up --no-deps --pull never --no-build web",
+		"up all services":            "-p whalenurse-test-a up -d --no-deps --pull never --no-build",
+		"up two services":            "-p whalenurse-test-a up -d --no-deps --pull never --no-build web db",
+		"up --remove-orphans":        "-p whalenurse-test-a up -d --no-deps --pull never --no-build --remove-orphans web",
+		"up --renew-anon-volumes":    "-p whalenurse-test-a up -d --no-deps --pull never --no-build -V web",
+		"config hash of all":         "-p whalenurse-test-a config --hash=*",
+		"config hash of two":         "-p whalenurse-test-a config --hash=a,b",
+		"config rendered":            "-p whalenurse-test-a config",
+		"version -f":                 "-p whalenurse-test-a version --format json",
+		"flag without value":         "-p whalenurse-test-a -f",
+		"no subcommand":              "-p whalenurse-test-a --dry-run",
+	} {
+		if err := CheckComposeCommand(strings.Fields(args)); !errors.Is(err, ErrRefused) {
+			t.Errorf("%s: %s was not refused (%v)", name, args, err)
+		}
+	}
+}
+
+type recordingCompose struct{ ran []string }
+
+func (r *recordingCompose) Run(_ context.Context, c compose.Command) (compose.Result, error) {
+	r.ran = append(r.ran, c.String())
+	return compose.Result{}, nil
+}
+
+func TestComposeRunnerOnlyRunsWhatTheFilterAccepts(t *testing.T) {
+	rec := &recordingCompose{}
+	r := &ComposeRunner{Inner: rec}
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/usr/libexec/docker/cli-plugins/docker-compose", Args: strings.Fields(goodUp)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/usr/bin/docker", Args: strings.Fields(goodUp)}); !errors.Is(err, ErrRefused) {
+		t.Fatalf("another binary: %v", err)
+	}
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a down")}); !errors.Is(err, ErrRefused) {
+		t.Fatalf("down: %v", err)
+	}
+	if len(rec.ran) != 1 || len(r.Log()) != 1 || len(r.Mutating()) != 1 {
+		t.Fatalf("%v %v", rec.ran, r.Log())
+	}
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a --dry-run --progress json up -d --no-deps --pull never --no-build web")}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Mutating()) != 1 {
+		t.Fatalf("a --dry-run up is not a mutation: %v", r.Mutating())
+	}
+}
+
+func TestImageHelpersStayInTheirNamespace(t *testing.T) {
+	s := &stub{}
+	g := &Guard{R: s}
+	ctx := context.Background()
+	for _, dst := range []string{"busybox:1.37", "prod/app:1", "whalenurse:1", "", "whalenurse-test", "whalenurse-test/x y", "whalenurse-test/x;rm"} {
+		refused(t, g.Tag(ctx, "busybox:1.37", dst))
+		refused(t, g.Untag(ctx, dst))
+		refused(t, g.Build(ctx, dst, "FROM busybox:1.37\n"))
+	}
+	refused(t, g.Tag(ctx, "alpine:3", "whalenurse-test/x:1"))
+	refused(t, g.Tag(ctx, "prod/app:1", "whalenurse-test/x:1"))
+	refused(t, g.Build(ctx, "whalenurse-test/x:1", "FROM alpine:3.22\n"))
+	refused(t, g.Build(ctx, "whalenurse-test/x:1", "FROM busybox:1.37\nFROM prod/app:1\n"))
+	refused(t, g.Build(ctx, "whalenurse-test/x:1", "RUN true\n"))
+	if len(s.mutations()) != 0 {
+		t.Fatalf("a refused call ran: %v", s.mutations())
+	}
+	if err := g.Tag(ctx, "busybox:1.37", "whalenurse-test/x:1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Tag(ctx, "whalenurse-test/x:1", "whalenurse-test/y:1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Build(ctx, "whalenurse-test/z:1", "FROM busybox:1.37\nRUN touch /x\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Untag(ctx, "whalenurse-test/x:1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.mutations()) != 4 {
+		t.Fatalf("%v", s.mutations())
 	}
 }

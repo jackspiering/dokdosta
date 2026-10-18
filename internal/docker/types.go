@@ -13,6 +13,9 @@ import (
 // ErrNotFound is returned when a container (or reference) does not exist.
 var ErrNotFound = errors.New("no such container")
 
+// ErrImageNotFound is returned when an image reference is not present locally, or has no image for the platform.
+var ErrImageNotFound = errors.New("no such image")
+
 // Compose and whalenurse label keys used across packages.
 const (
 	LabelProject       = "com.docker.compose.project"
@@ -48,6 +51,9 @@ type Container struct {
 	NetworkMode string
 	IpcMode     string
 	PidMode     string
+	VolumesFrom []string // HostConfig.VolumesFrom: another reference compose resolves to a container ID (plan §3.6)
+
+	Image string // Config.Image: the reference the container was created from, for the image-drift check
 }
 
 // Summary is one row of the container list; enough for the poll to decide
@@ -94,6 +100,22 @@ type Reader interface {
 	Inspect(ctx context.Context, ref string) (Container, error)
 	// Events subscribes to container events from since (zero means now).
 	Events(ctx context.Context, since time.Time) Stream
+	// ServerVersion reports the Engine's version and architecture (the startup version gate, plan §3.6).
+	ServerVersion(ctx context.Context) (ServerInfo, error)
+	// ImageID returns what an image reference resolves to for linux/<arch>: the value the drift guard compares with
+	// the com.docker.compose.image label (plan §3.6 check 2). It is the platform manifest digest on the containerd
+	// store and the image ID on the classic store. With an empty arch it is the plain image ID (the index digest on the
+	// containerd store), which compose before v5.5.0 recorded in the label (plan v3.6). It returns ErrImageNotFound when
+	// the reference is gone.
+	ImageID(ctx context.Context, ref, arch string) (string, error)
+}
+
+// ServerInfo is the part of the Engine's /version that whalenurse reads.
+type ServerInfo struct {
+	Version    string // 29.9.1
+	APIVersion string // 1.56
+	Arch       string // amd64, arm64: the Go names, as `docker version --format '{{.Server.Arch}}'` prints them
+	OS         string
 }
 
 // Actor is the mutating half: rung 1 of the ladder. Nothing else in the

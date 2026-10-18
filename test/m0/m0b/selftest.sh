@@ -145,6 +145,27 @@ else
   echo "skip boot stack config check (no docker compose)"
 fi
 
+# ---- the whalenurse-recreate scenario (M2b)
+# shellcheck source=recreate-lib.sh
+source "$here/recreate-lib.sh"
+expect "project $RECREATE_PROJECT accepted" m0b_require_project "$RECREATE_PROJECT"
+cat >"$tmp/recreate-log.ndjson" <<'JSON'
+{"type":"ActionStarted","key":"m0b/whalenurse-m0-b-recreate/parent/1","attr.action":"restart"}
+{"type":"ActionStarted","key":"m0b/whalenurse-m0-b-recreate/sidecar/1","attr.action":"recreate-stale"}
+{"type":"ActionStarted","key":"m0b/whalenurse-m0-b-recreate/parent/1","attr.action":"recreate"}
+JSON
+[[ "$(recreate_actions "$tmp/recreate-log.ndjson" "$(recreate_key parent)")" == restart,recreate && "$(recreate_actions "$tmp/recreate-log.ndjson" "$(recreate_key sidecar)")" == recreate-stale &&
+  -z "$(recreate_actions "$tmp/recreate-log.ndjson" "$(recreate_key nope)")" ]] && ok "recreate: the actions of a key, in order" || bad "recreate_actions"
+if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
+  rs=$(cd "$tmp" && rm -rf stack-recreate && mkdir -p stack-recreate && cp "$here/stacks/recreate/compose.yaml" stack-recreate/ &&
+    printf 'NURSE_IMAGE=whalenurse-m0/whalenurse:x\nDOCKER_GID=999\nCOMPOSE_PLUGIN=/x/docker-compose\nSTACK_DIR=%s\n' "$tmp/stack-recreate" >stack-recreate/vars.env &&
+    docker compose --project-directory stack-recreate -f stack-recreate/compose.yaml --env-file stack-recreate/vars.env config --services 2>&1 | sort | paste -sd' ')
+  [[ "$rs" == "parent sidecar whalenurse" ]] && ok "stack recreate: compose config lists parent sidecar whalenurse" || bad "stack recreate services: '$rs'"
+  [[ "$(grep -c 'whalenurse.enable: "true"' "$here/stacks/recreate/compose.yaml")" == 2 ]] && ok "stack recreate: exactly the parent and the sidecar are opted in" || bad "recreate opt-in labels"
+  grep -q '^      - ${STACK_DIR}:${STACK_DIR}:ro$' "$here/stacks/recreate/compose.yaml" && grep -q ':/host/docker-compose:ro$' "$here/stacks/recreate/compose.yaml" &&
+    ok "stack recreate: the stack and the host plugin are mounted read-only, the stack at the identical path" || bad "recreate mounts"
+fi
+
 # ---- the whalenurse-restart scenario: projects, status and log readers
 for p in "$NURSE_PROJECT" "$NURSE_STOP_PROJECT"; do expect "project $p accepted" m0b_require_project "$p"; done
 cat >"$tmp/status.json" <<'JSON'

@@ -43,19 +43,19 @@ var scenarios = []scenario{
 		// The parent ID the dependent points at (48d0...) does not exist in the world:
 		// the dependent is running but disconnected. Never restart it (E1).
 		name: "dependent running, parent ID gone", fixture: "e1-dep-stale-after-parent-recreate",
-		want: d(rules.ClassStaleParentGone, rules.ActionNeedsRecreate),
+		want: d(rules.ClassStaleParentGone, rules.ActionRecreateStale),
 	},
 	{
 		name: "unhealthy dependent, parent ID gone: still no restart", fixture: "e1-dep-stale-after-parent-recreate",
 		mutate: func(c *docker.Container) { c.Health = "unhealthy" },
-		want:   d(rules.ClassStaleParentGone, rules.ActionNeedsRecreate),
+		want:   d(rules.ClassStaleParentGone, rules.ActionRecreateStale),
 	},
 	{
 		name: "dependent running, parent restarted later (same ID)", fixture: "e1-dep-stale-after-parent-recreate",
 		mutate: func(c *docker.Container) {
 			c.NetworkMode = docker.Ref("271b934b370b5008fb8c09499e4e2e70a5a669ec3d02e0d2907fcd24a590be8f")
 		},
-		want: d(rules.ClassStaleParentRestarted, rules.ActionNeedsDependentRestart),
+		want: d(rules.ClassStaleParentRestarted, rules.ActionRestart),
 	},
 	{
 		name: "dependent running, started after its parent", fixture: "e1-dep-stale-after-parent-recreate",
@@ -67,7 +67,88 @@ var scenarios = []scenario{
 	},
 	{
 		name: "dependent failed on the stale restart (No such container)", fixture: "e1-dep-stale-restart-failed",
-		want: withCause(d(rules.ClassStartFailed, rules.ActionNeedsRecreate), rules.CauseParentGone),
+		want: withCause(d(rules.ClassStartFailed, rules.ActionRecreateStale), rules.CauseParentGone),
+	},
+
+	{
+		// M2b: a dependent made stale by a parent restart waits while the parent is still being worked on.
+		name: "stale dependent, parent restarted later but busy: wait", fixture: "e1-dep-stale-after-parent-recreate",
+		mutate: func(c *docker.Container) {
+			c.NetworkMode = docker.Ref("271b934b370b5008fb8c09499e4e2e70a5a669ec3d02e0d2907fcd24a590be8f")
+		},
+		input: func(in *rules.Input, _ map[string]docker.Container) {
+			for i := range in.Parents {
+				in.Parents[i].Busy = true
+			}
+		},
+		want: d(rules.ClassWaitingForParent, rules.ActionWaitForParent),
+	},
+	{
+		// A network that is gone is not a restart problem: rung 2 directly (the drift guard still runs before it).
+		name: "network not found: recreate, skipping the restart", fixture: "e8c-nocmd",
+		mutate: func(c *docker.Container) {
+			c.Error = "failed to set up container networking: network 4f2a9b1c not found"
+		},
+		want: withCause(d(rules.ClassStartFailed, rules.ActionRecreate), rules.CauseNetworkGone),
+	},
+	// ---- v3.6: the dependents step repairs a sidecar that is not opted in, when its parent is -----------------
+	{
+		name: "not opted in, parent ID gone, parent opted in: recreated", fixture: "e1-dep-stale-after-parent-recreate",
+		cfg:   func(c *config.Container) { c.OptedIn = false },
+		input: func(in *rules.Input, _ map[string]docker.Container) { in.DependentOfOptedIn = true },
+		want:  d(rules.ClassStaleParentGone, rules.ActionRecreateStale),
+	},
+	{
+		name: "not opted in, parent not opted in either: left alone", fixture: "e1-dep-stale-after-parent-recreate",
+		cfg:  func(c *config.Container) { c.OptedIn = false },
+		want: rules.Decision{Class: rules.ClassSkip, Action: rules.ActionNone, Skip: rules.SkipNotOptedIn},
+	},
+	{
+		name: "labelled whalenurse.enable=false: left alone even with an opted-in parent", fixture: "e1-dep-stale-after-parent-recreate",
+		cfg:   func(c *config.Container) { c.OptedIn, c.Disabled = false, true },
+		input: func(in *rules.Input, _ map[string]docker.Container) { in.DependentOfOptedIn = true },
+		want:  rules.Decision{Class: rules.ClassSkip, Action: rules.ActionNone, Skip: rules.SkipNotOptedIn},
+	},
+	{
+		name: "not opted in, parent restarted later: restarted", fixture: "e1-dep-stale-after-parent-recreate",
+		cfg: func(c *config.Container) { c.OptedIn = false },
+		mutate: func(c *docker.Container) {
+			c.NetworkMode = docker.Ref("271b934b370b5008fb8c09499e4e2e70a5a669ec3d02e0d2907fcd24a590be8f")
+		},
+		input: func(in *rules.Input, _ map[string]docker.Container) { in.DependentOfOptedIn = true },
+		want:  d(rules.ClassStaleParentRestarted, rules.ActionRestart),
+	},
+	{
+		name: "not opted in, unhealthy because the parent restarted later: restarted", fixture: "e1-dep-stale-after-parent-recreate",
+		cfg: func(c *config.Container) { c.OptedIn = false },
+		mutate: func(c *docker.Container) {
+			c.NetworkMode = docker.Ref("271b934b370b5008fb8c09499e4e2e70a5a669ec3d02e0d2907fcd24a590be8f")
+			c.Health = "unhealthy"
+		},
+		input: func(in *rules.Input, _ map[string]docker.Container) { in.DependentOfOptedIn = true },
+		want:  d(rules.ClassStaleParentRestarted, rules.ActionRestart),
+	},
+	{
+		name: "not opted in, failing on its own (parent unchanged): its own ladder needs its own opt-in", fixture: "e1-dep-stale-after-parent-recreate",
+		cfg: func(c *config.Container) { c.OptedIn = false },
+		mutate: func(c *docker.Container) {
+			c.NetworkMode = docker.Ref("271b934b370b5008fb8c09499e4e2e70a5a669ec3d02e0d2907fcd24a590be8f")
+			c.StartedAt = c.StartedAt.Add(time.Hour) // started after its parent
+			c.Health = "unhealthy"
+		},
+		input: func(in *rules.Input, _ map[string]docker.Container) { in.DependentOfOptedIn = true },
+		want:  rules.Decision{Class: rules.ClassSkip, Action: rules.ActionNone, Skip: rules.SkipNotOptedIn},
+	},
+	{
+		name: "not opted in, exited on its own: not healed", fixture: "e1-dep-stale-after-parent-recreate",
+		cfg: func(c *config.Container) { c.OptedIn = false },
+		mutate: func(c *docker.Container) {
+			c.NetworkMode = docker.Ref("271b934b370b5008fb8c09499e4e2e70a5a669ec3d02e0d2907fcd24a590be8f")
+			c.StartedAt = c.StartedAt.Add(time.Hour)
+			c.Status, c.Running, c.ExitCode = "exited", false, 1
+		},
+		input: func(in *rules.Input, _ map[string]docker.Container) { in.DependentOfOptedIn = true },
+		want:  rules.Decision{Class: rules.ClassSkip, Action: rules.ActionNone, Skip: rules.SkipNotOptedIn},
 	},
 
 	// ---- E8: rule 1, State.Error ---------------------------------------------
@@ -106,7 +187,7 @@ var scenarios = []scenario{
 	// ---- E8e: stale references by cause ---------------------------------------
 	{
 		name: "parent removed (No such container)", fixture: "e8e-dep-parent-removed",
-		want: withCause(d(rules.ClassStartFailed, rules.ActionNeedsRecreate), rules.CauseParentGone),
+		want: withCause(d(rules.ClassStartFailed, rules.ActionRecreateStale), rules.CauseParentGone),
 	},
 	{
 		name: "parent stopped, still stopped: act only on the parent", fixture: "e8e-dep-parent-stopped",
@@ -134,7 +215,7 @@ var scenarios = []scenario{
 		input: func(in *rules.Input, _ map[string]docker.Container) {
 			in.Parents = []rules.Parent{{Kind: rules.RefNetwork, Ref: parentID}}
 		},
-		want: withCause(d(rules.ClassStaleParentGone, rules.ActionNeedsRecreate), rules.CauseParentStopped),
+		want: withCause(d(rules.ClassStaleParentGone, rules.ActionRecreateStale), rules.CauseParentStopped),
 	},
 	{
 		name: "reference we could not resolve: do nothing", fixture: "e8e-dep-parent-stopped",
