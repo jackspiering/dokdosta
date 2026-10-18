@@ -1,7 +1,17 @@
-# whalenurse — implementation plan v3.5
+# whalenurse — implementation plan v3.6
 
-Status: v3.5, approved for implementation. It is v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.4. Facts and versions are as of 17 Oct 2026 (16 Oct for the prior-art survey).
+Status: v3.6, **proposed by the M2b PR, not yet approved**: item 3 of its changes list contradicts a v3.3 rule and needs the maintainer's decision. v3.5 was approved for implementation. It is v3.5 plus the M2b findings below ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.5. Facts and versions are as of 17 Oct 2026 (16 Oct for the prior-art survey).
 Repo: `github.com/jackspiering/whalenurse` (Go module path, GHCR image and binary are all lowercase).
+
+**Changes in v3.6** (from building M2b; evidence in [m2b-notes.md](m2b-notes.md); the integration tests ran on compose v5.2.0, v5.6.0 and the latest release, on both image stores):
+1. §3.4: the fixed paths are `/host/docker-compose` (the host plugin, mounted read-only) and `/usr/libexec/whalenurse/docker-compose` (the bundled copy). *Bundled* is decided by the path that matched, never by comparing versions, so the version-skew check cannot be fooled. Under systemd the host's plugin directories are searched last. An explicit `WHALENURSE_COMPOSE_BIN` that does not work is an error, not a reason to use another binary. The `compose` package exposes typed methods only (no `down` can be expressed), runs compose from `/` with `COMPOSE_*`, `DOCKER_CONTEXT`, `DOCKER_CONFIG` and `WHALENURSE_*` removed from its environment, and a recreate whose inputs are missing or unreadable is skipped with a message that names the identical-path read-only mount.
+2. §3.6 check 1: compose prints the `--progress json` lines on **stderr**, so the oracle is read from both streams. Output with no JSON (an old compose prints `null`), with no line about the container, or a dry-run that fails, all mean *fall back to `config --hash`* and never *no drift*. If the hash fails too, the finding is `unverified`, which blocks like drift. v5.2.0, v5.6.0 and the latest release all print what E5 recorded.
+3. **§3.6 check 2, a change to a v3.3 rule, needs approval.** The label `com.docker.compose.image` is the platform manifest digest on the containerd store only from compose v5.5.0 (the release that "overhauled image digest reconciliation"). **Compose v5.2.0 on the containerd store writes the image (index) ID there**, which is what a plain `docker image inspect <ref>` `.Id` returns. With the v3.3 comparator alone (`--platform linux/<arch>` `.Id`), every container created by compose before v5.5.0 on the containerd store looked drifted: the 5.2.0 × containerd leg of the CI matrix blocked every recreate, and the classic store and every release from v5.6.0 were unaffected. The comparison is now: equal to the platform ID **or** to the plain ID of the reference. A moved tag changes both, so no drift is hidden; the v3.3 warning against using plain `.Id` *alone* stands. Without this, the guard fails closed and reports the container as drifted ("the tag moved") although it did not. If you prefer the old behaviour, revert the commit "accept the index ID in the compose image label"; compose before v5.5.0 on the containerd store is then unusable with rungs 2 and 3. The comparison goes through the Engine API (`ImageInspect`, optionally with `ImageInspectWithPlatform`), not the CLI: the image has no `docker` binary.
+4. §3.5: dependents are incidents of their own and go through the ladder machinery: a dependent whose parent ID is gone (class `stale-parent-gone`, or a failed start with `No such container`) is recreated with the non-forced `up`, its ladder starting at rung 2 (a restart would hurt it); one whose parent restarted later (same ID) is restarted through the API. Whalenurse's own action on a parent schedules its dependents for when the parent is looked at again, because the parent's own events fall in its in-flight window. A stale dependent waits while a service it depends on (`com.docker.compose.depends_on`) is not running or is being healed. They go one at a time, each up to 90 s to come back (running, healthy if it has a healthcheck), as scheduled steps, not sleeps. Dependents must be opted in themselves. Checks 2 and 3 of the drift guard apply to them before the `up`. A rate-limit slot is spent for each. The `restart: "no"` parent left down by the host gets one `NotifyOnly` event that names its dependents; they emit nothing.
+5. §3.6, *Minimum versions per rung*: the gate covers **every** use of compose (rung 2, the dependents recreate, the rule-1 stale-reference and network-gone recreates, the drift guard) and is checked again after the events stream comes back. A recreate-shaped decision that cannot run (gate off, not a compose container, unreadable inputs, `recreate` not in `whalenurse.actions`) is advice only (`NeedsRecreate`, no incident), as in M2a; an ordinary unhealthy container records `RungUnavailable` and ends at SUSPENDED after rung 1.
+6. §3.2: a recreate skipped by the drift guard SUSPENDS the container at once with reason `drift` (the pull rung would be stopped by the same findings); it spends no rate-limit slot.
+7. §3.3 rule 1: a failed start whose cause is a network that is gone goes straight to rung 2 (the restart rung is skipped); not reproduced.
+8. §6, §7: the integration list and the CI matrix are as built; M2b is done.
 
 **Changes in v3.5** (from the M2a review of PR #8; [m2a-notes.md](m2a-notes.md) open questions 1 and 2):
 - §3.3 *Manual-stop markers*: a fourth mechanism, **(d) the heartbeat**. whalenurse is itself one of the containers a daemon shutdown kills, so its events stream ends by its own SIGTERM and (a) never sees a loss, while the boot id (b) is unchanged: the persisted shutdown-kill markers then let the restore's `start` clear SUSPENDED. Fix: persist `last_seen`; at startup treat the previous run's end as a stream loss (discard markers set in the 30 s before it), and open the restore window when the gap exceeds `POLL_INTERVAL`. The burst rule stays rejected. In M2a this was a known gap, pinned by a test that asserted the opposite; that test is now a normal one.
@@ -247,8 +257,9 @@ any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)-
 
 **Compose binary lookup** (first match wins):
 1. `WHALENURSE_COMPOSE_BIN`
-2. The host plugin, mounted read-only at a fixed path (e.g. `/host/docker-compose`). The host path is typically `/usr/libexec/docker/cli-plugins/docker-compose`; `docker info` shows it. The compose plugin runs standalone.
-3. The bundled copy.
+2. The host plugin, mounted read-only at `/host/docker-compose`. The host path is typically `/usr/libexec/docker/cli-plugins/docker-compose`; `docker info` shows it. The compose plugin runs standalone.
+3. The bundled copy, at `/usr/libexec/whalenurse/docker-compose` (a different path on purpose: v3.6).
+4. Under systemd, the host's plugin directories.
 
 Log which binary and version is in use at startup, and expose it in `/api/v1/status`. Below Compose v5.2.0 (or Engine 28.1) rungs 2 and 3 are disabled (§3.6). In systemd mode, use the host's `docker compose`.
 
@@ -319,6 +330,7 @@ A recreate deploys whatever is on disk and in the local image store *now*. The g
      docker image inspect --platform linux/<arch> --format '{{.Id}}' <ref>
      ```
      `<arch>` is the server's (`docker version --format '{{.Server.Arch}}'`). This is **one comparison that is correct on both image stores** (M0b, `test/m0/m0b/image-drift.sh`): it equals the label before a re-tag and differs after. On the containerd store the label is the platform manifest digest and `--platform … .Id` returns it; on the classic store the label is the image ID.
+   - **v3.6 (proposed):** the label is the platform ID only from compose v5.5.0; compose v5.2.0 on the containerd store writes the plain image ID. The container is not drifted if the label equals the platform ID **or** the plain `<ref>` `.Id`. See *Changes in v3.6*, item 3.
    - **Never use `.Descriptor.digest`**, with or without `--platform`: it is empty on the classic store, so the guard would report drift for every container and SUSPEND them all. Never compare the label with plain `<ref>` `.Id`, with `.RepoDigests` or with the container's `.Image` either: on containerd those are index digests and never equal the label, and on classic plain `.Id` happens to work, which is the trap.
    - If the inspect fails (the reference is no longer present locally, or has no image for that platform), that is a failure: skip the recreate and say why.
    - **`image inspect --platform` needs Engine 28.1 or later** (API 1.49; docker/cli added the flag after v28.0.4, and the GitHub runner's Engine 28.0.4 answered `unknown flag: --platform` in the first CI run of the `image-drift` job). There is **no fallback and no store guessing** for older Engines: see *Minimum versions per rung* below.
@@ -413,8 +425,8 @@ Initial defaults; tune them after M0.
 | `WHALENURSE_CRASHLOOP_AFTER` | `5m` |
 | `WHALENURSE_RATE_LIMIT` | `10` (actions/hour) |
 | `WHALENURSE_STARTUP_SETTLE` | `2m` |
-| `WHALENURSE_DRIFT_GUARD` | `strict` (or `warn`) |
-| `WHALENURSE_COMPOSE_BIN` | — (see §3.4) |
+| `WHALENURSE_DRIFT_GUARD` | `strict` (or `warn`; from M2b) |
+| `WHALENURSE_COMPOSE_BIN` | — (see §3.4; from M2b) |
 | `WHALENURSE_HOST_ID` | hostname |
 | `WHALENURSE_DATA_DIR` | `/data` |
 | `WHALENURSE_HTTP_ADDR` | empty (dashboard off; `:8484` in examples) |
@@ -503,7 +515,7 @@ internal/config/     env + label parsing
 - **M2a:** state survives a whalenurse restart (SUSPENDED and the flap history are still there, and the ladder does not start over);
 - **M2a:** pause, resume and unsuspend over the control socket against a real daemon;
 - **M2a:** dry-run performs no actions;
-- **M2b:** toggled healthcheck → restart, then recreate, then SUSPENDED;
+- **M2b (done):** toggled healthcheck → restart, then recreate, then SUSPENDED;
 - **M2b:** heal never pulls (a service with `pull_policy: always`);
 - **M2b:** the config-drift guard blocks a recreate after a compose edit;
 - **M2b:** the image-drift guard blocks a recreate after a re-tag, and does not block an unchanged container, on both image stores (the comparator of §3.6);
@@ -511,7 +523,7 @@ internal/config/     env + label parsing
 - **M3:** notifications reach a local webhook receiver;
 - **M4:** the pull rung, against a local `registry:2`.
 
-**CI matrix:** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`test/m0/m0b/image-drift.sh`) runs on both stores today.
+**CI matrix (built in M2b: 2 stores × 3 compose releases = 6 integration jobs):** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`test/m0/m0b/image-drift.sh`) runs on both stores today.
 
 - **From M2a** the integration tests run on Engine 29.x with compose v5.6.0 on both stores, installed the way the `image-drift` job installs them (the runner's Engine 28.0.4 has no `image inspect --platform`, and its compose 2.38.2 prints `null` for the dry-run oracle). M2a does not drive compose: it uses compose only to set up test stacks, so the other two versions add nothing there.
 - **From M2b** the full compose matrix applies, because whalenurse then runs compose itself and the oracle's output and the config hash are what the matrix pins:
@@ -592,7 +604,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 - Shutdown handling (§3.3, *Manual-stop markers*): quarantine on stream loss, persisted boot id, restore window, the `last_seen` heartbeat for whalenurse's own end (v3.5), the sweep after every reconnect, "daemon not ready" for API errors during a restore. M1's tracker still reads a shutdown as manual stops (pinned in `rules_test.go`, `multiKeyEventVerdicts`); M2a changes that expectation on purpose. The throwaway-VM check of this (whalenurse in a container, `systemctl restart docker`) is `test/m0/m0b/whalenurse-restart/`.
 - **Done when:** the M2a integration tests in §6 pass, state survives a whalenurse restart, and an unhealthy container goes restart → "needs recreate (M2b)" → SUSPENDED.
 
-### M2b — Compose recreate, the drift guard and dependents
+### M2b — Compose recreate, the drift guard and dependents (done; v3.6 proposed)
 
 - `internal/compose`: binary lookup (§3.4), command builder, the dry-run oracle with its `config --hash` fallback (§3.6).
 - Drift guard (§3.6), including the ref-holding skip.
