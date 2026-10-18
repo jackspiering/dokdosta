@@ -182,7 +182,19 @@ func (e *Engine) state(key string) *keyState {
 	return st
 }
 
+// AttrIncident is the attribute that says which incident of the key an event belongs to: the time it opened. A
+// subscriber that must say something once per incident (notify) keys on it, because an incident survives a restart of
+// whalenurse and its events then arrive without the IncidentOpened.
+const AttrIncident = "incident"
+
 func (e *Engine) emit(t Target, typ EventType, msg string, attrs map[string]string) {
+	if st, ok := e.keys[t.Key]; ok && st.incident != nil {
+		with := map[string]string{AttrIncident: st.incident.opened.UTC().Format(time.RFC3339Nano)}
+		for k, v := range attrs {
+			with[k] = v
+		}
+		attrs = with
+	}
 	e.bus.Publish(Event{Time: e.clk.Now(), Host: e.p.Host, Key: t.Key, Container: t.Name, Type: typ, Message: msg, Attrs: attrs})
 }
 

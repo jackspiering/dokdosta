@@ -36,7 +36,10 @@ func TestEnvOverridesAndErrors(t *testing.T) {
 		t.Fatalf("%+v", g)
 	}
 	joined := strings.Join(warns, "|")
-	for _, want := range []string{"WHALENURSE_NOTIFY_URLS is set but not used until M3", "WHALENURSE_TYPO is not a known variable"} {
+	if len(g.NotifyURLs) != 1 || g.NotifyURLs[0] != "ntfy://x" {
+		t.Errorf("notify urls: %v", g.NotifyURLs)
+	}
+	for _, want := range []string{"WHALENURSE_TYPO is not a known variable"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing warning %q in %v", want, warns)
 		}
@@ -141,6 +144,52 @@ func TestDisabledLabelIsDistinctFromNotOptedIn(t *testing.T) {
 		c, _ := ParseLabels(tc.labels, tc.mode)
 		if c.OptedIn != tc.opted || c.Disabled != tc.d {
 			t.Errorf("%v %v: opted=%v disabled=%v", tc.mode, tc.labels, c.OptedIn, c.Disabled)
+		}
+	}
+}
+
+func TestSplitURLs(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"ntfy://a", []string{"ntfy://a"}},
+		{"ntfy://a,discord://b@c", []string{"ntfy://a", "discord://b@c"}},
+		{"ntfy://a, discord://b@c ,\n gotify://h/t", []string{"ntfy://a", "discord://b@c", "gotify://h/t"}},
+		{"ntfy://a discord://b@c\ngotify://h/t", []string{"ntfy://a", "discord://b@c", "gotify://h/t"}},
+		// A comma inside a URL is part of it.
+		{"ntfy://ntfy.sh/topic?tags=warning,skull,discord://b@c", []string{"ntfy://ntfy.sh/topic?tags=warning,skull", "discord://b@c"}},
+		{"telegram://tok@telegram?chats=@ops,@dev,generic://h/p?template=json", []string{"telegram://tok@telegram?chats=@ops,@dev", "generic://h/p?template=json"}},
+		{"generic+https://h/p,ntfy://x", []string{"generic+https://h/p", "ntfy://x"}},
+		{",,ntfy://a,,", []string{"ntfy://a"}},
+	}
+	for _, tc := range cases {
+		got := SplitURLs(tc.in)
+		if strings.Join(got, "\n") != strings.Join(tc.want, "\n") {
+			t.Errorf("SplitURLs(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestNotifyVariables(t *testing.T) {
+	g, warns, err := FromEnv([]string{"WHALENURSE_NOTIFY_URLS=ntfy://tok-secret@h/t", "WHALENURSE_HEARTBEAT_URL=https://hc-ping.com/uuid-secret",
+		"WHALENURSE_NOTIFY_TIMEOUT=3s", "WHALENURSE_NOTIFY_RATE_LIMIT=7", "WHALENURSE_HEARTBEAT_INTERVAL=90s"})
+	if err != nil || len(warns) != 0 {
+		t.Fatalf("%v %v", err, warns)
+	}
+	if g.NotifyTimeout != 3*time.Second || g.NotifyRateLimit != 7 || g.PingInterval != 90*time.Second || g.PingURL != "https://hc-ping.com/uuid-secret" {
+		t.Fatalf("%+v", g)
+	}
+	d := Defaults()
+	if d.NotifyTimeout != 10*time.Second || d.NotifyRateLimit != 20 || d.PingInterval != 5*time.Minute || len(d.NotifyURLs) != 0 || d.PingURL != "" {
+		t.Fatalf("defaults: %+v", d)
+	}
+	for _, bad := range []string{"WHALENURSE_NOTIFY_TIMEOUT=0s", "WHALENURSE_NOTIFY_RATE_LIMIT=0", "WHALENURSE_HEARTBEAT_INTERVAL=soon"} {
+		if _, _, err := FromEnv([]string{bad, "WHALENURSE_NOTIFY_URLS=ntfy://tok-secret@h/t"}); err == nil {
+			t.Errorf("%s should be rejected", bad)
+		} else if strings.Contains(err.Error(), "tok-secret") {
+			t.Errorf("an error quotes a notification URL: %v", err)
 		}
 	}
 }

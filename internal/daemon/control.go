@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackspiering/whalenurse/internal/control"
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/notify"
 )
 
 // Status is the reply of `whalenurse status`.
@@ -21,16 +22,21 @@ type Status struct {
 	HealthDetail string        `json:"health_detail,omitempty"`
 	Compose      ComposeStatus `json:"compose"`
 	Engine       engine.Status `json:"engine"`
+	Notify       notify.Status `json:"notify"` // counts per URL by position and scheme; never a URL
 }
 
 // Status snapshots the daemon for the CLI.
 func (d *Daemon) Status() any {
 	ok, detail := d.Healthy()
-	return Status{
+	st := Status{
 		Host: d.cfg.HostID, Mode: string(d.cfg.Mode), DryRun: d.cfg.DryRun, Persistent: d.o.Persist != nil,
 		EventsUp: d.eventsUp.Load(), Settled: d.settledFlag.Load(), Healthy: ok, HealthDetail: detail,
 		Compose: d.composeStatus(), Engine: d.eng.Status(),
 	}
+	if d.o.NotifyStatus != nil {
+		st.Notify = d.o.NotifyStatus()
+	}
+	return st
 }
 
 var _ control.Backend = (*Daemon)(nil)

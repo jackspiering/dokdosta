@@ -44,6 +44,13 @@ type Global struct {
 
 	DriftGuard DriftGuard // strict (default): a recreate that would deploy a change is skipped and SUSPENDS; warn: recreate anyway and say so
 	ComposeBin string     // WHALENURSE_COMPOSE_BIN: the compose binary to use, ahead of the host plugin and the bundled copy
+
+	// Notifications (M3). The URLs hold tokens: never log them, never show them in status.
+	NotifyURLs      []string      // WHALENURSE_NOTIFY_URLS, Shoutrrr URLs
+	NotifyTimeout   time.Duration // one delivery attempt, per URL
+	NotifyRateLimit int           // messages per hour per URL; the second half of that budget is kept for the important ones
+	PingURL         string        // WHALENURSE_HEARTBEAT_URL: pinged while whalenurse is healthy (healthchecks.io, Uptime Kuma push)
+	PingInterval    time.Duration // WHALENURSE_HEARTBEAT_INTERVAL
 }
 
 // DriftGuard is WHALENURSE_DRIFT_GUARD.
@@ -78,14 +85,16 @@ func Defaults() Global {
 		DataDir:          "/data",
 		HistoryRetention: 30 * 24 * time.Hour,
 		DriftGuard:       DriftStrict,
+
+		NotifyTimeout:   10 * time.Second,
+		NotifyRateLimit: 20,
+		PingInterval:    5 * time.Minute,
 	}
 }
 
 // later lists variables defined in the plan that nothing acts on yet.
 var later = map[string]string{
-	"WHALENURSE_NOTIFY_URLS":   "M3",
-	"WHALENURSE_HTTP_TOKEN":    "M5",
-	"WHALENURSE_HEARTBEAT_URL": "M3",
+	"WHALENURSE_HTTP_TOKEN": "M5",
 }
 
 // FromEnv parses environ ("KEY=value" strings, as os.Environ returns). It
@@ -190,6 +199,23 @@ func FromEnv(environ []string) (Global, []string, error) {
 	}
 	if v, ok := take("WHALENURSE_COMPOSE_BIN"); ok {
 		g.ComposeBin = v
+	}
+	// The notification variables hold tokens, so an error about them never quotes the value.
+	if v, ok := take("WHALENURSE_NOTIFY_URLS"); ok {
+		g.NotifyURLs = SplitURLs(v)
+	}
+	if v, ok := take("WHALENURSE_HEARTBEAT_URL"); ok {
+		g.PingURL = v
+	}
+	dur("WHALENURSE_NOTIFY_TIMEOUT", &g.NotifyTimeout, false)
+	dur("WHALENURSE_HEARTBEAT_INTERVAL", &g.PingInterval, false)
+	if v, ok := take("WHALENURSE_NOTIFY_RATE_LIMIT"); ok {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			errs = append(errs, fmt.Sprintf("WHALENURSE_NOTIFY_RATE_LIMIT=%q: want a positive integer", v))
+		} else {
+			g.NotifyRateLimit = n
+		}
 	}
 
 	keys := make([]string, 0, len(env))

@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,6 +26,7 @@ import (
 	"github.com/jackspiering/whalenurse/internal/daemon"
 	"github.com/jackspiering/whalenurse/internal/docker"
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/notify"
 )
 
 const testHost = "itest"
@@ -196,6 +198,7 @@ type daemonOpts struct {
 	Reader      docker.Reader                       // default: the real client
 	WrapCompose func(compose.Reader) compose.Reader // wraps the compose Reader (to disable the oracle, say)
 	Tweak       func(*config.Global)
+	NotifyURLs  []string // Shoutrrr URLs: a real notifier is subscribed to the event stream
 }
 
 // composeBin finds the compose binary the way whalenurse does (WHALENURSE_COMPOSE_BIN, then the host plugin) and logs
@@ -246,6 +249,15 @@ func startDaemonOpts(t *testing.T, g *Guard, cli *docker.Moby, o daemonOpts) *ru
 	bus := &engine.Bus{}
 	bus.Subscribe(rec.Record)
 	bus.Subscribe(func(e engine.Event) { t.Logf("event %-18s %s: %s", e.Type, e.Key, e.Message) })
+	if len(o.NotifyURLs) > 0 {
+		red := notify.NewRedactor(o.NotifyURLs...)
+		nt := notify.New(notify.Options{
+			Host: cfg.HostID, DryRun: cfg.DryRun, Log: slog.New(slog.NewTextHandler(testLog{t}, nil)), Redact: red,
+			Targets: notify.NewTargets(o.NotifyURLs, red, 5*time.Second), Timeout: 5 * time.Second, Backoff: []time.Duration{200 * time.Millisecond},
+		})
+		bus.Subscribe(nt.Handle)
+		t.Cleanup(func() { nt.Shutdown(5 * time.Second) })
+	}
 	d := daemon.New(daemon.Options{Config: cfg, Reader: rd, Actor: actor, Clock: clock.Real{}, Bus: bus, Compose: reader, ComposeActor: cactor})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -744,4 +756,12 @@ func TestStateSurvivesARestartOfTheBinary(t *testing.T) {
 		t.Fatalf("the second run restarted a SUSPENDED container: %v -> %v", started, now)
 	}
 	run2.stop(t)
+}
+
+// testLog sends the notifier's log lines to the test log.
+type testLog struct{ t *testing.T }
+
+func (l testLog) Write(p []byte) (int, error) {
+	l.t.Logf("notify: %s", strings.TrimSpace(string(p)))
+	return len(p), nil
 }

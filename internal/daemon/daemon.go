@@ -21,6 +21,7 @@ import (
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/notify"
 	"github.com/jackspiering/whalenurse/internal/rules"
 )
 
@@ -76,6 +77,9 @@ type Options struct {
 	ComposeActor compose.Actor
 	ComposeNote  string
 	Stat         func(string) (os.FileInfo, error)
+
+	// NotifyStatus reports the notifications for `status`; nil when there is no notifier (tests).
+	NotifyStatus func() notify.Status
 
 	// ReconnectBackoff is the first wait before resubscribing to events (doubles up to 30s).
 	ReconnectBackoff time.Duration

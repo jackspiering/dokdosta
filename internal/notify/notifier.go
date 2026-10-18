@@ -1,0 +1,390 @@
+// Package notify sends the domain events people want to hear about to Shoutrrr URLs (ntfy, Gotify, Discord, Telegram,
+// a webhook ...). It is one more subscriber of the engine's event stream, next to the log and the store, so what is sent
+// can never disagree with what is recorded.
+//
+// Three rules shape it:
+//
+//   - Healing never waits for a notification. The subscriber only queues the event; one dispatcher renders and
+//     deduplicates, and one worker per URL delivers with a timeout, so a dead or slow URL delays nothing, not even another
+//     URL. A failure is logged and counted, never raised.
+//   - The URLs are secrets. They are never logged, never part of a status, and every error is redacted before it is shown
+//     (see Redactor). A URL is known by its position and its scheme only: "#2 discord".
+//   - Say it once. The same event for the same container is sent once per incident, and each URL has a rate limit with a
+//     reserve for the important messages.
+package notify
+
+import (
+	"context"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/jackspiering/whalenurse/internal/clock"
+	"github.com/jackspiering/whalenurse/internal/engine"
+)
+
+// Sender delivers a message to one URL.
+type Sender interface {
+	// Send delivers m, or fails. The context carries the delivery timeout. An error may name the URL's parts: the
+	// Notifier redacts it before it is logged or kept.
+	Send(ctx context.Context, m Message) error
+	Close() error
+}
+
+// Target is one configured URL, as the Notifier knows it: a label that is safe to print and a Sender. Sender is nil when
+// the URL was invalid (Err says why, redacted); such a target is listed in the status and sends nothing.
+type Target struct {
+	Label  string // "#2 discord"
+	Sender Sender
+	Err    string
+}
+
+// Options configure a Notifier.
+type Options struct {
+	Host   string
+	DryRun bool
+	Clock  clock.Clock
+	Log    *slog.Logger
+	Redact *Redactor
+
+	Targets   []Target
+	Timeout   time.Duration // one delivery attempt; default 10s
+	RateLimit int           // messages per hour per URL; the second half is reserved for critical ones; default 20
+	QueueSize int           // events waiting for the dispatcher, and messages waiting per URL; default 64
+	// Backoff is the wait before each retry of a failed delivery (so len(Backoff)+1 attempts); nil means 2s and 10s.
+	Backoff []time.Duration
+	// DedupeFor is how long a sent message suppresses its twin when there is no incident to tell them apart; default 24h.
+	DedupeFor time.Duration
+}
+
+// Notifier is the subscriber. Create it with New, subscribe Handle to the bus, and call Shutdown when the daemon stops.
+type Notifier struct {
+	o   Options
+	clk clock.Clock
+	log *slog.Logger
+
+	mu     sync.RWMutex // guards closed against Handle sending on a closed channel
+	closed bool
+	in     chan engine.Event
+
+	// dispatcher-only state
+	sent    map[string]time.Time // dedupe identity -> when it was sent
+	reasons map[string]string    // container key -> why its running action was started
+
+	targets []*worker
+	wg      sync.WaitGroup
+	cancel  context.CancelFunc // aborts deliveries in flight when Shutdown runs out of time
+	sendCtx context.Context
+
+	droppedEvents atomic.Int64
+}
+
+type worker struct {
+	t  Target
+	q  chan Message
+	nt *Notifier
+
+	mu          sync.Mutex
+	stamps      []time.Time // when this URL's messages were sent, for the hourly limit
+	suppressed  int         // messages the limit held back since the last one that went out
+	sentN       int64
+	failedN     int64
+	limitedN    int64
+	droppedN    int64
+	lastErr     string
+	lastErrAt   time.Time
+	lastOK      time.Time
+	attemptsRun int64
+}
+
+// New starts the dispatcher and one worker per usable target.
+func New(o Options) *Notifier {
+	if o.Clock == nil {
+		o.Clock = clock.Real{}
+	}
+	if o.Log == nil {
+		o.Log = slog.New(slog.DiscardHandler)
+	}
+	if o.Timeout <= 0 {
+		o.Timeout = 10 * time.Second
+	}
+	if o.RateLimit <= 0 {
+		o.RateLimit = 20
+	}
+	if o.QueueSize <= 0 {
+		o.QueueSize = 64
+	}
+	if o.Backoff == nil {
+		o.Backoff = []time.Duration{2 * time.Second, 10 * time.Second}
+	}
+	if o.DedupeFor <= 0 {
+		o.DedupeFor = 24 * time.Hour
+	}
+	n := &Notifier{
+		o: o, clk: o.Clock, log: o.Log,
+		in:      make(chan engine.Event, o.QueueSize),
+		sent:    map[string]time.Time{},
+		reasons: map[string]string{},
+	}
+	n.sendCtx, n.cancel = context.WithCancel(context.Background())
+	for _, t := range o.Targets {
+		w := &worker{t: t, q: make(chan Message, o.QueueSize), nt: n}
+		n.targets = append(n.targets, w)
+		if t.Sender != nil {
+			n.wg.Add(1)
+			go w.run()
+		}
+	}
+	n.wg.Add(1)
+	go n.dispatch()
+	return n
+}
+
+// Handle is the bus subscriber. The engine calls it while it holds its lock, so it only queues: no rendering, no I/O.
+// If the queue is full the event is dropped and counted.
+func (n *Notifier) Handle(e engine.Event) {
+	n.mu.RLock()
+	defer n.mu.RUnlock()
+	if n.closed {
+		return
+	}
+	select {
+	case n.in <- e:
+	default:
+		n.droppedEvents.Add(1)
+		n.log.Warn("notification queue full, event dropped", "type", string(e.Type), "key", e.Key)
+	}
+}
+
+// Shutdown stops taking events, delivers what is queued for up to grace, and then aborts what is still in flight. The
+// last messages before a stop are often the ones that matter (a SUSPENDED the host is about to lose to a reboot).
+func (n *Notifier) Shutdown(grace time.Duration) {
+	n.mu.Lock()
+	if n.closed {
+		n.mu.Unlock()
+		return
+	}
+	n.closed = true
+	close(n.in)
+	n.mu.Unlock()
+
+	done := make(chan struct{})
+	go func() { n.wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(grace):
+		n.cancel()
+		<-done
+	}
+	n.cancel()
+	for _, w := range n.targets {
+		if w.t.Sender != nil {
+			_ = w.t.Sender.Close()
+		}
+	}
+}
+
+// dispatch renders, deduplicates and fans out. It runs off the engine's goroutine, so it may take its time.
+func (n *Notifier) dispatch() {
+	defer n.wg.Done()
+	defer func() {
+		for _, w := range n.targets {
+			close(w.q)
+		}
+	}()
+	for e := range n.in {
+		n.route(e)
+	}
+}
+
+func (n *Notifier) route(e engine.Event) {
+	switch e.Type {
+	case engine.ActionStarted:
+		// Only remembered: the message goes out when the action ends, and says why it was started.
+		n.reasons[e.Key] = afterPrefix(e.Message, e.Attrs["action"]+": ")
+		return
+	}
+	c := rctx{host: n.o.Host, dryRun: n.o.DryRun}
+	if e.Type == engine.ActionResult {
+		c.reason = n.reasons[e.Key]
+		delete(n.reasons, e.Key)
+	}
+	m, id, ok := render(e, c)
+	if !ok {
+		return
+	}
+	if id != "" && n.seen(id) {
+		return
+	}
+	for _, w := range n.targets {
+		w.offer(m)
+	}
+}
+
+// seen records the identity and reports whether it was already sent within DedupeFor.
+func (n *Notifier) seen(id string) bool {
+	now := n.clk.Now()
+	if at, ok := n.sent[id]; ok && now.Sub(at) < n.o.DedupeFor {
+		return true
+	}
+	n.sent[id] = now
+	if len(n.sent) > 4096 {
+		for k, at := range n.sent {
+			if now.Sub(at) >= n.o.DedupeFor {
+				delete(n.sent, k)
+			}
+		}
+	}
+	return false
+}
+
+// offer applies the URL's rate limit and queues the message for its worker.
+func (w *worker) offer(m Message) {
+	if w.t.Sender == nil {
+		return
+	}
+	w.mu.Lock()
+	now := w.nt.clk.Now()
+	cut := now.Add(-time.Hour)
+	kept := w.stamps[:0]
+	for _, s := range w.stamps {
+		if s.After(cut) {
+			kept = append(kept, s)
+		}
+	}
+	w.stamps = kept
+	// Routine messages may use the first half of the hour's budget, critical ones all of it, so a storm of routine ones
+	// cannot swallow the one that says a container was given up on.
+	limit := w.nt.o.RateLimit
+	if !m.Critical {
+		limit = (limit + 1) / 2
+	}
+	if len(w.stamps) >= limit {
+		w.suppressed++
+		w.limitedN++
+		w.mu.Unlock()
+		w.nt.log.Warn("notification held back by the rate limit", "url", w.t.Label, "limit_per_hour", w.nt.o.RateLimit)
+		return
+	}
+	w.stamps = append(w.stamps, now)
+	if w.suppressed > 0 {
+		m.Body = fit([]string{m.Body, fmt.Sprintf("(%d earlier messages were held back by the rate limit)", w.suppressed)}, MaxBody+60)
+		w.suppressed = 0
+	}
+	w.mu.Unlock()
+	select {
+	case w.q <- m:
+	default:
+		w.mu.Lock()
+		w.droppedN++
+		w.mu.Unlock()
+		w.nt.log.Warn("notification queue full for this URL, message dropped", "url", w.t.Label)
+	}
+}
+
+// run delivers one URL's messages in order.
+func (w *worker) run() {
+	defer w.nt.wg.Done()
+	for m := range w.q {
+		w.deliver(m)
+	}
+}
+
+func (w *worker) deliver(m Message) {
+	o := w.nt.o
+	var err error
+	for attempt := 0; ; attempt++ {
+		ctx, cancel := context.WithTimeout(w.nt.sendCtx, o.Timeout)
+		err = w.t.Sender.Send(ctx, m)
+		cancel()
+		w.mu.Lock()
+		w.attemptsRun++
+		w.mu.Unlock()
+		if err == nil || attempt >= len(o.Backoff) || w.nt.sendCtx.Err() != nil {
+			break
+		}
+		select {
+		case <-time.After(o.Backoff[attempt]):
+		case <-w.nt.sendCtx.Done():
+		}
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if err == nil {
+		w.sentN++
+		w.lastOK = w.nt.clk.Now()
+		return
+	}
+	w.failedN++
+	w.lastErr, w.lastErrAt = o.Redact.Err(err), w.nt.clk.Now()
+	w.nt.log.Warn("notification failed", "url", w.t.Label, "error", w.lastErr, "title", m.Title)
+}
+
+// TargetStatus is one URL in the status: its label and counts, never the URL.
+type TargetStatus struct {
+	URL         string    `json:"url"` // "#2 discord"
+	Sent        int64     `json:"sent"`
+	Failed      int64     `json:"failed"`
+	RateLimited int64     `json:"rate_limited"`
+	Dropped     int64     `json:"dropped"`
+	LastError   string    `json:"last_error,omitempty"` // redacted
+	LastErrorAt time.Time `json:"last_error_at,omitzero"`
+	LastOK      time.Time `json:"last_ok,omitzero"`
+	Invalid     string    `json:"invalid,omitempty"` // why the URL cannot be used, redacted
+}
+
+// Status is the notification part of `whalenurse status`.
+type Status struct {
+	Enabled       bool           `json:"enabled"`
+	DryRun        bool           `json:"dry_run,omitempty"`
+	Targets       []TargetStatus `json:"targets,omitempty"`
+	DroppedEvents int64          `json:"dropped_events,omitempty"`
+	Ping          *PingStatus    `json:"uptime_ping,omitempty"`
+}
+
+// Status snapshots the counters.
+func (n *Notifier) Status() Status {
+	s := Status{Enabled: len(n.targets) > 0, DryRun: n.o.DryRun, DroppedEvents: n.droppedEvents.Load()}
+	for _, w := range n.targets {
+		w.mu.Lock()
+		s.Targets = append(s.Targets, TargetStatus{
+			URL: w.t.Label, Sent: w.sentN, Failed: w.failedN, RateLimited: w.limitedN, Dropped: w.droppedN,
+			LastError: w.lastErr, LastErrorAt: w.lastErrAt, LastOK: w.lastOK, Invalid: w.t.Err,
+		})
+		w.mu.Unlock()
+	}
+	return s
+}
+
+// Label is the printable name of the i-th URL (0-based): "#1 ntfy".
+func Label(i int, rawURL string) string { return fmt.Sprintf("#%d %s", i+1, schemeOf(rawURL)) }
+
+// Summary is one line for the CLI and the log: how many URLs, never which.
+func (s Status) Summary() string {
+	if !s.Enabled {
+		return "none configured (WHALENURSE_NOTIFY_URLS)"
+	}
+	var parts []string
+	for _, t := range s.Targets {
+		switch {
+		case t.Invalid != "":
+			parts = append(parts, fmt.Sprintf("%s INVALID (%s)", t.URL, t.Invalid))
+		default:
+			p := fmt.Sprintf("%s: %d sent", t.URL, t.Sent)
+			if t.Failed > 0 {
+				p += fmt.Sprintf(", %d failed (last: %s)", t.Failed, t.LastError)
+			}
+			if t.RateLimited > 0 {
+				p += fmt.Sprintf(", %d held back by the rate limit", t.RateLimited)
+			}
+			if t.Dropped > 0 {
+				p += fmt.Sprintf(", %d dropped", t.Dropped)
+			}
+			parts = append(parts, p)
+		}
+	}
+	return strings.Join(parts, "; ")
+}
