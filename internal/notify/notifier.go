@@ -21,6 +21,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackspiering/whalenurse/internal/clock"
 	"github.com/jackspiering/whalenurse/internal/engine"
@@ -196,8 +197,19 @@ func (n *Notifier) dispatch() {
 		}
 	}()
 	for e := range n.in {
-		n.route(e)
+		n.routeSafely(e)
 	}
+}
+
+// routeSafely keeps one bad event (a template bug) from ending the dispatcher.
+func (n *Notifier) routeSafely(e engine.Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			n.droppedEvents.Add(1)
+			n.log.Error("notification dropped: panic while handling an event", "type", string(e.Type), "key", e.Key, "panic", n.o.Redact.Redact(fmt.Sprint(r)))
+		}
+	}()
+	n.route(e)
 }
 
 func (n *Notifier) route(e engine.Event) {
@@ -271,7 +283,7 @@ func (w *worker) offer(m Message) {
 	}
 	w.stamps = append(w.stamps, now)
 	if w.suppressed > 0 {
-		m.Body = fit([]string{m.Body, fmt.Sprintf("(%d earlier messages were held back by the rate limit)", w.suppressed)}, MaxBody+60)
+		m.Body = withNote(m.Body, fmt.Sprintf("(%d earlier messages were held back by the rate limit)", w.suppressed), MaxBody)
 		w.suppressed = 0
 	}
 	w.mu.Unlock()
@@ -283,6 +295,13 @@ func (w *worker) offer(m Message) {
 		w.mu.Unlock()
 		w.nt.log.Warn("notification queue full for this URL, message dropped", "url", w.t.Label)
 	}
+}
+
+// withNote appends the note as a last line and keeps the body within max runes by cutting the details before it (the key
+// line comes first and stays).
+func withNote(body, note string, max int) string {
+	room := max - utf8.RuneCountInString(note) - 1
+	return cut(body, room) + "\n" + note
 }
 
 // run delivers one URL's messages in order.
@@ -298,7 +317,7 @@ func (w *worker) deliver(m Message) {
 	var err error
 	for attempt := 0; ; attempt++ {
 		ctx, cancel := context.WithTimeout(w.nt.sendCtx, o.Timeout)
-		err = w.t.Sender.Send(ctx, m)
+		err = w.send(ctx, m)
 		cancel()
 		w.mu.Lock()
 		w.attemptsRun++
@@ -321,6 +340,17 @@ func (w *worker) deliver(m Message) {
 	w.failedN++
 	w.lastErr, w.lastErrAt = o.Redact.Err(err), w.nt.clk.Now()
 	w.nt.log.Warn("notification failed", "url", w.t.Label, "error", w.lastErr, "title", m.Title)
+}
+
+// send calls the Sender and turns a panic into a failed delivery: nothing a notification service does may take down the
+// healer.
+func (w *worker) send(ctx context.Context, m Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return w.t.Sender.Send(ctx, m)
 }
 
 // TargetStatus is one URL in the status: its label and counts, never the URL.

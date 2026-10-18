@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"github.com/nicholas-fedor/shoutrrr/pkg/types"
 
 	"github.com/jackspiering/whalenurse/internal/engine"
 )
@@ -294,5 +297,66 @@ func TestHandleDropsInsteadOfBlockingWhenTheQueueIsFull(t *testing.T) {
 	}
 	if n.Status().DroppedEvents != 4 {
 		t.Error("the status does not show the dropped events")
+	}
+}
+
+// A panic in a notification service must not take the healer down (Shoutrrr's router runs services in goroutines of its
+// own with no recover, so whalenurse sends by calling the service itself, under a recover).
+type panicSender struct{ recSender }
+
+func (*panicSender) Send(context.Context, Message) error { panic("boom with token-in-panic-9999") }
+
+func TestAPanickingSenderIsAFailedDeliveryAndOtherURLsStillGetTheirs(t *testing.T) {
+	good := &recSender{}
+	nt, _, _, lb := newTest(t, 0, func(o *Options) {
+		o.Targets = []Target{{Label: "#1 bad", Sender: &panicSender{}}, {Label: "#2 good", Sender: good}}
+		o.Redact = NewRedactor("ntfy://x/token-in-panic-9999")
+	})
+	nt.Handle(suspended("i"))
+	nt.Handle(ev(engine.Recovered, webKey, "healthy", map[string]string{engine.AttrIncident: "i"}))
+	flush(nt)
+	st := nt.Status().Targets
+	if st[0].Failed != 2 || st[0].Sent != 0 || len(good.messages()) != 2 {
+		t.Fatalf("%+v / %d delivered to the good URL", st, len(good.messages()))
+	}
+	if strings.Contains(lb.String(), "token-in-panic-9999") || strings.Contains(st[0].LastError, "token-in-panic-9999") {
+		t.Errorf("the panic value leaked a token: %s / %s", lb.String(), st[0].LastError)
+	}
+}
+
+type fakeSvc struct {
+	types.Service // never called: only the methods below are
+	withCtx       bool
+}
+
+func (fakeSvc) GetID() string                    { return "fake" }
+func (fakeSvc) Send(string, *types.Params) error { panic("plain send panics") }
+
+type fakeCtxSvc struct{ fakeSvc }
+
+func (fakeCtxSvc) SendContext(context.Context, string, *types.Params) error {
+	panic("context send panics")
+}
+
+func TestShoutrrrSenderTurnsAServicePanicIntoAnError(t *testing.T) {
+	for name, svc := range map[string]types.Service{"context sender": fakeCtxSvc{}, "plain sender": fakeSvc{}} {
+		err := (&shoutrrrSender{svc: svc}).Send(context.Background(), Message{Title: "t", Body: "b"})
+		if err == nil || !strings.Contains(err.Error(), "panic") {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}
+
+func TestTheHeldBackNoteNeverPushesTheBodyOverTheLimit(t *testing.T) {
+	long := strings.Repeat("a long cause that goes on and on; ", 20)
+	e := ev(engine.Suspended, webKey, "every rung ran or was unavailable: "+long, map[string]string{"reason": "ladder", engine.AttrIncident: "i"})
+	m, _, _ := render(e, rctx{})
+	got := withNote(m.Body, "(12 earlier messages were held back by the rate limit)", MaxBody)
+	if utf8.RuneCountInString(got) > MaxBody || !strings.HasPrefix(got, webKey+"\n") || !strings.HasSuffix(got, "held back by the rate limit)") {
+		t.Fatalf("%d runes: %q", utf8.RuneCountInString(got), got)
+	}
+	short := withNote("nas/p/web/1\nrecovered", "(1 earlier messages were held back by the rate limit)", MaxBody)
+	if short != "nas/p/web/1\nrecovered\n(1 earlier messages were held back by the rate limit)" {
+		t.Fatalf("%q", short)
 	}
 }
