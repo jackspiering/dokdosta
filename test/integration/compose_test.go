@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"syscall"
 	"testing"
@@ -721,5 +722,29 @@ func TestImageUsesTheBundledComposeWhenThereIsNoHostPlugin(t *testing.T) {
 		if why != engine.ReasonDrift {
 			t.Fatalf("not recreated, so it must be the guard: reason=%q", why)
 		}
+		// And it must be the skew finding, not a config or image finding (which would be a false drift report).
+		msgs := driftBlockedMessages(t, s.container("whalenurse").ID)
+		if len(msgs) != 1 || !strings.Contains(msgs[0], "can't verify drift (compose ") || strings.Contains(msgs[0], "image:") || strings.Contains(msgs[0], "config:") {
+			t.Fatalf("want one skew finding, got %q", msgs)
+		}
 	}
+}
+
+// driftBlockedMessages reads the DriftBlocked events from the JSON log of a whalenurse container.
+func driftBlockedMessages(t *testing.T, id string) []string {
+	t.Helper()
+	// whalenurse logs to stderr, which ExecRunner does not return.
+	out, err := exec.Command("docker", "logs", id).CombinedOutput()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msgs []string
+	for _, line := range strings.Split(string(out), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) == nil && m["type"] == "DriftBlocked" {
+			msg, _ := m["msg"].(string)
+			msgs = append(msgs, msg)
+		}
+	}
+	return msgs
 }

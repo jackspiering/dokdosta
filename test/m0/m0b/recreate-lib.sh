@@ -89,7 +89,7 @@ recreate_prepare() {
   m0b_inspect_dir "$P" "$STATE/baseline/inspect"
   nurse_logs "$wn" 0 "$STATE/baseline/whalenurse-log.ndjson"
   # Everything else on the host, to prove it is untouched.
-  docker ps -aq --no-trunc --format '{{.ID}} {{.Label "com.docker.compose.project"}}' | awk -v p="$P" '$2 != p {print $1}' | sort >"$STATE/baseline/others.txt"
+  docker ps -a --no-trunc --format '{{.ID}} {{.Label "com.docker.compose.project"}}' | awk -v p="$P" '$2 != p {print $1}' | sort >"$STATE/baseline/others.txt"
   for s in whalenurse parent sidecar; do m0b_set "baseline_$s" "$(cid "$P" "$s")"; done
   m0b_set nurse_container "$wn"
   m0b_set nurse_started "$(docker inspect --format '{{.State.StartedAt}}' "$wn")"
@@ -222,7 +222,7 @@ recreate_collect() {
   if [[ "$(docker inspect --format '{{.State.StartedAt}}' "$wn")" == "$nurse_started" ]]; then pass "whalenurse itself was not restarted"; else warn "whalenurse was restarted during the scenario"; fi
 
   # 4. nothing else on the host was touched
-  docker ps -aq --no-trunc --format '{{.ID}} {{.Label "com.docker.compose.project"}}' | awk -v p="$P" '$2 != p {print $1}' | sort >"$out/others.txt"
+  docker ps -a --no-trunc --format '{{.ID}} {{.Label "com.docker.compose.project"}}' | awk -v p="$P" '$2 != p {print $1}' | sort >"$out/others.txt"
   if diff -q "$STATE/baseline/others.txt" "$out/others.txt" >/dev/null; then pass "the containers outside $P are exactly the ones from before"; else fail "containers outside $P changed: $(diff "$STATE/baseline/others.txt" "$out/others.txt" | head -5)"; fi
 
   if ((fails == 0)); then csay "RESULT: PASS ($warns WARN)"; else csay "RESULT: FAIL ($fails FAIL, $warns WARN)"; fi
