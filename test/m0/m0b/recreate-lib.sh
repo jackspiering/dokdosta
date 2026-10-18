@@ -104,7 +104,7 @@ recreate_prepare() {
     "docker exec $(cid "$P" parent) touch /broken"
   printf '%s\n' \
     'Notes:' \
-    "  - Everything in $P stays in place until test/m0/m0b/teardown.sh (which also removes $stack)." \
+    "  - Everything in $P stays in place until test/m0/m0b/teardown.sh (which also removes $RECREATE_STACK_BASE, including $stack)." \
     '  - No daemon restart and no sudo. The step is one docker exec into the parent of this scenario.' \
     '  - collect.sh waits (up to --watch seconds, default 240) for the parent and the sidecar to be recreated and healthy,' \
     '    then checks that the sidecar shares the new parent namespace and reaches it, and that whalenurse never restarted it.' \
