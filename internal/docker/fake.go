@@ -35,6 +35,7 @@ type Fake struct {
 
 	server ServerInfo
 	images map[string]string // reference -> what ImageID returns for it
+	plain  map[string]string // reference -> what ImageID returns with no platform (the index digest); defaults to images
 	since  []time.Time       // the since argument of every Events subscription
 }
 
@@ -42,7 +43,7 @@ type Fake struct {
 func NewFake() *Fake {
 	return &Fake{
 		containers: map[string]Container{}, events: make(chan Event, 256), errs: make(chan error, 1),
-		server: ServerInfo{Version: "29.9.1", APIVersion: "1.56", Arch: "amd64", OS: "linux"}, images: map[string]string{},
+		server: ServerInfo{Version: "29.9.1", APIVersion: "1.56", Arch: "amd64", OS: "linux"}, images: map[string]string{}, plain: map[string]string{},
 	}
 }
 
@@ -64,6 +65,13 @@ func (f *Fake) SetImage(ref, id string) {
 	f.images[ref] = id
 }
 
+// SetPlainImage makes the platform-less ImageID(ref, "") return id (the index digest on the containerd store).
+func (f *Fake) SetPlainImage(ref, id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.plain[ref] = id
+}
+
 func (f *Fake) ServerVersion(context.Context) (ServerInfo, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -76,6 +84,11 @@ func (f *Fake) ServerVersion(context.Context) (ServerInfo, error) {
 func (f *Fake) ImageID(_ context.Context, ref, arch string) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if arch == "" {
+		if id, ok := f.plain[ref]; ok {
+			return id, nil
+		}
+	}
 	if id, ok := f.images[ref]; ok {
 		return id, nil
 	}

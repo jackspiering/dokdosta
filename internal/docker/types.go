@@ -104,7 +104,9 @@ type Reader interface {
 	ServerVersion(ctx context.Context) (ServerInfo, error)
 	// ImageID returns what an image reference resolves to for linux/<arch>: the value the drift guard compares with
 	// the com.docker.compose.image label (plan §3.6 check 2). It is the platform manifest digest on the containerd
-	// store and the image ID on the classic store. It returns ErrImageNotFound when the reference is gone.
+	// store and the image ID on the classic store. With an empty arch it is the plain image ID (the index digest on the
+	// containerd store), which compose before v5.5.0 recorded in the label (plan v3.6). It returns ErrImageNotFound when
+	// the reference is gone.
 	ImageID(ctx context.Context, ref, arch string) (string, error)
 }
 

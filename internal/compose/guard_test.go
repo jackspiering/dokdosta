@@ -179,3 +179,26 @@ func TestGuardVersionSkewOnlyForTheBundledCompose(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// Compose before v5.5.0 records the image (index) ID in the label on the containerd store, where later releases record the
+// platform manifest digest: the v5.2.0 leg of the CI matrix found it. Both are the image the container was created from.
+func TestGuardAcceptsTheIndexIDInTheLabel(t *testing.T) {
+	f := NewFake()
+	in := guardIn(true)
+	in.Labels[LabelImage] = "sha256:index00000011111111111111111111111111111111111111111111111111111111"
+	g := Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgOld, "web:1|": "sha256:index00000011111111111111111111111111111111111111111111111111111111"}}
+	if got := g.Check(context.Background(), in); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+	// A moved tag changes both IDs, so it is still caught.
+	g.Images = fakeImages{"web:1|amd64": imgNew, "web:1|": "sha256:index2222222222222222222222222222222222222222222222222222222222222222"}
+	if got := g.Check(context.Background(), in); causes(got) != CheckImage {
+		t.Fatalf("%v", got)
+	}
+	// And a label that matches neither is drift.
+	in.Labels[LabelImage] = "sha256:somethingelse"
+	g.Images = fakeImages{"web:1|amd64": imgOld, "web:1|": "sha256:index00000011111111111111111111111111111111111111111111111111111111"}
+	if got := g.Check(context.Background(), in); causes(got) != CheckImage {
+		t.Fatalf("%v", got)
+	}
+}

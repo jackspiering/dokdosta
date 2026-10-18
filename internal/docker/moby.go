@@ -82,9 +82,14 @@ func (m *Moby) ServerVersion(ctx context.Context) (ServerInfo, error) {
 	return ServerInfo{Version: v.Version, APIVersion: v.APIVersion, Arch: v.Arch, OS: v.Os}, nil
 }
 
-// ImageID is `docker image inspect --platform linux/<arch> --format '{{.Id}}' <ref>` (needs API 1.49, Engine 28.1).
+// ImageID is `docker image inspect --platform linux/<arch> --format '{{.Id}}' <ref>` (needs API 1.49, Engine 28.1). With
+// an empty arch it is the plain `docker image inspect --format '{{.Id}}' <ref>`: the index digest on the containerd store.
 func (m *Moby) ImageID(ctx context.Context, ref, arch string) (string, error) {
-	res, err := m.c.ImageInspect(ctx, ref, client.ImageInspectWithPlatform(&ocispec.Platform{OS: "linux", Architecture: arch}))
+	var opts []client.ImageInspectOption
+	if arch != "" {
+		opts = append(opts, client.ImageInspectWithPlatform(&ocispec.Platform{OS: "linux", Architecture: arch}))
+	}
+	res, err := m.c.ImageInspect(ctx, ref, opts...)
 	if err != nil {
 		if errdefs.IsNotFound(err) {
 			return "", fmt.Errorf("%w: %s (linux/%s)", ErrImageNotFound, ref, arch)

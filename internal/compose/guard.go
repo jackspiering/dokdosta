@@ -150,10 +150,16 @@ func (g Guard) imageCheck(ctx context.Context, in GuardInput) (*Finding, string)
 		// A reference that is gone locally is a failure whatever the cause: the recreate would need a pull.
 		return &Finding{CheckUnverified, fmt.Sprintf("image %s cannot be resolved for linux/%s: %v", in.ImageRef, in.Arch, err)}, ""
 	}
-	if got != want {
-		return nil, fmt.Sprintf("image %s now resolves to %s, but this container was created from %s: the tag moved", in.ImageRef, short(got), short(want))
+	if got == want {
+		return nil, ""
 	}
-	return nil, ""
+	// Compose before v5.5.0 recorded the image (index) ID in the label, not the platform manifest digest, on the containerd
+	// store (found by the v5.2.0 leg of the CI matrix, plan v3.6). Either is the image the container was created from; a
+	// moved tag changes both, so accepting the plain ID too hides no drift.
+	if plain, err := g.Images.ImageID(ctx, in.ImageRef, ""); err == nil && plain == want {
+		return nil, ""
+	}
+	return nil, fmt.Sprintf("image %s now resolves to %s, but this container was created from %s: the tag moved", in.ImageRef, short(got), short(want))
 }
 
 func short(s string) string {
