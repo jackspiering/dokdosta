@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,5 +102,24 @@ func TestSelfID(t *testing.T) {
 func TestContainerRef(t *testing.T) {
 	if ContainerRef("container:abc") != "abc" || ContainerRef("host") != "" || ContainerRef("p_default") != "" {
 		t.Fatal("ContainerRef")
+	}
+}
+
+// The boundary of the dashboard's secrecy: an inspect response carries the environment, the command, the mounts and the
+// network settings, and none of it enters the snapshot the rest of whalenurse (and the API) can see.
+func TestInspectNeverCarriesTheEnvironmentTheCommandOrTheMounts(t *testing.T) {
+	raw := []byte(`[{"Id":"abc","Name":"/web","Image":"sha256:img","RestartCount":1,
+	  "Config":{"Image":"nginx:1","Env":["DB_PASSWORD=env-SECRET-1","API_TOKEN=env-SECRET-2"],"Cmd":["serve","--key=cmd-SECRET-3"],
+	            "Entrypoint":["/bin/run","entry-SECRET-4"],"Labels":{"com.docker.compose.project":"p","com.docker.compose.service":"web"}},
+	  "State":{"Status":"running","Running":true,"Health":{"Status":"healthy","Log":[{"Output":"log-SECRET-5"}]}},
+	  "HostConfig":{"Binds":["/srv/bind-SECRET-6:/data"],"RestartPolicy":{"Name":"always"},"NetworkMode":"bridge"},
+	  "Mounts":[{"Source":"/srv/mount-SECRET-7","Destination":"/m"}],
+	  "NetworkSettings":{"Networks":{"net":{"IPAddress":"10.0.0.7","Aliases":["alias-SECRET-8"]}}}}]`)
+	c, err := ParseInspect(raw)
+	if err != nil || c.ID != "abc" || c.Image != "nginx:1" {
+		t.Fatalf("%+v %v", c, err)
+	}
+	if dump := fmt.Sprintf("%+v %#v", c, c); strings.Contains(dump, "SECRET") {
+		t.Fatalf("the snapshot carries something it should not: %s", dump)
 	}
 }

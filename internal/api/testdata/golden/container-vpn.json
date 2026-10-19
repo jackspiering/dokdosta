@@ -1,0 +1,176 @@
+{
+  "host": "nas",
+  "key": "nas/media/vpn/1",
+  "name": "media-vpn-1",
+  "id": "bbbbbbbbbbbb",
+  "project": "media",
+  "service": "vpn",
+  "number": "1",
+  "image": "qmcgaw/gluetun:latest",
+  "state": "running",
+  "health": "unhealthy",
+  "restart_count": 2,
+  "exit_code": 1,
+  "started_at": "2026-10-19T12:00:00Z",
+  "restart_policy": "always",
+  "watched": true,
+  "opted_in": true,
+  "ladder": [
+    "restart",
+    "recreate",
+    "pull"
+  ],
+  "heal_exited": "crashed",
+  "healer": {
+    "state": "SUSPENDED",
+    "class": "unhealthy",
+    "incident_opened": "2026-10-19T12:20:00Z",
+    "rungs_run": 2,
+    "cooldown_until": "2026-10-19T12:25:00Z",
+    "flaps": 1,
+    "flap_limit": 3,
+    "suspended": {
+      "reason": "drift",
+      "since": "2026-10-19T12:24:00Z",
+      "cause": "giving up: recreate skipped by the drift guard (image moved)"
+    }
+  },
+  "decision": {
+    "class": "unhealthy",
+    "action": "restart",
+    "reason": "healthcheck failing",
+    "at": "2026-10-19T12:30:00Z"
+  },
+  "dependents": [
+    {
+      "host": "nas",
+      "key": "nas/media/qbittorrent/1",
+      "name": "media-qbittorrent-1"
+    }
+  ],
+  "labels": {
+    "com.docker.compose.project": "media",
+    "com.docker.compose.service": "vpn",
+    "whalenurse.enable": "true"
+  },
+  "timeline": [
+    {
+      "id": 5,
+      "time": "2026-10-19T12:24:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "Suspended",
+      "message": "giving up: recreate skipped by the drift guard (image moved)",
+      "attrs": {
+        "reason": "drift"
+      }
+    },
+    {
+      "id": 4,
+      "time": "2026-10-19T12:23:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "DriftBlocked",
+      "message": "recreate skipped by the drift guard: image moved",
+      "attrs": {
+        "class": "unhealthy",
+        "findings": "image moved",
+        "moved_at": "2026-10-19T12:05:00Z",
+        "moved_by": "nas/media/other/1",
+        "moved_ref": "qmcgaw/gluetun:latest"
+      }
+    },
+    {
+      "id": 3,
+      "time": "2026-10-19T12:22:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "TagMoved",
+      "message": "qmcgaw/gluetun:latest: aaa moved to bbb; recreated",
+      "attrs": {
+        "new": "sha256:bbbbbbbbbbbbbbbb",
+        "ok": "true",
+        "old": "sha256:aaaaaaaaaaaaaaaa",
+        "old_image": "sha256:aaaaaaaaaaaaaaaa",
+        "ref": "qmcgaw/gluetun:latest",
+        "rollback_tag": "docker image tag sha256:aaaaaaaaaaaaaaaa qmcgaw/gluetun:latest",
+        "rollback_up": "docker compose -p media --project-directory /opt/stacks/media -f compose.yaml up -d --no-deps --pull never vpn",
+        "sidecars": "qbittorrent"
+      }
+    },
+    {
+      "id": 2,
+      "time": "2026-10-19T12:21:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "ActionResult",
+      "message": "restarted",
+      "attrs": {
+        "action": "restart",
+        "ok": "true",
+        "rung": "restart"
+      }
+    },
+    {
+      "id": 1,
+      "time": "2026-10-19T12:20:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "IncidentOpened",
+      "message": "unhealthy",
+      "attrs": {
+        "action": "restart",
+        "class": "unhealthy",
+        "incident": "2026-10-19T12:20:00Z"
+      }
+    }
+  ],
+  "drift": {
+    "status": "blocked",
+    "blocking": true,
+    "at": "2026-10-19T12:23:00Z",
+    "findings": "image moved",
+    "moved_by": "nas/media/other/1",
+    "moved_at": "2026-10-19T12:05:00Z",
+    "note": "The drift guard runs right before a recreate, not on a timer: this is what it found the last time."
+  },
+  "last_upgrade": {
+    "event_id": 3,
+    "kind": "TagMoved",
+    "at": "2026-10-19T12:22:00Z",
+    "ref": "qmcgaw/gluetun:latest",
+    "old_image": "sha256:aaaaaaaaaaaaaaaa",
+    "new_image": "sha256:bbbbbbbbbbbbbbbb",
+    "ok": true,
+    "sidecars": [
+      "qbittorrent"
+    ],
+    "rollback_tag": "docker image tag sha256:aaaaaaaaaaaaaaaa qmcgaw/gluetun:latest",
+    "rollback_up": "docker compose -p media --project-directory /opt/stacks/media -f compose.yaml up -d --no-deps --pull never vpn",
+    "message": "qmcgaw/gluetun:latest: aaa moved to bbb; recreated"
+  },
+  "incidents": [
+    {
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "opened": "2026-10-19T12:20:00Z",
+      "open": true,
+      "class": "unhealthy",
+      "state": "SUSPENDED"
+    },
+    {
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "opened": "2026-10-16T12:00:00Z",
+      "closed": "2026-10-16T13:00:00Z",
+      "open": false,
+      "class": "crashed",
+      "outcome": "recovered"
+    }
+  ]
+}

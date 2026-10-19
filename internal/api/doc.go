@@ -171,6 +171,7 @@ type DecisionDoc struct {
 
 // RelationDoc names the other end of a network_mode: container:<parent> link.
 type RelationDoc struct {
+	Host string `json:"host"`
 	Key  string `json:"key"`
 	Name string `json:"name"`
 }

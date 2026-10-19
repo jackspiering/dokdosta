@@ -1,0 +1,31 @@
+{
+  "host": "nas",
+  "incidents": [
+    {
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "opened": "2026-10-19T12:20:00Z",
+      "open": true,
+      "class": "unhealthy",
+      "state": "SUSPENDED"
+    },
+    {
+      "host": "nas",
+      "key": "nas/media/jellyfin/1",
+      "opened": "2026-10-17T12:00:00Z",
+      "closed": "2026-10-17T13:00:00Z",
+      "open": false,
+      "class": "unhealthy",
+      "outcome": "recovered"
+    },
+    {
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "opened": "2026-10-16T12:00:00Z",
+      "closed": "2026-10-16T13:00:00Z",
+      "open": false,
+      "class": "crashed",
+      "outcome": "recovered"
+    }
+  ]
+}

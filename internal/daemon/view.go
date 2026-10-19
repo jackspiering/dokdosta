@@ -10,6 +10,7 @@ import (
 	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/whalenurse/internal/engine"
 	"github.com/jackspiering/whalenurse/internal/rules"
 )
 
@@ -62,6 +63,14 @@ func (v *view) snapshot() ([]docker.Summary, map[string]seen) {
 // apiSource adapts the daemon to api.Source (Daemon.Status already names the CLI's reply).
 type apiSource struct{ d *Daemon }
 
+// NewAPI wires the read-only API service: the daemon's view, the event log (the store, or a ring in a dry run), the
+// closed-incident history (nil in a dry run), the hub that wakes the event streams, and the redactor.
+func NewAPI(d *Daemon, evlog engine.EventLog, history api.History, hub *api.Hub, redact func(string) string) *api.Service {
+	return &api.Service{
+		Host: d.cfg.HostID, Source: d.APISource(), Events: evlog, History: history, Redact: redact, Hub: hub, Metrics: d.cfg.Metrics,
+	}
+}
+
 // APISource is the daemon's half of the read-only API.
 func (d *Daemon) APISource() api.Source { return apiSource{d} }
 
@@ -75,7 +84,7 @@ func utc(t time.Time) time.Time {
 }
 
 func relation(d *Daemon, s docker.Summary) api.RelationDoc {
-	return api.RelationDoc{Key: d.keyOf(s), Name: s.Name}
+	return api.RelationDoc{Host: d.cfg.HostID, Key: d.keyOf(s), Name: s.Name}
 }
 
 // Containers implements api.Source: the last container list merged with the engine's state.
@@ -140,7 +149,7 @@ func (d *Daemon) containerDocs() []api.ContainerDoc {
 			}
 		}
 		if ref := docker.ContainerRef(s.NetworkMode); ref != "" {
-			c.Parent = &api.RelationDoc{Name: ref}
+			c.Parent = &api.RelationDoc{Host: d.cfg.HostID, Name: ref}
 			for _, p := range list {
 				if p.ID != s.ID && docker.MatchesRef(p.ID, p.Name, ref) {
 					r := relation(d, p)
@@ -156,6 +165,12 @@ func (d *Daemon) containerDocs() []api.ContainerDoc {
 		}
 		sort.Slice(c.Dependents, func(i, j int) bool { return c.Dependents[i].Key < c.Dependents[j].Key })
 
+		if _, ok := ev.Keys[key]; !ok {
+			// No engine state yet (never evaluated): a pause still covers the container.
+			if p, ok := ev.PauseFor(key, d.clk.Now()); ok {
+				c.Healer.Paused = &api.PausedDoc{Scope: p.Scope, Since: utc(p.Created), Until: utc(p.Until)}
+			}
+		}
 		if k, ok := ev.Keys[key]; ok {
 			h := &c.Healer
 			h.State, h.Class, h.IncidentOpened, h.CooldownUntil = k.State, k.Class, utc(k.Opened), utc(k.CooldownUntil)

@@ -102,7 +102,7 @@ func (h *handler) base(name, title string) page {
 func (h *handler) render(w http.ResponseWriter, name string, code int, p page) {
 	var buf bytes.Buffer
 	if err := h.pages[name].ExecuteTemplate(&buf, "layout", p); err != nil {
-		http.Error(w, "page error", http.StatusInternalServerError)
+		http.Error(w, "page error: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

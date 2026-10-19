@@ -1,0 +1,35 @@
+{
+  "host": "nas",
+  "events": [
+    {
+      "id": 4,
+      "time": "2026-10-19T12:23:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "DriftBlocked",
+      "message": "recreate skipped by the drift guard: image moved",
+      "attrs": {
+        "class": "unhealthy",
+        "findings": "image moved",
+        "moved_at": "2026-10-19T12:05:00Z",
+        "moved_by": "nas/media/other/1",
+        "moved_ref": "qmcgaw/gluetun:latest"
+      }
+    },
+    {
+      "id": 5,
+      "time": "2026-10-19T12:24:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "Suspended",
+      "message": "giving up: recreate skipped by the drift guard (image moved)",
+      "attrs": {
+        "reason": "drift"
+      }
+    }
+  ],
+  "next": 5,
+  "last_id": 7
+}

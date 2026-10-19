@@ -212,7 +212,7 @@ func runCmd(args []string) error {
 		log.Info("uptime ping on", "interval", cfg.PingInterval.String())
 	}
 
-	svc := &api.Service{Host: cfg.HostID, Source: d.APISource(), Events: evlog, History: history, Redact: red.Redact, Hub: hub, Metrics: cfg.Metrics}
+	svc := daemon.NewAPI(d, evlog, history, hub, red.Redact)
 	tcpHandler, sockHandler := handlers(d, api.Options{Service: svc, Token: cfg.HTTPToken, Web: web.Handler(svc)})
 	if cfg.ControlSocket != "" {
 		go func() {

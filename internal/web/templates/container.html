@@ -35,7 +35,7 @@
     <h2>Healer</h2>
     {{if .Watched}}
     <dl>
-      <dt>Ladder</dt><dd>{{ladderPath .}}</dd>
+      <dt>Ladder</dt><dd>{{ladderPath .ContainerDoc}}</dd>
       <dt>Heal exited</dt><dd>{{.HealExited}}</dd>
       <dt>Incident</dt><dd>{{if .Healer.IncidentOpened.IsZero}}none{{else}}{{.Healer.Class}}, opened {{timeTag .Healer.IncidentOpened}}{{end}}</dd>
       {{if cooling .Healer.CooldownUntil}}<dt>Cooldown</dt><dd>until {{timeTag .Healer.CooldownUntil}}</dd>{{end}}

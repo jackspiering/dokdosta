@@ -80,3 +80,21 @@ func (e *Engine) View() View {
 	}
 	return v
 }
+
+// ScopeMatches reports whether a state key (host/project/service/number, or host/name) is inside a pause scope.
+func ScopeMatches(scope, key string) bool { return scopeMatches(scope, key) }
+
+// PauseFor returns the pause that covers the key (the most specific scope), if any is in effect in the view.
+func (v View) PauseFor(key string, now time.Time) (Pause, bool) {
+	var hit Pause
+	found := false
+	for _, p := range v.Pauses {
+		if !p.Until.IsZero() && !now.Before(p.Until) {
+			continue
+		}
+		if scopeMatches(p.Scope, key) && (!found || len(p.Scope) > len(hit.Scope)) {
+			hit, found = p, true
+		}
+	}
+	return hit, found
+}
