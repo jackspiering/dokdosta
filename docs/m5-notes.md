@@ -26,7 +26,7 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 
 ## What was verified, and how
 
-- `go vet`, `go test -race ./...` (all packages), `go vet -tags integration ./...`; the integration tests were **not** run locally (CI runs them on the image, per the working protocol).
+- `go vet`, `go test -race ./...` (all packages), `go vet -tags integration ./...`; the integration tests were **not** run locally (CI runs them on the image, per the working protocol). **CI run 39251862224, all six integration legs (2 image stores × compose 5.2.0, 5.6.0, latest) green on dc56591**, `TestImageServesTheDashboardBehindTheToken` and `TestImageServesTheDashboardWithoutATokenOnLoopback` passing (not skipped).
 - Golden JSON for ten API calls (`go test ./internal/api -update` rewrites them), checked by test for `host` on every record and `Z` on every time.
 - The secrets test runs a real incident through a daemon on a fake Docker, a real store, the API and the pages, plants ten secrets (environment variable of the process, two labels, the notification URL's user info, path and query, the ping URL, the HTTP token, an event attribute under a non-allowed key, a leaky error text from a failed restart), and greps 30 responses and the SSE replay. Its positive controls require the container names, the `***` mask, the allowed `whalenurse.*` label and `NeedsRecreate` to be present. **Mutation check:** without the redactor it reports 36 leaks, without the attribute allow-list 12.
 - Every non-GET method (POST, PUT, PATCH, DELETE, OPTIONS, TRACE, CONNECT, PROPFIND) is 405 on every route including the control socket's paths, with and without the token, and none answers with CORS headers.
@@ -38,7 +38,6 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 ## Not verified
 
 - **The pages were not looked at in a browser.** The preview tool was off for this thread, and the headless Chromium on the box lacks `libasound`/`libgbm`. The templates, the CSS (light/dark by `prefers-color-scheme`; a 40rem breakpoint that turns the tables into stacked cards) and `app.js` were reviewed by reading and tested by fetching the HTML, not by rendering. **[maintainer]** please open the dashboard once on a desktop and a phone, in both colour schemes, and tell me what looks wrong.
-- The CI integration test (`test/integration/dashboard_test.go`) has not run yet; it needs the image and a Docker host.
 - `app.js` live refresh (EventSource plus the 15 s refetch) was not exercised in a browser; the server side of the stream is covered by Go tests.
 
 ## Open questions for the maintainer
