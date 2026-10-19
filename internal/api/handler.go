@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +21,10 @@ type Options struct {
 	Web     http.Handler // the dashboard: serves "/" and "/static/"; nil for the API alone
 	// AllowedHosts, Now and OnBlock: see SecureOptions.
 	AllowedHosts []string
-	Now          func() time.Time
-	OnBlock      func(client string, d time.Duration)
+	// TrustedProxies: see SecureOptions.
+	TrustedProxies []netip.Prefix
+	Now            func() time.Time
+	OnBlock        func(client string, d time.Duration)
 }
 
 // Handler is the handler of the TCP listener (WHALENURSE_HTTP_ADDR). It is read-only: it answers GET and HEAD and
@@ -66,7 +69,7 @@ func Handler(o Options) http.Handler {
 	if o.Web != nil {
 		mux.Handle("/", o.Web)
 	}
-	return Secure(SecureOptions{Token: o.Token, AllowedHosts: o.AllowedHosts, Now: o.Now, OnBlock: o.OnBlock}, mux)
+	return Secure(SecureOptions{Token: o.Token, AllowedHosts: o.AllowedHosts, TrustedProxies: o.TrustedProxies, Now: o.Now, OnBlock: o.OnBlock}, mux)
 }
 
 // ParseEventsQuery reads ?since=, ?limit=, ?key= and ?type= (repeatable or comma-separated).
@@ -123,6 +126,9 @@ type SecureOptions struct {
 	Token string
 	// AllowedHosts are extra Host names served when there is no token (loopback names always are); see HostAllowed.
 	AllowedHosts []string
+	// TrustedProxies are the reverse proxies whose X-Forwarded-For the wrong-token limiter may believe, so that the limit
+	// is per real client and not per proxy. A request from any other peer is keyed on its own address, whatever it sends.
+	TrustedProxies []netip.Prefix
 	// Now is the clock of the wrong-token limiter; nil is time.Now.
 	Now func() time.Time
 	// OnBlock is called when a client IP has been blocked for presenting too many wrong tokens (it logs, once per block).
@@ -167,7 +173,7 @@ func Secure(o SecureOptions, next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		client := clientKey(r)
+		client := clientKey(r, o.TrustedProxies)
 		if d, blocked := lim.blocked(client); blocked {
 			tooMany(w, d)
 			return

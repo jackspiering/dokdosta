@@ -1,0 +1,65 @@
+# Changelog
+
+All notable changes to whalenurse are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and the project follows [Semantic Versioning](https://semver.org/). The design history behind each change is in
+[docs/PLAN.md](docs/PLAN.md) and the `docs/m*-notes.md` files.
+
+The release workflow publishes the section of the tag that is pushed as the release notes. Before tagging, replace
+`YYYY-MM-DD` of the version about to be released with the release date (see [docs/releasing.md](docs/releasing.md)); the
+workflow refuses an undated section.
+
+## [Unreleased]
+
+## [0.1.0] - YYYY-MM-DD
+
+The first public release.
+
+### Added
+
+- **The healer.** For opted-in containers (`whalenurse.enable=true`, or `WHALENURSE_MODE=all`) that go unhealthy, crash-loop or
+  stop unexpectedly: rung 1 restarts (Docker API), rung 2 recreates from the stack's own compose files, and the optional rung 3
+  (`whalenurse.heal.pull=true`) pulls a newer image and recreates. One pass per incident, then SUSPENDED and a notification.
+  Cooldown, a flap limit, a global action rate limit, pause (default 2 h) and `--dry-run`.
+- **Compose-aware recreate.** `up -d --no-deps --pull never --no-build <service>` with the project, files and env file recorded
+  on the container; never `compose down`. `network_mode: service:<parent>` sidecars are repaired after their parent is
+  restarted or recreated, one at a time.
+- **The drift guard.** A recreate is skipped, and the container SUSPENDED with the reason, when it would deploy a compose edit,
+  a moved image tag, or when compose cannot be trusted to judge (version skew, a check that could not be made).
+  `WHALENURSE_DRIFT_GUARD=warn` overrides verified drift only.
+- **Decisions from the container's own state**, not from the order of Docker events: failed starts (`State.Error`), crash loops,
+  `heal-exited`, and containers stopped by a host shutdown, which are left to their restart policy. Daemon restarts and reboots
+  do not set manual-stop markers or clear SUSPENDED.
+- **Persistent state** in SQLite (`/data`): incidents, SUSPENDED, pauses, flap history, the event log and the notification
+  dedupe all survive a restart.
+- **Notifications** through [Shoutrrr](https://github.com/nicholas-fedor/shoutrrr) (ntfy, Gotify, Discord, Telegram, Slack and
+  more): dedupe per incident, a per-URL rate limit, `whalenurse notify test`, an optional uptime ping. Notification URLs are
+  secrets and are never logged or shown.
+- **The pull rung** reads the service's `pull_policy` (`never` and `build` are respected), runs the drift guard in image-move
+  mode, tells you what was upgraded and prints the exact rollback commands.
+- **A read-only dashboard and JSON API** (`/api/v1`, a server-sent events stream, optional Prometheus `/metrics`), off unless
+  `WHALENURSE_HTTP_ADDR` is set. GET and HEAD only. Optional token (bearer, or the password of HTTP Basic for browsers), a Host
+  check without a token, and a limit on wrong tokens. Secrets, environment variables and foreign labels never leave the process.
+- **The CLI** over a local unix socket: `status`, `pause`, `resume`, `unsuspend`, plus `notify test`, `healthcheck` and `version`.
+- `WHALENURSE_HTTP_TRUSTED_PROXIES`: the CIDRs of reverse proxies whose `X-Forwarded-For` the wrong-token limit may use, so the
+  limit is per real client instead of per proxy.
+- **Distribution.** A multi-arch image (`linux/amd64`, `linux/arm64`) on `ghcr.io/jackspiering/whalenurse` with the compose plugin
+  bundled as a fallback, and static binaries with checksums. Images and checksums are signed keyless with cosign, and
+  every release carries SBOMs and build provenance ([docs/verifying-releases.md](docs/verifying-releases.md)).
+- Documentation: [README](README.md), [configuration](docs/configuration.md), [labels](docs/labels.md),
+  [security](docs/security.md), [troubleshooting](docs/troubleshooting.md), [deployment](docs/deployment.md) (container and
+  systemd), [upgrading](docs/upgrading.md); examples in [examples/](examples/).
+
+### Requirements
+
+- Docker Engine 25 or later for rung 1 (restart). Rungs 2 and 3 and the drift guard need Engine 28.1 or later and Docker
+  Compose v5.2.0 or later; below that they are disabled with one warning and the ladder ends after the restart.
+
+### Known limits
+
+- Rung 3 cannot pull from a private registry (the compose child runs without `DOCKER_CONFIG`).
+- One host per whalenurse; there is no multi-host hub yet.
+- No write endpoints on the network: `pause`, `resume` and `unsuspend` are CLI-only.
+- The dashboard has been checked in headless Chromium, not on a real phone.
+
+[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0

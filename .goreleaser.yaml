@@ -1,0 +1,124 @@
+# GoReleaser configuration for whalenurse (plan v3.10, section 7 M6). Checked against GoReleaser v2.18.3; docs/m6-notes.md has
+# the versions of everything the release pipeline uses. The release job (.github/workflows/release.yml) runs only on a v*
+# tag; pull requests and main run `goreleaser release --snapshot --skip=publish,sign` (ci.yml), which builds the same
+# archives, checksums and SBOMs and pushes and signs nothing.
+version: 2
+project_name: whalenurse
+
+before:
+  hooks:
+    - go mod verify
+
+builds:
+  - id: whalenurse
+    main: ./cmd/whalenurse
+    binary: whalenurse
+    env:
+      - CGO_ENABLED=0
+    goos: [linux]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: whalenurse
+    ids: [whalenurse]
+    formats: [tar.gz]
+    name_template: "whalenurse_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+      - CHANGELOG.md
+      - src: examples/systemd/whalenurse.service
+        dst: systemd/whalenurse.service
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+# One SPDX SBOM per archive (syft, which the workflow installs).
+sboms:
+  - id: archives
+    artifacts: archive
+    documents:
+      - "{{ .ArtifactName }}.sbom.spdx.json"
+    args: ["$artifact", "--output", "spdx-json=$document"]
+
+# The multi-arch image. Built in the publish phase (so not by --skip=publish), from the binaries above: Dockerfile.release only
+# copies them. The tags v0.1.0, v0.1, v0 and latest; a pre-release (v0.2.0-rc.1) gets its own tag only and never moves the
+# others. Docker's own SBOM and provenance attestations (BuildKit) stay on.
+dockers_v2:
+  - id: whalenurse
+    ids: [whalenurse]
+    dockerfile: Dockerfile.release
+    images:
+      - ghcr.io/jackspiering/whalenurse
+    tags:
+      - "v{{ .Version }}"
+      - "{{ if not .Prerelease }}v{{ .Major }}.{{ .Minor }}{{ end }}"
+      - "{{ if not .Prerelease }}v{{ .Major }}{{ end }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    platforms:
+      - linux/amd64
+      - linux/arm64
+    labels:
+      org.opencontainers.image.title: whalenurse
+      org.opencontainers.image.description: "Compose-aware self-healing for Docker hosts"
+      org.opencontainers.image.source: "https://github.com/jackspiering/whalenurse"
+      org.opencontainers.image.url: "https://github.com/jackspiering/whalenurse"
+      org.opencontainers.image.documentation: "https://github.com/jackspiering/whalenurse/tree/main/docs"
+      org.opencontainers.image.licenses: MIT
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.created: "{{ .Date }}"
+    annotations:
+      "index,manifest:org.opencontainers.image.title": whalenurse
+      "index,manifest:org.opencontainers.image.description": "Compose-aware self-healing for Docker hosts"
+      "index,manifest:org.opencontainers.image.source": "https://github.com/jackspiering/whalenurse"
+      "index,manifest:org.opencontainers.image.licenses": MIT
+      "index,manifest:org.opencontainers.image.version": "{{ .Version }}"
+      "index,manifest:org.opencontainers.image.revision": "{{ .FullCommit }}"
+
+# digests.txt: the image digests, which the workflow attests (actions/attest) and cosign signs.
+docker_digest:
+  name_template: digests.txt
+
+# Keyless cosign (GitHub OIDC; the workflow has id-token: write): the checksums file and every image digest. cosign v3
+# writes one .sigstore.json bundle (signature, certificate and transparency log entry).
+signs:
+  - id: checksums
+    cmd: cosign
+    artifacts: checksum
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - "--bundle=${signature}"
+      - "${artifact}"
+      - "--yes"
+    output: true
+
+docker_signs:
+  - id: images
+    cmd: cosign
+    artifacts: all
+    args:
+      - sign
+      - "${artifact}@${digest}"
+      - "--yes"
+    output: true
+
+# The notes are CHANGELOG.md's section for the tag (scripts/release/release-notes.sh, which fails closed); the workflow passes
+# them with --release-notes. GoReleaser's own changelog is off so the two cannot disagree.
+changelog:
+  disable: true
+
+release:
+  github:
+    owner: jackspiering
+    name: whalenurse
+  prerelease: auto
+  # A draft first would let the maintainer look before it goes public, but the published image is public the moment it is
+  # pushed. The release gate (docs/releasing.md) is the place to stop, so the release is created published.
+  draft: false

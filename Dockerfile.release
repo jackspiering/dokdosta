@@ -1,0 +1,37 @@
+# syntax=docker/dockerfile:1
+
+# The release image, built by GoReleaser (dockers_v2, .goreleaser.yaml). GoReleaser compiles the binaries and puts them in the
+# build context as <os>/<arch>/whalenurse, so this file only copies. The development and CI image is ./Dockerfile, which
+# compiles from source; both must bundle the same compose release (scripts/ci/check-dockerfiles.sh compares them).
+#
+# The first stage downloads the bundled compose plugin and runs on the BUILD platform, so a multi-arch build needs no
+# emulation (QEMU): the final stage has no RUN.
+FROM --platform=$BUILDPLATFORM golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8 AS fetch
+ARG COMPOSE_VERSION=5.6.0
+ARG COMPOSE_SHA256_AMD64=40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a
+ARG COMPOSE_SHA256_ARM64=733ec76717ceb59052a9609b9dadfb523b2df8eab57a54212872d10a58078ea2
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64) asset=x86_64; sum="$COMPOSE_SHA256_AMD64" ;; \
+      arm64) asset=aarch64; sum="$COMPOSE_SHA256_ARM64" ;; \
+      *) echo "no bundled compose for '$TARGETARCH'" >&2; exit 1 ;; \
+    esac && \
+    mkdir -p /out && \
+    curl -fsSL -o /out/docker-compose "https://github.com/docker/compose/releases/download/v${COMPOSE_VERSION}/docker-compose-linux-${asset}" && \
+    echo "${sum}  /out/docker-compose" | sha256sum -c - && \
+    chmod 0755 /out/docker-compose
+# The state store lives in /data; a fresh named volume copies the ownership of the image's directory.
+RUN mkdir -p /out/data
+
+FROM gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
+ARG TARGETPLATFORM
+COPY --chmod=0755 $TARGETPLATFORM/whalenurse /whalenurse
+COPY --from=fetch --chmod=0755 /out/docker-compose /usr/libexec/whalenurse/docker-compose
+COPY --from=fetch --chown=65532:65532 /out/data /data
+VOLUME ["/data"]
+USER 65532:65532
+# distroless/static has no shell, so the healthcheck calls the binary. The image runs as uid 65532, which cannot read the
+# Docker socket: give it the socket's group at run time with group_add (docs/deployment.md).
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD ["/whalenurse", "healthcheck"]
+ENTRYPOINT ["/whalenurse"]
+CMD ["run"]

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"strings"
 	"testing"
 	"time"
@@ -248,5 +249,17 @@ func TestHTTPWarnings(t *testing.T) {
 				t.Errorf("the warning quotes the token: %s", w)
 			}
 		}
+	}
+}
+
+func TestTrustedProxiesAreIgnoredWithoutAToken(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.HTTPAddr, cfg.HTTPTrustedProxies = "127.0.0.1:8484", []netip.Prefix{netip.MustParsePrefix("172.18.0.0/16")}
+	if got := httpWarnings(cfg); len(got) != 1 || !strings.Contains(got[0], "TRUSTED_PROXIES is ignored without") {
+		t.Fatalf("%v", got)
+	}
+	cfg.HTTPToken = "a-long-random-token-0123456789"
+	if got := httpWarnings(cfg); len(got) != 0 {
+		t.Fatalf("with a token the list is used: %v", got)
 	}
 }

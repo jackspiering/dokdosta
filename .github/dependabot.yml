@@ -1,0 +1,52 @@
+# Weekly, grouped. Actions are pinned to commit SHAs (a comment carries the version); Dependabot updates the SHA and the comment.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      go-modules:
+        patterns: ["*"]
+    commit-message:
+      prefix: "deps"
+
+  # Dockerfile and Dockerfile.release: the Go and distroless base images are pinned by digest. Both files must move together
+  # (scripts/ci/check-dockerfiles.sh fails the pull request if only one did).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      docker-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: "docker"
+
+  # The images the examples name (tailscale, bop).
+  - package-ecosystem: docker-compose
+    directories:
+      - /examples/demo
+      - /examples/full
+      - /examples/minimal
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      example-images:
+        patterns: ["*"]
+    commit-message:
+      prefix: "docker"

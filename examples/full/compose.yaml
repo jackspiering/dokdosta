@@ -1,0 +1,63 @@
+# whalenurse with everything on: restart AND recreate from the stack's own compose files, notifications, and the dashboard
+# on your tailnet through a Tailscale container (HTTPS with Tailscale Serve). Put this directory inside your stacks root
+# (for example /opt/stacks/whalenurse/) and copy .env.example to .env.
+#
+# THE TWO READ-ONLY MOUNTS THAT MAKE RECREATE WORK (docs/deployment.md):
+#   1. the host's compose plugin at /host/docker-compose. whalenurse uses it first, because it is the compose that made
+#      your containers; without it the bundled copy is used, and a container made by another compose release is then
+#      reported as "can't verify drift" instead of being recreated. `docker info` shows the plugin's path.
+#   2. the stacks root at the IDENTICAL path as on the host. Compose passes host paths to the daemon for relative bind
+#      mounts, so /opt/stacks must be /opt/stacks inside the container too. Also mount anything else compose reads from
+#      outside it: env_file paths with ../, include:/extends: files, file-based secrets and configs.
+#
+# THE DASHBOARD is never published on a port here. whalenurse and the tailscale container share the bridge network
+# "dashboard", and `tailscale serve` (tailscale/serve.json) forwards https://<TS_HOSTNAME>.<tailnet>.ts.net to
+# http://whalenurse:8484. Never use network_mode: service:tailscale: whalenurse would become a dependent of a container it may
+# heal. The token is required here because the listener is not loopback-only (docs/security.md).
+services:
+  whalenurse:
+    image: ghcr.io/jackspiering/whalenurse:latest
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    group_add: ["${DOCKER_GID:?set DOCKER_GID in .env}"]
+    networks: [dashboard]
+    tmpfs:
+      - /run:uid=65532,gid=65532,mode=0700
+    volumes:
+      # Root-equivalent access to the host: docs/security.md.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - whalenurse-data:/data
+      - ${COMPOSE_PLUGIN:-/usr/libexec/docker/cli-plugins/docker-compose}:/host/docker-compose:ro
+      - ${STACKS_DIR:?set STACKS_DIR in .env}:${STACKS_DIR}:ro # identical path on both sides
+    environment:
+      WHALENURSE_DRY_RUN: ${WHALENURSE_DRY_RUN:-true} # decisions are logged and notified, nothing is changed; set false in .env when they look right
+      WHALENURSE_HTTP_ADDR: ":8484"
+      WHALENURSE_HTTP_TOKEN: ${WHALENURSE_HTTP_TOKEN:?set WHALENURSE_HTTP_TOKEN in .env (openssl rand -hex 24)}
+      # Notification URLs and the uptime ping are secrets: they come from .env, which stays out of git. Check them with
+      #   docker compose exec whalenurse /whalenurse notify test
+      WHALENURSE_NOTIFY_URLS: ${WHALENURSE_NOTIFY_URLS:-}
+      WHALENURSE_HEARTBEAT_URL: ${WHALENURSE_HEARTBEAT_URL:-}
+      # WHALENURSE_DRIFT_GUARD: strict # strict (default) blocks a recreate that would deploy an edit or a moved tag; warn recreates and says so
+
+  tailscale:
+    image: tailscale/tailscale:v1.104.1
+    restart: unless-stopped
+    hostname: whalenurse
+    networks: [dashboard]
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY in .env}
+      TS_HOSTNAME: whalenurse
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./tailscale:/config:ro
+
+networks:
+  dashboard: {} # a normal bridge network, shared by these two services only
+
+volumes:
+  whalenurse-data: {}
+  tailscale-state: {}

@@ -17,8 +17,8 @@ jobs:
     name: build, vet, unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: gofmt
@@ -47,12 +47,13 @@ jobs:
     name: shellcheck and M0 self-tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: shellcheck -x scripts/ and test/
         run: |
           files=$( { grep -rIl --exclude-dir=testdata -E '^#!.*(ba)?sh' scripts test; find scripts test -name '*.sh'; } | sort -u)
           echo "$files"
-          # shellcheck's word splitting is wanted here: one path per line, none with spaces.
+          # Word splitting is wanted here: one path per line, none with spaces.
+          # shellcheck disable=SC2086
           shellcheck -x $files
       - name: M0 self-tests (stubbed docker; none of them needs a daemon)
         run: |
@@ -60,6 +61,130 @@ jobs:
           scripts/scrub-fixture --self-test
           test/m0/run.sh selftest
           test/m0/m0b/selftest.sh
+      - name: Release script self-tests (release notes from CHANGELOG.md, verify-release with stubbed cosign, gh and curl)
+        run: |
+          scripts/release/release-notes.sh --self-test
+          scripts/release/verify.sh --self-test
+      - name: Dockerfile and Dockerfile.release ship the same compose and the same base images
+        run: scripts/ci/check-dockerfiles.sh
+
+  workflows:
+    name: workflows (actionlint, actions pinned to SHAs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Every action is pinned to a commit SHA
+        run: scripts/ci/check-pins.sh
+      - name: actionlint
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+
+  release-snapshot:
+    # What the release does, without the parts that publish: GoReleaser builds the archives, checksums, SBOMs and the image
+    # from this commit. No registry login, no cosign, no id-token, no packages: write; nothing is pushed or signed.
+    name: GoReleaser snapshot (builds everything, publishes nothing)
+    runs-on: ubuntu-latest
+    needs: [go]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          syft-version: v1.55.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.18.3
+          args: check
+      - name: goreleaser release --snapshot
+        uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.18.3
+          args: release --snapshot --clean --skip=sign
+      - name: What the snapshot built
+        run: |
+          ls -l dist
+          cat dist/checksums.txt
+          # The SBOMs and archives are all in the checksums the release signs.
+          [ "$(grep -c 'tar.gz$' dist/checksums.txt)" -eq 2 ]
+          [ "$(grep -c 'sbom.spdx.json$' dist/checksums.txt)" -eq 2 ]
+          amd64=$(find dist -type f -name whalenurse -path '*amd64*')
+          file "$amd64" | grep -q "statically linked"
+          "$amd64" version
+          "$amd64" version | grep -q SNAPSHOT
+      - name: The release image (amd64) runs, carries its labels, and is not root
+        run: |
+          docker image ls ghcr.io/jackspiering/whalenurse
+          img=$(docker image ls ghcr.io/jackspiering/whalenurse --format '{{.Repository}}:{{.Tag}}' | grep -- '-amd64$' | head -n 1)
+          echo "image: $img"
+          docker run --rm "$img" version
+          docker run --rm "$img" version | grep -q SNAPSHOT
+          docker inspect -f '{{.Config.User}} {{index .Config.Labels "org.opencontainers.image.source"}} {{.Config.Healthcheck.Test}}' "$img" | tee /dev/stderr | grep -q '^65532:65532 https://github.com/jackspiering/whalenurse \[CMD /whalenurse healthcheck\]'
+          # the bundled compose is there and is the version both Dockerfiles pin
+          docker run --rm --entrypoint /usr/libexec/whalenurse/docker-compose "$img" version | tee /dev/stderr | grep -q "$(sed -n 's/^ARG COMPOSE_VERSION=//p' Dockerfile.release | head -n 1)"
+      - name: The arm64 image builds too (no emulation needed; the final stage only copies)
+        run: |
+          mkdir -p "$RUNNER_TEMP/ctx/linux/arm64"
+          cp "$(find dist -type f -name whalenurse -path '*arm64*' | head -n 1)" "$RUNNER_TEMP/ctx/linux/arm64/whalenurse"
+          cp Dockerfile.release "$RUNNER_TEMP/ctx/Dockerfile"
+          docker buildx build --platform linux/arm64 --output type=cacheonly "$RUNNER_TEMP/ctx"
+
+  examples:
+    name: examples (compose config, systemd-analyze verify)
+    runs-on: ubuntu-latest
+    needs: [go]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: compose config -q on every example (and the variables they ask for are asked for)
+        run: |
+          docker compose version
+          for d in minimal demo; do
+            echo "== examples/$d"
+            (cd "examples/$d" && DOCKER_GID=999 DEMO_DIR="$PWD" docker compose config -q)
+            # without the variables the file must refuse to start, with a message that says what to do
+            (cd "examples/$d" && ! docker compose config -q 2>"$RUNNER_TEMP/err.txt"); grep -q DOCKER_GID "$RUNNER_TEMP/err.txt"
+          done
+          echo "== examples/full (with .env.example)"
+          (cd examples/full && docker compose --env-file .env.example config -q)
+          (cd examples/full && ! docker compose config -q 2>"$RUNNER_TEMP/err.txt"); grep -q 'required variable' "$RUNNER_TEMP/err.txt"
+          jq -e . examples/full/tailscale/serve.json >/dev/null
+      - name: systemd-analyze verify (the unit, pointed at a real binary; any output at all is a failure)
+        run: |
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/whalenurse" ./cmd/whalenurse
+          sed "s|/usr/local/bin/whalenurse|$RUNNER_TEMP/whalenurse|" examples/systemd/whalenurse.service > "$RUNNER_TEMP/whalenurse.service"
+          out=$(systemd-analyze verify "$RUNNER_TEMP/whalenurse.service" 2>&1) || { echo "$out"; exit 1; }
+          if [ -n "$out" ]; then echo "$out"; exit 1; fi
+          systemd-analyze --offline=true security "$RUNNER_TEMP/whalenurse.service" | tail -n 3 || true
+
+  demo:
+    # The README's "Try it in 2 minutes", end to end, with the image built from this commit. Project whalenurse-test-demo only.
+    name: demo (examples/demo, break bop and watch the ladder)
+    runs-on: ubuntu-latest
+    needs: [go]
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the latest Docker Engine 29.x and Compose 5.6.0
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/ci/setup-docker.sh classic
+      - name: Build the image
+        run: docker build -t whalenurse-test/whalenurse:ci --build-arg VERSION=ci .
+      - name: Run the demo
+        run: test/demo/run.sh whalenurse-test/whalenurse:ci
 
   integration:
     name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, whalenurse-test-* projects only)
@@ -74,8 +199,8 @@ jobs:
         # v5.6.0 today, so those two legs coincide until a newer release). Plan section 6.
         compose: ["5.2.0", "5.6.0", latest]
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       # Engine 29.x and the compose release of the matrix. whalenurse runs this compose itself (rung 2, the dry-run oracle,
@@ -110,7 +235,7 @@ jobs:
       matrix:
         store: [classic, containerd]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the latest Docker Engine 29.x and Compose 5.6.0, select the image store
         run: scripts/ci/setup-docker.sh "${{ matrix.store }}"
       - name: Image drift (M0b scenario 5; whalenurse-m0-b-imgdrift project only)
