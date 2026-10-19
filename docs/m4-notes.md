@@ -45,11 +45,24 @@ Decisions, deviations and open questions for milestone M4 (the pull rung) of [PL
 
 ## What CI covered
 
-(filled in after the CI run)
+CI run [39218281977](https://github.com/jackspiering/whalenurse/actions/runs/39218281977) (PR #12, commit ff0f774): all 10 jobs green: build/unit, shellcheck and self-tests, both `image-drift` jobs and all six integration legs (classic and containerd store × compose 5.2.0, 5.6.0, latest). The six M4 tests and the guard unit tests ran on every leg:
+
+- `TestLocalRegistryRoundTrip`: a `registry:2` on `127.0.0.1:<port>` works with plain HTTP on **both stores** (no `insecure-registries` setting, no change to `setup-docker.sh`); a push of a newer image under the same tag leaves the local tag alone and a pull moves it; **`docker events` reports the pull on both stores** (the positive control for every "no pull" assertion). It also showed the two IDs: on the classic store the platform ID and the plain ID are equal; on the containerd store they differ (the plain one is the index digest), which is why the comparison uses the platform ID and the rollback the plain one.
+- `TestPullRungNeverRunsWithoutTheLabel`: restart, recreate, SUSPENDED; no `compose pull`, no image pull event, the local image unchanged, the container still on v1.
+- `TestPullRungWithNoNewerImageEndsInSuspended`: restart, recreate, pull; the oracle ran before the pull and nothing after it; the Suspended cause says "the pull found no newer image for <ref>"; one giving-up message and no upgrade message; no second pull while SUSPENDED.
+- `TestPullRungUpgradesRepairsTheSidecarAndNotifiesWithTheRollback`: pull then a non-forced `up -d --no-deps --pull never --no-build app`, v2 running, `docker events` saw the pull, the sidecar recreated against the new parent, Recovered, one "upgraded during heal" message with `old -> new` and the two rollback lines last and whole; and **the rollback executed as pasted** (healer stopped first) put the old image back under the tag and the service on v1 again, on both stores.
+- `TestDriftBlockOnASharedTagNamesWhoMovedIt`: the second stack's recreate was blocked with `moved_by` naming the first stack's container and a time, and the message line "tag moved by whalenurse's pull rung: <project>/app at ...". **This test failed in the first run on all six legs, and it was a product bug, not a test bug:** with a real `127.0.0.1:<port>/...` reference the reason line, the mover line and the hint filled the 360 runes and the `whalenurse unsuspend <scope>` line was cut. The `then:` line now comes before the hint (the hint gives way), with a unit test using the real reference.
+- `TestDryRunNeverPulls`: no `compose pull`, no mutating compose command, no pull event, the image and container untouched, "would pull" messages all marked `[dry-run]`.
+- `TestVersionGateDisablesThePullRung`: with a faked Engine 28.0.4, only the restart ran, `RungUnavailable` for recreate and pull, compose never ran.
 
 ## Not verified
 
-(filled in after the CI run)
+- **The integration tests were not run locally** (the plan forbids it; CI is their only run), and the throwaway-VM scenario was not run: M4 changed nothing that scenario checks, but a pull from a real registry (Docker Hub, GHCR) was not exercised, only the loopback one over plain HTTP. TLS to a real registry from the built image (the CA bundle in `distroless/static`) is untested, as in M3.
+- **A private registry** (documented as unsupported).
+- **Compose's behaviour with `pull_policy: never|build|missing`** is from the source, not run: the tests' services have no policy, so `--policy always` was not observed overriding anything.
+- **A sidecar that shares the pulled image** (open question 3) and **a pull-labelled container whose tag a neighbour moved** (open question 2): not tested, because they hit rules that are as approved.
+- **A restart of whalenurse between the pull and a drift block on the other stack** is covered by a unit test through the store's meta interface, with an in-memory fake, not by the real SQLite store in an integration test.
+- **`last_seen` during a long pull** is not written (decision 10).
 
 ## Open questions for the maintainer
 
