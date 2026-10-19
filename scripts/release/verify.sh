@@ -8,7 +8,7 @@
 #   scripts/release/verify.sh v0.1.0 [--repo owner/name] [--dir DIR] [--skip-image] [--no-download]
 #   scripts/release/verify.sh --self-test
 # --dir keeps the downloaded files (default: a temp dir); --no-download checks the files already in --dir. Exit 0 only if
-# nothing failed. It needs cosign (v2 or later; v3 writes the .sigstore.json bundles), sha256sum and curl.
+# nothing failed. It needs cosign v3 or later (releases are signed with v3: .sigstore.json bundles, image signatures as OCI referrers), sha256sum and curl.
 # A && ok || bad is the test idiom in the self-test (ok and bad never fail), as in the other self-tests.
 # shellcheck disable=SC2015
 set -euo pipefail

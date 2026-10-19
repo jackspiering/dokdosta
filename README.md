@@ -47,7 +47,7 @@ A demo stack with whalenurse, [bop](https://github.com/jackspiering/bop) (a cont
 shares bop's network. You'll break bop and watch whalenurse restart it, then recreate it, then bring the sidecar back.
 
 You need a Linux host with Docker Engine 28.1 or later and the Compose plugin v5.2.0 or later (`docker version`, `docker compose version`).
-The demo only touches its own project, `whalenurse-demo`.
+The demo's whalenurse acts on containers that carry `whalenurse.enable=true`, so **do not run it on a host that already runs whalenurse or has opted-in containers** (two instances would both act on them). On a fresh VM or a laptop it is safe; its own project is `whalenurse-demo`.
 
 ```sh
 git clone --depth 1 https://github.com/jackspiering/whalenurse && cd whalenurse/examples/demo
@@ -60,7 +60,7 @@ docker compose up -d
 > `WHALENURSE_IMAGE=whalenurse:dev` to `.env`. Also, if the host's compose plugin isn't at
 > `/usr/libexec/docker/cli-plugins/docker-compose` (`docker info` shows where it is), set `COMPOSE_PLUGIN` in `.env`.
 
-Open **http://localhost:8484**: the dashboard, on loopback only. Then break bop so that a restart can't fix it:
+Break bop so that a restart can't fix it:
 
 ```sh
 docker compose exec bop bop unhealthy sticky=true
@@ -68,8 +68,9 @@ docker compose logs -f whalenurse
 ```
 
 Within about a minute you'll see it open an incident, **restart** bop (still unhealthy, because the broken mode is sticky), wait,
-**recreate** bop from the compose file (a fresh container, healthy again), and recreate the sidecar behind it. The dashboard
-shows the same as a timeline. Clean up with `docker compose down -v`.
+**recreate** bop from the compose file (a fresh container, healthy again), and recreate the sidecar behind it. (In CI the whole
+sequence takes about 50 seconds.) Now open **http://localhost:8484**, the dashboard, on loopback only: bop's page shows the same
+as a timeline, `IncidentOpened` → restart → recreate. When you're done, `docker compose down -v` cleans up.
 
 Notes: the demo uses short timings (a 5 s grace, a 10 s cooldown); the defaults are 30 s each. The demo file is checked in CI
 against the image built from each commit.

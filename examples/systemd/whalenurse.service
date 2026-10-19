@@ -9,7 +9,8 @@
 # The user is in the docker group, which is root-equivalent on this host (docs/security.md): the hardening below limits what
 # a bug in whalenurse can do besides what the Docker socket already allows. Your stacks must be readable by that user (for the
 # recreate rung); they are mounted read-only into the service by ProtectSystem/ProtectHome below.
-# To read the control socket from your shell, `sudo -u whalenurse whalenurse status` (the socket is mode 0600).
+# To use the CLI (the control socket is mode 0600, and this unit moves it):
+#   sudo -u whalenurse env WHALENURSE_CONTROL_SOCKET=/run/whalenurse/whalenurse.sock whalenurse status
 [Unit]
 Description=whalenurse, compose-aware self-healing for Docker hosts
 Documentation=https://github.com/jackspiering/whalenurse/tree/main/docs

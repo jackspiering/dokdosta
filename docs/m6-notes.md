@@ -115,6 +115,15 @@ repository's *immutable releases* setting works (an existing immutable release m
     script now `chmod 0755`s it. The behaviour is the documented one (the stacks must be readable by uid 65532), and a good
     check of the message: it names the file and the fix. A directory from `git clone` is 0755; mind this if your stacks live in a
     0700 directory.
+19. **Found by reading it back, not by CI** (the review pass before the hand-over): the Tailscale container had `hostname: whalenurse`,
+    which Docker writes into its own `/etc/hosts`, so `serve.json`'s `http://whalenurse:8484` would have resolved to itself (the line
+    is gone; `TS_HOSTNAME` names the tailnet node); the README said the demo "only touches its own project", but in label mode
+    its whalenurse acts on any opted-in container on the host (reworded, with a warning not to run it beside another whalenurse);
+    the systemd unit moves the control socket, so the CLI needs `WHALENURSE_CONTROL_SOCKET` set (header and `deployment.md`);
+    cosign is documented as v3 or later, because v2 was not tested against v3's bundles and OCI-referrer signatures; the systemd
+    compose lookup list in `deployment.md` is now exactly `HostPluginDirs` of `internal/compose/binary.go`; and the README's
+    demo ends on the dashboard, as the brief asked. The Tailscale example is **checked by `compose config -q` only**; it has not
+    been run against a tailnet.
 
 ## What was verified, and how
 
@@ -135,8 +144,17 @@ Locally (no Docker daemon was used; no integration test was run, per the working
   warning, which is why CI fails on any output) and `systemd-analyze --offline=true security` (1.4).
 - `cosign sign-blob --help` / `verify-blob --help` show the `--bundle` and `--yes` flags the configuration uses.
 
-In CI (this pull request): see the pull request for the run; the **release-snapshot**, **examples**, **demo** and **workflows**
-jobs are new in this milestone.
+In CI: **run 39335333170 on 7e84b87: all 18 checks green** (the commit before the final documentation edits; those touch no
+code or workflow: the Tailscale example's hostname, the README demo text, the systemd unit's header comment, three doc lines and
+this file), including the six integration legs (2 image stores x compose 5.2.0, 5.6.0, latest, about 15 minutes each), the two
+`image-drift` legs, CodeQL, and the four jobs new in this milestone: **workflows** (24 s), **GoReleaser snapshot** (1 m 27 s: both
+archives, both SBOMs, the checksums, the amd64 image run and inspected, the arm64 image built), **examples** (22 s) and **demo**
+(2 m 43 s: bop broken, restarted, recreated in 26 s, the sidecar recreated behind it, the history in the API; about 50 s from the
+break to a healthy stack). Three earlier runs failed and led to fixes 14, 16, 17 and 18 above (the first run's failures: the
+examples job, where the runner's older compose names a different missing variable first, the snapshot's index annotations, the
+demo's race and its 0700 directory). The final push only changes documentation and example text, so its run repeats the same
+checks.
+
 
 ## Not verified
 
@@ -149,7 +167,7 @@ jobs are new in this milestone.
 - The systemd unit has not been *started* on a host: its hardening could block something whalenurse does on a real machine
   (the filter errors with `EPERM` rather than killing, so it would show in the journal). A maintainer run on the real host is part
   of the release gate.
-- The demo has been proven by the CI job only (see the pull request); it was not run on this machine.
+- The demo has been proven by the CI job only (run 39335333170); it was not run on this machine.
 - `README.md`'s mermaid diagram was checked by reading, not rendered; GitHub renders it on the page.
 - The screenshots in the README are those of M5 (retaken on 19 Oct 2026); the dashboard has not been seen on a real phone.
 

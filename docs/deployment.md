@@ -109,10 +109,13 @@ shared bridge network in front ([examples/full](../examples/full/compose.yaml)).
 Differences from the container:
 
 - There is no mount to get right: whalenurse sees the host's paths. The compose lookup order ends with the host's plugin
-  directories (`/usr/libexec/docker/cli-plugins`, `/usr/lib/docker/cli-plugins`, and the user's), or set `WHALENURSE_COMPOSE_BIN`.
+  directories, searched in this order: `/usr/libexec/docker/cli-plugins/docker-compose`, `/usr/lib/docker/cli-plugins/docker-compose`,
+  `/usr/local/libexec/docker/cli-plugins/docker-compose` and `/usr/local/lib/docker/cli-plugins/docker-compose` (anything else:
+  set `WHALENURSE_COMPOSE_BIN`).
   The stacks must be readable by the `whalenurse` user (`ProtectHome=read-only` lets it read under `/home`).
-- The CLI needs the control socket: `sudo -u whalenurse whalenurse status`; `WHALENURSE_CONTROL_SOCKET` must be set to
-  the same value in your shell (`/run/whalenurse/whalenurse.sock`).
+- The CLI needs the control socket, which the unit puts at `/run/whalenurse/whalenurse.sock` (the CLI's default is
+  `/run/whalenurse.sock`), and which only the service user can open:
+  `sudo -u whalenurse env WHALENURSE_CONTROL_SOCKET=/run/whalenurse/whalenurse.sock whalenurse status`.
 - systemd stops whalenurse in the host's shutdown like everything else; it writes its `last_seen` heartbeat on a clean stop and
   every 5 s, which is how it recognises the containers that a shutdown stopped (and does not mistake them for crashes).
   Keep `TimeoutStopSec` at its 30 s.

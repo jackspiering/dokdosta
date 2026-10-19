@@ -14,7 +14,7 @@ to lose: what you check is that the signature was made by *that workflow, for th
 
 ## One command
 
-You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) (v2 or later; releases are signed with v3) and
+You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) v3 or later (releases are signed with v3, which writes `.sigstore.json` bundles and stores image signatures as OCI referrers; an older cosign may not read them) and
 `sha256sum`; the [GitHub CLI](https://cli.github.com/) is optional, and without it the script says that the provenance check
 was skipped.
 
