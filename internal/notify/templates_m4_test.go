@@ -75,6 +75,8 @@ func TestUpgradedMessageWorstCase(t *testing.T) {
 	}
 	ref := "registry.example.com:5000/" + strings.Repeat("r", 53)
 	a := movedAttrs(p, ref, false)
+	a["rollback_tag"], a["rollback_up"] = wncompose.RollbackCommands(p, ref, oldID, strings.Repeat("a", 30))
+	a["sidecars"] = strings.Repeat("a", 30)
 	a["error"] = strings.Repeat("compose says something very long and noisy about why this failed; ", 12)
 	key := "nas/" + p.Name + "/" + p.Service + "/1"
 	e := ev(engine.TagMoved, key, "x", a)
@@ -172,5 +174,60 @@ func TestDriftBlockWithAMoverKeepsTheUnsuspendCommand(t *testing.T) {
 	}
 	if utf8.RuneCountInString(m.Body) > MaxBody {
 		t.Fatalf("%d runes", utf8.RuneCountInString(m.Body))
+	}
+}
+
+// Rung 2 on a pull-enabled container that took a tag someone else moved: the same "upgraded during heal" message, with the
+// rollback, and it says that someone else moved the tag.
+func TestUpgradedDuringRung2HasTheRollbackAndSaysWhoMovedTheTag(t *testing.T) {
+	a := movedAttrs(stackProject(), "web:1", true)
+	m := renderOne(t, ev(engine.Upgraded, webKey, "x", a), rctx{})
+	if !strings.Contains(m.Title, "upgraded during heal") || !m.Critical {
+		t.Fatalf("%v", m)
+	}
+	for _, want := range []string{"web:1 aaaaaaaaaaaa -> bbbbbbbbbbbb", "moved by someone else", a["rollback_tag"], a["rollback_up"]} {
+		if !strings.Contains(m.Body, want) {
+			t.Errorf("lacks %q:\n%s", want, m.Body)
+		}
+	}
+	if strings.Contains(m.Body, "every stack that shares this tag") {
+		t.Errorf("whalenurse did not move this tag:\n%s", m.Body)
+	}
+	// Said once per incident, like the other.
+	e := ev(engine.Upgraded, webKey, "x", a)
+	e.Attrs[engine.AttrIncident] = "2026-10-19T10:00:00Z"
+	_, d1, _ := render(e, rctx{})
+	_, d2, _ := render(e, rctx{})
+	if d1 == "" || d1 != d2 {
+		t.Fatalf("%q %q", d1, d2)
+	}
+}
+
+// The sidecar's rollback is in the same message: one up line that names the parent and the sidecars, whole.
+func TestUpgradeMessageCarriesTheSidecarsRollback(t *testing.T) {
+	p := stackProject()
+	tag, up := wncompose.RollbackCommands(p, "web:1", oldID, "side", "side2")
+	a := movedAttrs(p, "web:1", true)
+	a["rollback_tag"], a["rollback_up"], a["sidecars"] = tag, up, "side,side2"
+	m := renderOne(t, ev(engine.TagMoved, webKey, "x", a), rctx{})
+	for _, want := range []string{"sidecars on the same image, recreated with it: side, side2", tag + "\n" + up} {
+		if !strings.Contains(m.Body, want) {
+			t.Errorf("lacks %q:\n%s", want, m.Body)
+		}
+	}
+	if !strings.HasSuffix(up, "up -d --no-deps --pull never web side side2") {
+		t.Fatalf("%s", up)
+	}
+	if utf8.RuneCountInString(m.Body) > MaxBodyPinned {
+		t.Fatalf("%d runes", utf8.RuneCountInString(m.Body))
+	}
+}
+
+// The giving-up message for a pull rung that does not apply says so as its cause.
+func TestPullRungDoesNotApplyIsTheGivingUpCause(t *testing.T) {
+	e := ev(engine.Suspended, webKey, "every rung ran or was unavailable: pull rung does not apply (pull_policy never)", map[string]string{"reason": "ladder"})
+	m := renderOne(t, e, rctx{})
+	if !strings.Contains(m.Body, "cause: pull rung does not apply (pull_policy never)") || !strings.Contains(m.Title, "giving up") {
+		t.Fatalf("%v", m)
 	}
 }

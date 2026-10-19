@@ -16,6 +16,10 @@ type Reader interface {
 	DryRunUp(ctx context.Context, p Project, containerName string) (Oracle, error)
 	// ConfigHash runs `config --hash=<svc>` (the fallback of check 1).
 	ConfigHash(ctx context.Context, p Project) (string, error)
+	// PullPolicy runs `config --format json --no-env-resolution <svc>` and returns the service's pull_policy ("" when it
+	// has none). Only that one field is read: the rest of the rendered config (which can hold interpolated secrets) is
+	// dropped, never logged.
+	PullPolicy(ctx context.Context, p Project) (string, error)
 }
 
 // Actor is the mutating half. Both methods deploy what is on disk and in the local image store now, so the drift guard
@@ -79,6 +83,14 @@ func (c *Compose) ConfigHash(ctx context.Context, p Project) (string, error) {
 		return "", err
 	}
 	return ParseConfigHash(res.Stdout, p.Service)
+}
+
+func (c *Compose) PullPolicy(ctx context.Context, p Project) (string, error) {
+	res, err := c.run.Run(ctx, c.cmd(p, "config", "--format", "json", "--no-env-resolution", p.Service))
+	if err != nil {
+		return "", err
+	}
+	return ParsePullPolicy(res.Stdout, p.Service)
 }
 
 func (c *Compose) Recreate(ctx context.Context, p Project) error {

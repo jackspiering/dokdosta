@@ -244,7 +244,7 @@ func TestGuardNotesAnUpgradedHostPlugin(t *testing.T) {
 
 func pullIn(refHolder bool) GuardInput {
 	in := guardIn(refHolder)
-	in.Pull = true
+	in.AllowImageMove = true
 	return in
 }
 

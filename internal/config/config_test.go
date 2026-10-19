@@ -193,3 +193,33 @@ func TestNotifyVariables(t *testing.T) {
 		}
 	}
 }
+
+// Rung 3 requires rung 2 (plan v3.8): heal.pull=true without recreate in whalenurse.actions gives one warning and the pull
+// rung stays off.
+func TestHealPullNeedsRecreateInTheLadder(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		labels map[string]string
+		acts   string
+		warns  int
+	}{
+		{"default actions", map[string]string{LabelEnable: "1", LabelHealPull: "true"}, "restart,recreate,pull", 0},
+		{"restart only", map[string]string{LabelEnable: "1", LabelActions: "restart", LabelHealPull: "true"}, "restart", 1},
+		{"recreate only", map[string]string{LabelEnable: "1", LabelActions: "recreate", LabelHealPull: "true"}, "recreate,pull", 0},
+		{"reordered", map[string]string{LabelEnable: "1", LabelActions: "recreate,restart", LabelHealPull: "true"}, "recreate,restart,pull", 0},
+		{"pull false, restart only", map[string]string{LabelEnable: "1", LabelActions: "restart", LabelHealPull: "false"}, "restart", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, warns := ParseLabels(tc.labels, ModeLabel)
+			if got := strings.Join(c.Actions, ","); got != tc.acts {
+				t.Errorf("actions = %s, want %s", got, tc.acts)
+			}
+			if len(warns) != tc.warns {
+				t.Errorf("warnings = %v, want %d", warns, tc.warns)
+			}
+			if tc.warns == 1 && !strings.Contains(warns[0], "needs recreate") {
+				t.Errorf("%v", warns)
+			}
+		})
+	}
+}

@@ -51,11 +51,12 @@ type GuardInput struct {
 	// RefHolder: network_mode, ipc, pid or volumes_from names another service or container. Compose hashes those after
 	// resolving them, so neither the oracle nor `config --hash` can be trusted for it (E4, E5) and check 1 is skipped.
 	RefHolder bool
-	// Pull: the check before rung 3's pull (plan §3.7). Checks 1 and 3 run; check 2 is not a finding, because the pull is
-	// about to move the tag itself. Compose's dry-run says "Recreate" for a moved tag as well and cannot say why, so a
-	// Recreate is a config finding unless `config --hash` still matches the label and the explicit comparison shows the
-	// image moved: then it is the image alone, which a pull is meant to change.
-	Pull bool
+	// AllowImageMove: the check before rung 3's pull, before rung 2's recreate of a container that opted in to the pull
+	// rung, and before a sidecar takes a tag its parent's pull just moved (plan §3.7, v3.8). Checks 1 and 3 run; check 2
+	// is not a finding, because the caller deploys the moved image on purpose. Compose's dry-run says "Recreate" for a
+	// moved tag as well and cannot say why, so a Recreate is a config finding unless `config --hash` still matches the
+	// label and the explicit comparison shows the image moved: then it is the image alone. Config drift still blocks.
+	AllowImageMove bool
 }
 
 // Guard runs the three drift checks of plan §3.6 before a recreate.
@@ -66,7 +67,7 @@ type Guard struct {
 
 // Check returns the findings; none means the recreate may go ahead. It never changes anything.
 func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
-	if in.Pull {
+	if in.AllowImageMove {
 		return g.checkBeforePull(ctx, in)
 	}
 	var out []Finding

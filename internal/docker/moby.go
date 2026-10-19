@@ -152,7 +152,7 @@ func fromMessage(msg events.Message) Event {
 }
 
 func fromInspect(r container.InspectResponse) Container {
-	c := Container{ID: r.ID, Name: strings.TrimPrefix(r.Name, "/"), RestartCount: r.RestartCount, Created: parseTime(r.Created)}
+	c := Container{ImageID: r.Image, ID: r.ID, Name: strings.TrimPrefix(r.Name, "/"), RestartCount: r.RestartCount, Created: parseTime(r.Created)}
 	if r.Config != nil {
 		c.Labels = r.Config.Labels
 		c.Image = r.Config.Image

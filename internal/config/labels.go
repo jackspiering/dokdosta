@@ -98,6 +98,10 @@ func ParseLabels(labels map[string]string, mode Mode) (Container, []string) {
 	if v, ok := labels[LabelHealPull]; ok {
 		if b, err := strconv.ParseBool(strings.TrimSpace(v)); err != nil {
 			warn("%s=%q is not a boolean; ignored", LabelHealPull, v)
+		} else if b && !c.HasRung(RungRecreate) {
+			// Rung 3 runs only after restart and recreate have failed (plan §3.7, v3.8): without rung 2 in the ladder
+			// the pull stays off, and the container gets one warning (the daemon logs a label warning once per key).
+			warn("%s=true needs recreate in %s (the pull rung runs after restart and recreate): the pull rung stays off", LabelHealPull, LabelActions)
 		} else if b && !c.HasRung(RungPull) {
 			c.Actions = append(c.Actions, RungPull)
 		}

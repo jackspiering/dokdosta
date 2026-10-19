@@ -404,3 +404,50 @@ func TestResolveOrder(t *testing.T) {
 		t.Fatalf("%+v %v", b, err)
 	}
 }
+
+func TestPullPolicyCommandLineAndParsing(t *testing.T) {
+	r := &recRunner{out: func(Command) (Result, error) {
+		return Result{Stdout: []byte(`{"name":"x","services":{"web":{"image":"web:1","pull_policy":"never","environment":{"SECRET":"s3cret"}}}}`)}, nil
+	}}
+	c := New(Binary{Path: "/host/docker-compose", Source: SourceHost}, r)
+	got, err := c.PullPolicy(context.Background(), proj())
+	if err != nil || got != "never" {
+		t.Fatalf("%q %v", got, err)
+	}
+	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution web"
+	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want {
+		t.Fatalf("%v", r.cmds)
+	}
+	for in, want := range map[string]string{
+		`{"services":{"web":{"image":"a"}}}`:                   "",
+		`{"services":{"web":{"pull_policy":"missing"}}}`:       "missing",
+		`{"services":{"web":{"pull_policy":" Build "}}}`:       "Build",
+		`{"services":{"web":{"pull_policy":"daily"},"db":{}}}`: "daily",
+		`{"services":{"web":{"pull_policy":"every_12h"}}}`:     "every_12h",
+	} {
+		if got, err := ParsePullPolicy([]byte(in), "web"); err != nil || got != want {
+			t.Errorf("%s: %q %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"", "null", "not json", `{"services":{}}`, `{"services":{"db":{}}}`} {
+		if _, err := ParsePullPolicy([]byte(in), "web"); !errors.Is(err, ErrUnparseable) {
+			t.Errorf("%q: %v", in, err)
+		}
+	}
+	// A parse error never quotes the output (it can hold interpolated secrets).
+	if _, err := ParsePullPolicy([]byte(`{"services": s3cret`), "web"); err == nil || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("%v", err)
+	}
+	for policy, blocks := range map[string]bool{"never": true, "build": true, "Never": true, " BUILD ": true, "": false, "always": false, "missing": false, "if_not_present": false, "daily": false, "refresh": false} {
+		if PullPolicyBlocksPull(policy) != blocks {
+			t.Errorf("PullPolicyBlocksPull(%q) = %v", policy, !blocks)
+		}
+	}
+}
+
+func TestRollbackCommandsNameTheSidecarsInOneUp(t *testing.T) {
+	_, up := RollbackCommands(proj(), "app:1", "sha256:x", "side", "side2")
+	if !strings.HasSuffix(up, "up -d --no-deps --pull never web side side2") {
+		t.Fatalf("%s", up)
+	}
+}

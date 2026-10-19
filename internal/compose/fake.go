@@ -7,7 +7,7 @@ import (
 
 // Call records one call on a Fake.
 type Call struct {
-	Verb    string // dry-run | hash | recreate | up | pull
+	Verb    string // dry-run | hash | policy | recreate | up | pull
 	Project Project
 }
 
@@ -20,6 +20,7 @@ type Fake struct {
 	Bin        Binary
 	OracleFn   func(p Project, containerName string) (Oracle, error) // default: an unchanged container
 	HashFn     func(p Project) (string, error)
+	PolicyFn   func(p Project) (string, error) // default: no pull_policy
 	OnRecreate func(p Project) error
 	OnUp       func(p Project) error
 	OnPull     func(p Project) error
@@ -70,6 +71,14 @@ func (f *Fake) ConfigHash(_ context.Context, p Project) (string, error) {
 		return f.HashFn(p)
 	}
 	return "", ErrUnparseable
+}
+
+func (f *Fake) PullPolicy(_ context.Context, p Project) (string, error) {
+	f.record("policy", p)
+	if f.PolicyFn != nil {
+		return f.PolicyFn(p)
+	}
+	return "", nil
 }
 
 func (f *Fake) Recreate(_ context.Context, p Project) error {

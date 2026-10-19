@@ -61,8 +61,10 @@ services:
 	return r
 }
 
-func (r *testRegistry) ref(name string) string {
-	return r.host + "/whalenurse-test/" + name + ":latest"
+func (r *testRegistry) ref(name string) string { return r.refTag(name, "latest") }
+
+func (r *testRegistry) refTag(name, tag string) string {
+	return r.host + "/whalenurse-test/" + name + ":" + tag
 }
 
 func versionImage(marker string) string {
@@ -114,16 +116,40 @@ func (r *testRegistry) publishNewer(t *testing.T, ref, marker string) {
 	}
 }
 
+// pullOpts shapes pullApp: whether the container opts in to the pull rung, whalenurse.actions, the service's own
+// pull_policy, and the sidecar in its network namespace ("busybox": its own image; "shared": the same image reference).
+type pullOpts struct {
+	pull    bool
+	actions string
+	policy  string
+	sidecar string
+}
+
 // pullApp is the service whose healthcheck only a v2 image passes; sidecar adds a busybox container in its network namespace.
 func pullApp(ref string, pull, sidecar bool) string {
-	label := ""
-	if pull {
-		label = "\n      whalenurse.heal.pull: \"true\""
+	o := pullOpts{pull: pull}
+	if sidecar {
+		o.sidecar = "busybox"
+	}
+	return pullAppWith(ref, o)
+}
+
+func pullAppWith(ref string, o pullOpts) string {
+	labels := ""
+	if o.pull {
+		labels += "\n      whalenurse.heal.pull: \"true\""
+	}
+	if o.actions != "" {
+		labels += "\n      whalenurse.actions: \"" + o.actions + "\""
+	}
+	policy := ""
+	if o.policy != "" {
+		policy = "\n    pull_policy: " + o.policy
 	}
 	y := fmt.Sprintf(`
 services:
   app:
-    image: %s
+    image: %s%s
     labels:
       whalenurse.enable: "true"%s
     stop_grace_period: 2s
@@ -133,14 +159,18 @@ services:
       interval: 1s
       timeout: 1s
       retries: 1
-`, ref, label, loopCmd)
-	if sidecar {
+`, ref, policy, labels, loopCmd)
+	if o.sidecar != "" {
+		img := "busybox:1.37"
+		if o.sidecar == "shared" {
+			img = ref
+		}
 		y += fmt.Sprintf(`  side:
-    image: busybox:1.37
+    image: %s
     network_mode: service:app
     stop_grace_period: 2s
     command: %s
-`, loopCmd)
+`, img, loopCmd)
 	}
 	return y
 }
@@ -152,6 +182,24 @@ func (s *stack) version(service string) string {
 		s.t.Fatal(err)
 	}
 	return strings.TrimSpace(out)
+}
+
+// tryVersion is version for a wait loop: "" while the container is not there to exec into.
+func (s *stack) tryVersion(service string) string {
+	list, err := s.cli.List(context.Background())
+	if err != nil {
+		return ""
+	}
+	for _, sm := range list {
+		if sm.Labels[docker.LabelProject] == s.project && sm.Labels[docker.LabelService] == service && sm.State == "running" {
+			out, err := s.g.Ctr(context.Background(), "exec", sm.ID, "cat", "/version")
+			if err != nil {
+				return ""
+			}
+			return strings.TrimSpace(out)
+		}
+	}
+	return ""
 }
 
 func pullEvents(rec *engine.Recorder, key string) (started []string, results []engine.Event) {
@@ -618,4 +666,235 @@ func TestVersionGateDisablesThePullRung(t *testing.T) {
 	if n := imagePulls(t, g, since); n != 0 {
 		t.Fatalf("%d image pull events below the gate", n)
 	}
+}
+
+// ---- the decisions on the M4 review (plan v3.8) --------------------------------------------------------------------
+
+// A service with pull_policy: never is never pulled: the rung does not apply, the ladder ends in SUSPENDED with that as
+// the cause, and compose is only asked to read the policy.
+func TestPullRungRespectsPullPolicyNever(t *testing.T) {
+	g, cli := requireIntegration(t)
+	ctx := context.Background()
+	reg := startRegistry(t, g, cli)
+	ref := reg.ref("policynever")
+	reg.publish(t, ref, "v1")
+	reg.publishNewer(t, ref, "v2")
+	s := newStack(t, g, cli, "pull-never", pullAppWith(ref, pullOpts{pull: true, policy: "never"}))
+	s.up()
+	waitFor(t, "app to be unhealthy", 30*time.Second, func() bool { return s.container("app").Health == "unhealthy" })
+	localBefore, _ := g.ImageID(ctx, ref)
+	hook := newWebhook(t, s.project)
+	since := time.Now()
+
+	r := startDaemonOpts(t, g, cli, daemonOpts{NotifyURLs: []string{hook.url()}})
+	waitFor(t, "the app to be SUSPENDED", 180*time.Second, func() bool { return countFor(r.Rec, engine.Suspended, s.key("app")) == 1 })
+	started, _ := pullEvents(r.Rec, s.key("app"))
+	if got := joined(started); got != "restart,recreate" {
+		t.Fatalf("actions = %s, want restart,recreate", got)
+	}
+	if n := len(r.Compose.Pulls()); n != 0 {
+		t.Fatalf("compose pull ran for a service with pull_policy: never: %v", r.Compose.Pulls())
+	}
+	read := false
+	for _, l := range r.Compose.Log() {
+		read = read || strings.HasSuffix(l, "config --format json --no-env-resolution app")
+	}
+	if !read {
+		t.Fatalf("the policy was not read: %v", r.Compose.Log())
+	}
+	if msg := eventMessage(r.Rec, engine.Suspended, s.key("app")); !strings.Contains(msg, "pull rung does not apply (pull_policy never)") {
+		t.Fatalf("the cause must say the pull rung does not apply: %q", msg)
+	}
+	if n := imagePulls(t, g, since); n != 0 {
+		t.Fatalf("%d image pull events", n)
+	}
+	if now, _ := g.ImageID(ctx, ref); now != localBefore {
+		t.Fatalf("the local image moved: %s -> %s", localBefore, now)
+	}
+	waitFor(t, "the giving-up message", 30*time.Second, func() bool { return len(hook.matching("giving up, SUSPENDED")) >= 1 })
+	if giving := hook.matching("giving up, SUSPENDED"); len(giving) != 1 || !strings.Contains(giving[0].Message, "pull rung does not apply (pull_policy never)") {
+		t.Fatalf("one giving-up message that says why: %v", titles(hook.all()))
+	}
+}
+
+// pull_policy: missing is replaced by --policy always: on a tag other than latest, with the image present locally, a bare
+// `compose pull` skips it (compose v5.2.0, and v5.6.0 too for any tag but latest), so the upgrade happens on every leg of
+// the matrix only if the rung's flag overrides the policy.
+func TestPullRungOverridesPullPolicyMissing(t *testing.T) {
+	g, cli := requireIntegration(t)
+	reg := startRegistry(t, g, cli)
+	ref := reg.refTag("policymissing", "stable")
+	reg.publish(t, ref, "v1")
+	reg.publishNewer(t, ref, "v2")
+	s := newStack(t, g, cli, "pull-missing", pullAppWith(ref, pullOpts{pull: true, policy: "missing"}))
+	s.up()
+	waitFor(t, "app to be unhealthy", 30*time.Second, func() bool { return s.container("app").Health == "unhealthy" })
+	since := time.Now()
+
+	r := startDaemonOpts(t, g, cli, daemonOpts{})
+	waitFor(t, "the app to be healthy on the new image", 240*time.Second, func() bool {
+		return countFor(r.Rec, engine.TagMoved, s.key("app")) == 1 && s.container("app").Health == "healthy"
+	})
+	if v := s.version("app"); v != "v2" {
+		t.Fatalf("the container runs %s, want v2", v)
+	}
+	if pulls := r.Compose.Pulls(); len(pulls) != 1 || !strings.Contains(pulls[0], "pull --policy always app") {
+		t.Fatalf("%v", pulls)
+	}
+	if n := imagePulls(t, g, since); n < 1 {
+		t.Fatalf("%d image pull events", n)
+	}
+}
+
+// heal.pull=true without recreate in whalenurse.actions: the pull rung stays off. The ladder is the restart and then
+// SUSPENDED, and compose is never run.
+func TestHealPullWithoutRecreateKeepsThePullRungOff(t *testing.T) {
+	g, cli := requireIntegration(t)
+	reg := startRegistry(t, g, cli)
+	ref := reg.ref("norecreate")
+	reg.publish(t, ref, "v1")
+	reg.publishNewer(t, ref, "v2")
+	s := newStack(t, g, cli, "pull-norecreate", pullAppWith(ref, pullOpts{pull: true, actions: "restart"}))
+	s.up()
+	waitFor(t, "app to be unhealthy", 30*time.Second, func() bool { return s.container("app").Health == "unhealthy" })
+	since := time.Now()
+
+	r := startDaemonOpts(t, g, cli, daemonOpts{})
+	waitFor(t, "the app to be SUSPENDED", 120*time.Second, func() bool { return countFor(r.Rec, engine.Suspended, s.key("app")) == 1 })
+	started, _ := pullEvents(r.Rec, s.key("app"))
+	if got := joined(started); got != "restart" {
+		t.Fatalf("actions = %s, want restart only", got)
+	}
+	if len(r.Compose.Log()) != 0 {
+		t.Fatalf("compose ran: %v", r.Compose.Log())
+	}
+	if n := imagePulls(t, g, since); n != 0 {
+		t.Fatalf("%d image pull events", n)
+	}
+}
+
+// Rung 2 lets an image-only move through for a container that opted in to the pull rung: the tag was moved by another
+// stack's pull, this container's recreate takes the newer image, says "upgraded during heal" with the rollback, and the
+// rollback works as pasted. (Without the label the same move blocks: TestDriftBlockOnASharedTagNamesWhoMovedIt.)
+func TestRung2TakesAMovedTagForAPullEnabledContainer(t *testing.T) {
+	g, cli := requireIntegration(t)
+	ctx := context.Background()
+	reg := startRegistry(t, g, cli)
+	ref := reg.ref("rung2move")
+	reg.publish(t, ref, "v1")
+	reg.publishNewer(t, ref, "v2")
+	oldID, _ := g.ImageID(ctx, ref)
+	a := newStack(t, g, cli, "pull-a2", pullApp(ref, true, false))
+	b := newStack(t, g, cli, "pull-b2", fmt.Sprintf(`
+services:
+  api:
+    image: %s
+    labels:
+      whalenurse.enable: "true"
+      whalenurse.heal.pull: "true"
+    stop_grace_period: 2s
+    command: %s
+    healthcheck:
+      test: ["CMD", "sh", "-c", "test ! -f /broken"]
+      interval: 1s
+      timeout: 1s
+      retries: 1
+`, ref, loopCmd))
+	a.up()
+	b.up()
+	waitFor(t, "a's app to be unhealthy", 30*time.Second, func() bool { return a.container("app").Health == "unhealthy" })
+	waitFor(t, "b's api to be healthy", 30*time.Second, func() bool { return b.container("api").Health == "healthy" })
+	apiBefore := b.container("api")
+	hook := newWebhook(t, b.project)
+
+	r := startDaemonOpts(t, g, cli, daemonOpts{NotifyURLs: []string{hook.url()}})
+	waitFor(t, "a's pull to move the tag", 240*time.Second, func() bool { return countFor(r.Rec, engine.TagMoved, a.key("app")) == 1 })
+	if _, err := g.Ctr(ctx, "exec", apiBefore.ID, "touch", "/broken"); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "b's api to be recreated onto the new image", 240*time.Second, func() bool {
+		c := b.container("api")
+		return c.ID != apiBefore.ID && c.Health == "healthy"
+	})
+	if countFor(r.Rec, engine.DriftBlocked, b.key("api")) != 0 {
+		t.Fatal("an image-only move must not block a pull-enabled container")
+	}
+	started, _ := pullEvents(r.Rec, b.key("api"))
+	if got := joined(started); got != "restart,recreate" {
+		t.Fatalf("actions = %s, want restart,recreate (rung 2 took the newer image; no pull of its own)", got)
+	}
+	if v := b.version("api"); v != "v2" {
+		t.Fatalf("b's api runs %s, want v2", v)
+	}
+	if countFor(r.Rec, engine.Upgraded, b.key("api")) != 1 {
+		t.Fatalf("one Upgraded event: %v", r.Rec.Types())
+	}
+	waitFor(t, "the upgrade message", 30*time.Second, func() bool { return len(hook.matching("upgraded during heal")) >= 1 })
+	msgs := hook.matching("upgraded during heal")
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Message, b.key("api")) || !strings.Contains(msgs[0].Message, "moved by someone else") {
+		t.Fatalf("%v", titles(hook.all()))
+	}
+	lines := strings.Split(strings.TrimSpace(msgs[0].Message), "\n")
+	tagLine, upLine := lines[len(lines)-2], lines[len(lines)-1]
+	r.Stop()
+	// The rollback tags b's old image (v1) back under the tag and recreates b's service from it. (The tag then points at v1
+	// again, and a's container, on v2, is simply left alone: the healer is stopped.)
+	if err := g.RunRollback(ctx, tagLine, upLine); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	if now, _ := g.ImageID(ctx, ref); now == "" || (oldID != "" && now != oldID) {
+		t.Logf("after the rollback the tag points at %s (v1 was %s)", now, oldID)
+	}
+	waitFor(t, "b's api to run v1 again", 60*time.Second, func() bool { return b.tryVersion("api") == "v1" })
+}
+
+// A sidecar that runs the same image reference as its parent takes the tag its parent's own pull moved, in the parent's
+// incident, and its rollback is in the same upgrade message (one up line naming both services).
+func TestSidecarSharingTheImageTakesTheMovedTag(t *testing.T) {
+	g, cli := requireIntegration(t)
+	ctx := context.Background()
+	reg := startRegistry(t, g, cli)
+	ref := reg.ref("sidecarshared")
+	reg.publish(t, ref, "v1")
+	reg.publishNewer(t, ref, "v2")
+	s := newStack(t, g, cli, "pull-sidecar", pullAppWith(ref, pullOpts{pull: true, sidecar: "shared"}))
+	s.up()
+	waitFor(t, "app to be unhealthy", 30*time.Second, func() bool { return s.container("app").Health == "unhealthy" })
+	hook := newWebhook(t, s.project)
+
+	r := startDaemonOpts(t, g, cli, daemonOpts{NotifyURLs: []string{hook.url()}})
+	waitFor(t, "the app to be healthy on the new image", 240*time.Second, func() bool {
+		return countFor(r.Rec, engine.TagMoved, s.key("app")) == 1 && s.container("app").Health == "healthy"
+	})
+	// The sidecar is recreated against the new parent and runs the new image: its own image check let the move through.
+	waitFor(t, "the sidecar to run v2 against the new parent", 120*time.Second, func() bool {
+		side, app := s.container("side"), s.container("app")
+		return side.Running && side.NetworkMode == "container:"+app.ID && s.tryVersion("side") == "v2"
+	})
+	if n := countFor(r.Rec, engine.DriftBlocked, s.key("side")); n != 0 {
+		t.Fatalf("the sidecar was blocked %d times", n)
+	}
+	var moved engine.Event
+	for _, e := range r.Rec.Events() {
+		if e.Type == engine.TagMoved {
+			moved = e
+		}
+	}
+	if moved.Attrs["sidecars"] != "side" || !strings.HasSuffix(moved.Attrs["rollback_up"], "up -d --no-deps --pull never app side") {
+		t.Fatalf("the sidecar's rollback must be in the message: %+v", moved.Attrs)
+	}
+	waitFor(t, "the upgrade message", 30*time.Second, func() bool { return len(hook.matching("upgraded during heal")) >= 1 })
+	msgs := hook.matching("upgraded during heal")
+	if len(msgs) != 1 || !strings.Contains(msgs[0].Message, "sidecars on the same image, recreated with it: side") {
+		t.Fatalf("%v", titles(hook.all()))
+	}
+	lines := strings.Split(strings.TrimSpace(msgs[0].Message), "\n")
+	tagLine, upLine := lines[len(lines)-2], lines[len(lines)-1]
+	r.Stop()
+	if err := g.RunRollback(ctx, tagLine, upLine); err != nil {
+		t.Fatalf("rollback: %v", err)
+	}
+	waitFor(t, "both services to run v1 again", 90*time.Second, func() bool {
+		return s.tryVersion("app") == "v1" && s.tryVersion("side") == "v1" && s.container("side").NetworkMode == "container:"+s.container("app").ID
+	})
 }

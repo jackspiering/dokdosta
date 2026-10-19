@@ -259,6 +259,37 @@ func (e *Engine) Busy(key string) bool {
 	return false
 }
 
+// IncidentOpenedAt returns when the key's open incident was opened.
+func (e *Engine) IncidentOpenedAt(key string) (time.Time, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if st, ok := e.keys[key]; ok && st.incident != nil {
+		return st.incident.opened, true
+	}
+	return time.Time{}, false
+}
+
+// RungNotApplicable skips the rung the plan named, without running it and without spending a rate-limit slot: the
+// service's own configuration rules it out (the pull rung of a service with pull_policy never or build). When it was
+// the last rung the ladder is spent and the container is SUSPENDED, with why as the cause.
+func (e *Engine) RungNotApplicable(t Target, rung, why string, cfg config.Container) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st := e.state(t.Key)
+	defer e.flush(t.Key, st)
+	inc := st.incident
+	if inc == nil {
+		return
+	}
+	e.emit(t, RungUnavailable, fmt.Sprintf("rung %q skipped: %s", rung, why), map[string]string{"rung": rung, "not_applicable": "true"})
+	inc.rung++
+	st.dirty = true
+	if inc.rung >= len(cfg.Actions) {
+		inc.spent, inc.spentReason = true, ReasonLadder
+		e.suspend(t, st, "every rung ran or was unavailable: "+why, rules.Decision{Class: inc.class})
+	}
+}
+
 // IncidentOpen reports whether the key has an incident, and whether it is SUSPENDED.
 func (e *Engine) IncidentOpen(key string) (open, suspended bool) {
 	e.mu.Lock()

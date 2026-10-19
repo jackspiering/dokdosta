@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 )
 
@@ -93,4 +94,32 @@ func ParseConfigHash(out []byte, service string) (string, error) {
 		}
 	}
 	return "", errors.New("config --hash printed no hash for service " + service)
+}
+
+// ParsePullPolicy reads services.<svc>.pull_policy from `config --format json`. Nothing else of the output is kept. A
+// missing policy is "" (compose's default); a service that is not in the output is an error.
+func ParsePullPolicy(out []byte, service string) (string, error) {
+	var doc struct {
+		Services map[string]struct {
+			PullPolicy string `json:"pull_policy"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return "", fmt.Errorf("cannot read the rendered compose config: %w", ErrUnparseable)
+	}
+	svc, ok := doc.Services[service]
+	if !ok {
+		return "", fmt.Errorf("service %s is not in the rendered compose config: %w", service, ErrUnparseable)
+	}
+	return strings.TrimSpace(svc.PullPolicy), nil
+}
+
+// PullPolicyBlocksPull reports whether the service's pull_policy forbids a pull: `never` and `build` (plan v3.8: the pull
+// rung respects them; `--policy always` only replaces missing and if_not_present).
+func PullPolicyBlocksPull(policy string) bool {
+	switch strings.ToLower(strings.TrimSpace(policy)) {
+	case "never", "build":
+		return true
+	}
+	return false
 }

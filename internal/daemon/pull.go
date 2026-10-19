@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -102,11 +104,10 @@ func (d *Daemon) moverOf(ctx context.Context, c docker.Container) (tagMove, bool
 	return tagMove{}, false
 }
 
-// guardVerdict runs the drift guard (plan §3.6) before rung 2's recreate (pull false) or rung 3's pull (pull true) and
-// says whether the action may go ahead. When it may not, the container is SUSPENDED (Blocked); when the findings were
+// guardVerdict runs the drift guard (plan §3.6) before a recreate or a pull and says whether the action may go ahead. When it may not, the container is SUSPENDED (Blocked); when the findings were
 // verified drift and WHALENURSE_DRIFT_GUARD=warn, the action goes ahead and says so. It runs in dry-run too: it only reads.
-func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project, pull bool) bool {
-	fs := d.driftFindings(ctx, c, p, pull)
+func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project, allowImageMove bool) bool {
+	fs := d.driftFindings(ctx, c, p, allowImageMove)
 	if len(fs) == 0 {
 		return true
 	}
@@ -169,6 +170,12 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 		d.schedule(t.Key, d.clk.Now().Add(depRetry))
 		return
 	}
+	// The pull rung respects a service's pull_policy never and build (plan v3.8): it does not apply, the ladder is spent.
+	if why := d.pullPolicyRefusal(ctx, p); why != "" {
+		d.eng.RungNotApplicable(t, config.RungPull, why, cfg)
+		d.schedule(t.Key, d.clk.Now().Add(d.cfg.Grace))
+		return
+	}
 	if !d.guardVerdict(ctx, t, c, dec, p, true) {
 		return
 	}
@@ -181,6 +188,11 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 		return
 	}
 	oldPlain, _ := d.rd.ImageID(ctx, ref, "")
+
+	// Sidecars of this container that run the same image reference, created from the image that is about to be replaced,
+	// are recreated with it (the dependents step may take this move, and only this one): their service names go into the
+	// rollback, so the one message puts them all back.
+	sidecars := d.sidecarsSharing(ctx, c, ref, old, oldPlain)
 
 	d.eng.Begin(t, plan, dec)
 	pctx, cancel := context.WithTimeout(ctx, pullTimeout)
@@ -227,7 +239,11 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 	attrs := map[string]string{"ref": ref, "old": old, "new": now, "at": at.UTC().Format(time.RFC3339), "ok": fmt.Sprint(upErr == nil)}
 	if back := firstNonEmpty(oldPlain, old); back != "" {
 		attrs["old_image"] = back
-		attrs["rollback_tag"], attrs["rollback_up"] = compose.RollbackCommands(p, ref, back)
+		also := sidecars
+		attrs["rollback_tag"], attrs["rollback_up"] = compose.RollbackCommands(p, ref, back, also...)
+		if len(also) > 0 {
+			attrs["sidecars"] = strings.Join(also, ",")
+		}
 	}
 	outcome, msg := "upgraded", fmt.Sprintf("%s: %s moved to %s; recreated", ref, shortID(old), shortID(now))
 	if old == "" {
@@ -323,4 +339,99 @@ func (d *Daemon) keepAlive() (stop func()) {
 		}
 	}()
 	return func() { close(done); <-finished }
+}
+
+// pullPolicyRefusal reads the service's pull_policy and returns why the pull rung does not apply, or "". never and build
+// forbid a pull (plan v3.8: the label opts in to a pull, not to overriding an explicit "do not pull"); missing,
+// if_not_present, the refresh windows and no policy at all are replaced by --policy always. A policy that cannot be read
+// is a reason too: the rung fails closed.
+func (d *Daemon) pullPolicyRefusal(ctx context.Context, p compose.Project) string {
+	gctx, cancel := context.WithTimeout(ctx, guardTimeout)
+	defer cancel()
+	policy, err := d.o.Compose.PullPolicy(gctx, p)
+	switch {
+	case err != nil:
+		return "the pull rung does not apply: cannot read the service's pull_policy (" + err.Error() + ")"
+	case compose.PullPolicyBlocksPull(policy):
+		return "pull rung does not apply (pull_policy " + policy + ")"
+	}
+	return ""
+}
+
+// sidecarsSharing returns the compose services (same project) of the container's dependents that run the same image
+// reference and were created from the image the pull is about to replace.
+func (d *Daemon) sidecarsSharing(ctx context.Context, c docker.Container, ref string, old ...string) []string {
+	var out []string
+	for _, s := range d.idx.all {
+		// A sidecar that is already stale (its parent's ID is gone, because rung 2 recreated the parent and the dependents
+		// step has not reached it yet) no longer matches the parent by ID: the depends_on label finds it.
+		if s.ID == c.ID || !hasRef(s) || s.Labels[docker.LabelProject] != c.Labels[docker.LabelProject] {
+			continue
+		}
+		if !docker.MatchesRef(c.ID, c.Name, docker.ContainerRef(s.NetworkMode)) && !slices.Contains(dependsOn(s.Labels[compose.LabelDependsOn]), c.Labels[docker.LabelService]) {
+			continue
+		}
+		dep, err := d.rd.Inspect(ctx, s.ID)
+		if err != nil || normalizeRef(dep.Image) != normalizeRef(ref) || !labelIsOneOf(dep.Labels[compose.LabelImage], old) {
+			continue
+		}
+		if svc := dep.Labels[docker.LabelService]; svc != "" {
+			out = append(out, svc)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func labelIsOneOf(label string, ids []string) bool {
+	if label == "" {
+		return false
+	}
+	for _, id := range ids {
+		if id != "" && id == label {
+			return true
+		}
+	}
+	return false
+}
+
+// dependentMayTakeMove says whether a stale dependent may take the tag that its parent's own pull moved, in the parent's
+// open incident, and only that (plan v3.8): the reference must still resolve to what that pull produced, the pull must
+// have been run by a service the dependent depends on, after that service's incident opened, and the dependent must have
+// been created from the image that pull replaced. Anything else about the tag is still image drift.
+func (d *Daemon) dependentMayTakeMove(ctx context.Context, c docker.Container) bool {
+	m, ok := d.moverOf(ctx, c)
+	if !ok || !labelIsOneOf(c.Labels[compose.LabelImage], []string{m.Old, m.OldPlain}) {
+		return false
+	}
+	project := c.Labels[docker.LabelProject]
+	for _, dep := range dependsOn(c.Labels[compose.LabelDependsOn]) {
+		for _, s := range d.idx.all {
+			if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || d.keyOf(s) != m.Key {
+				continue
+			}
+			if opened, open := d.eng.IncidentOpenedAt(m.Key); open && !m.At.Before(opened) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// noteUpgrade tells that rung 2 recreated a container of a pull-enabled service onto a different image than it was
+// created from (the tag moved under it, and the guard let the image-only move through): "upgraded during heal", with the
+// rollback. It says nothing when the image is the same.
+func (d *Daemon) noteUpgrade(ctx context.Context, t engine.Target, old docker.Container, p compose.Project, recreateErr error) {
+	if recreateErr != nil {
+		return
+	}
+	cur, err := d.currentOf(ctx, t.Key)
+	if err != nil || cur.ImageID == "" || old.ImageID == "" || cur.ImageID == old.ImageID {
+		return
+	}
+	tag, up := compose.RollbackCommands(p, old.Image, old.ImageID)
+	d.eng.Note(t, engine.Upgraded, fmt.Sprintf("%s: %s -> %s; recreated", old.Image, shortID(old.ImageID), shortID(cur.ImageID)), map[string]string{
+		"ref": old.Image, "old": old.ImageID, "new": cur.ImageID, "old_image": old.ImageID,
+		"rollback_tag": tag, "rollback_up": up, "ok": "true",
+	})
 }

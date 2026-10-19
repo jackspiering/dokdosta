@@ -411,7 +411,7 @@ func (g *Guard) ImagePulls(ctx context.Context, since, until string) (int, error
 
 // ---- compose, as whalenurse runs it --------------------------------------------------------------------------------
 
-// CheckComposeCommand is the filter in front of whalenurse's compose: it accepts exactly the four shapes the compose
+// CheckComposeCommand is the filter in front of whalenurse's compose: it accepts exactly the five shapes the compose
 // package builds and nothing else. A command whalenurse should never run (down, rm, build, run, a different project,
 // a pull that is not `--policy always <one service>`, an up that could pull or build or touch other services) is REFUSED.
 func CheckComposeCommand(args []string) error {
@@ -444,8 +444,12 @@ sub:
 			return refuse("compose version with %v", rest)
 		}
 	case "config":
-		if len(rest) != 1 || !strings.HasPrefix(rest[0], "--hash=") || strings.ContainsAny(rest[0], ",*") {
-			return refuse("compose config with %v: only --hash=<one service>", rest)
+		switch {
+		case len(rest) == 1 && strings.HasPrefix(rest[0], "--hash=") && !strings.ContainsAny(rest[0], ",*"):
+		case len(rest) == 4 && rest[0] == "--format" && rest[1] == "json" && rest[2] == "--no-env-resolution" && !strings.HasPrefix(rest[3], "-"):
+			// The pull rung reads one service's pull_policy; the rest of the output is dropped by the caller.
+		default:
+			return refuse("compose config with %v: only --hash=<one service> or --format json --no-env-resolution <one service>", rest)
 		}
 	case "pull":
 		// Rung 3 only: one service, with the policy flag, nothing else (no --include-deps).
@@ -546,11 +550,13 @@ var _ compose.Runner = (*ComposeRunner)(nil)
 
 // ---- the rollback of an upgrade -------------------------------------------------------------------------------------
 
+var serviceRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
+
 var rollbackTagRE = regexp.MustCompile(`^docker image tag (sha256:[0-9a-f]{64}) (\S+)$`)
 
 // RunRollback runs the two lines of the rollback an "upgraded during heal" message gave, exactly as a person would paste
 // them, after checking each: the first must tag an image ID onto a reference of the test registry; the second must be
-// `docker compose -p <test project> [--project-directory D] [-f F]... [--env-file E]... up -d --no-deps --pull never <svc>`.
+// `docker compose -p <test project> [--project-directory D] [-f F]... [--env-file E]... up -d --no-deps --pull never <svc>...` (the parent and the sidecars recreated with it).
 // Anything else is REFUSED, so a rollback that named another project or added a flag cannot do harm.
 func (g *Guard) RunRollback(ctx context.Context, tagLine, upLine string) error {
 	m := rollbackTagRE.FindStringSubmatch(tagLine)
@@ -577,12 +583,17 @@ func (g *Guard) RunRollback(ctx context.Context, tagLine, upLine string) error {
 		i += 2
 	}
 	rest = rest[i:]
-	if len(rest) != len(tail)+1 || strings.HasPrefix(rest[len(tail)], "-") {
-		return refuse("rollback line %q does not end in `%s <service>`", upLine, strings.Join(tail, " "))
+	if len(rest) < len(tail)+1 {
+		return refuse("rollback line %q does not end in `%s <service>...`", upLine, strings.Join(tail, " "))
 	}
 	for j, w := range tail {
 		if rest[j] != w {
-			return refuse("rollback line %q does not end in `%s <service>`", upLine, strings.Join(tail, " "))
+			return refuse("rollback line %q does not end in `%s <service>...`", upLine, strings.Join(tail, " "))
+		}
+	}
+	for _, svc := range rest[len(tail):] {
+		if !serviceRE.MatchString(svc) {
+			return refuse("rollback line %q: %q is not a compose service name", upLine, svc)
 		}
 	}
 	// Both lines are good: now run them, in order.

@@ -36,6 +36,7 @@ const (
 	RungsDisabled       EventType = "RungsDisabled"
 	DependentPostCheck  EventType = "DependentPostCheck" // a dependent was still stale after a non-forced up: recreating it with --force-recreate
 	TagMoved            EventType = "TagMoved"           // rung 3 pulled a newer image: the tag now points elsewhere, for every stack that shares it
+	Upgraded            EventType = "Upgraded"           // rung 2 recreated a container of a pull-enabled service onto an image that moved under it ("upgraded during heal")
 	UpgradePostCheck    EventType = "UpgradePostCheck"   // after the pull's non-forced up the container was still the old one: recreating it with --force-recreate
 )
 

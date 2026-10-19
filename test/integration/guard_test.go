@@ -231,6 +231,7 @@ func TestComposeFilterAcceptsExactlyWhatTheComposePackageBuilds(t *testing.T) {
 		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml up -d --no-deps --pull never --no-build web",
 		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --dry-run --progress json up -d --no-deps --pull never --no-build web",
 		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --hash=web",
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --format json --no-env-resolution web", // the pull rung's policy read
 		"-p whalenurse-test-a version --short",
 		"-p whalenurse-test-a version",
 		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env pull --policy always web", // rung 3
@@ -275,6 +276,11 @@ func TestComposeFilterRefuses(t *testing.T) {
 		"config hash of all":         "-p whalenurse-test-a config --hash=*",
 		"config hash of two":         "-p whalenurse-test-a config --hash=a,b",
 		"config rendered":            "-p whalenurse-test-a config",
+		"config json of all":         "-p whalenurse-test-a config --format json --no-env-resolution",
+		"config json with env":       "-p whalenurse-test-a config --format json web",
+		"config yaml":                "-p whalenurse-test-a config --format yaml --no-env-resolution web",
+		"config json of two":         "-p whalenurse-test-a config --format json --no-env-resolution web db",
+		"config json, flag service":  "-p whalenurse-test-a config --format json --no-env-resolution --hash=web",
 		"version -f":                 "-p whalenurse-test-a version --format json",
 		"flag without value":         "-p whalenurse-test-a -f",
 		"no subcommand":              "-p whalenurse-test-a --dry-run",
@@ -423,6 +429,11 @@ func TestRunRollbackRunsOnlyWhatARollbackIs(t *testing.T) {
 	want := []string{"docker tag " + id + " " + regRef, "docker " + strings.TrimPrefix(good, "docker ")}
 	if got := s.mutations(); strings.Join(got, "|") != strings.Join(want, "|") {
 		t.Fatalf("%v", got)
+	}
+	// The parent and the sidecars it was recreated with, in one up.
+	s3 := &stub{}
+	if err := (&Guard{R: s3}).RunRollback(ctx, tagLine, good+" side side2"); err != nil {
+		t.Fatal(err)
 	}
 	for name, tc := range map[string][2]string{
 		"another project":       {tagLine, strings.Replace(good, "whalenurse-test-a", "prod", 1)},

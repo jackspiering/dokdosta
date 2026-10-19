@@ -53,7 +53,8 @@ type Container struct {
 	PidMode     string
 	VolumesFrom []string // HostConfig.VolumesFrom: another reference compose resolves to a container ID (plan §3.6)
 
-	Image string // Config.Image: the reference the container was created from, for the image-drift check
+	Image   string // Config.Image: the reference the container was created from, for the image-drift check
+	ImageID string // the image the container runs (inspect .Image): what an "upgraded during heal" message rolls back to
 }
 
 // Summary is one row of the container list; enough for the poll to decide

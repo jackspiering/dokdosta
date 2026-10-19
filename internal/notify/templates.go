@@ -95,10 +95,12 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 			detail = append(detail, "rung: "+r)
 		}
 
-	case engine.TagMoved:
+	case engine.TagMoved, engine.Upgraded:
+		// TagMoved: the pull rung brought a newer image. Upgraded: rung 2 recreated a pull-enabled container onto an image
+		// that someone else had moved the tag to. Both are "upgraded during heal", with the rollback.
 		pinned = tagMovedMessage(e, &headline, &detail)
 		discr = attr("new")
-		critical = true // it changed what is running, and every stack that shares the tag; the rollback must get through
+		critical = true // it changed what is running; the rollback must get through
 
 	case engine.Recovered:
 		headline = "recovered"
@@ -265,7 +267,14 @@ func tagMovedMessage(e engine.Event, headline *string, detail *[]string) (pinned
 	if a["ok"] != "true" {
 		*detail = append(*detail, "error: "+a["error"])
 	}
-	*detail = append(*detail, "every stack that shares this tag now sees it as moved")
+	if sc := a["sidecars"]; sc != "" {
+		*detail = append(*detail, "sidecars on the same image, recreated with it: "+strings.ReplaceAll(sc, ",", ", "))
+	}
+	if e.Type == engine.Upgraded {
+		*detail = append(*detail, "the tag had been moved by someone else; this heal took the newer image")
+	} else {
+		*detail = append(*detail, "every stack that shares this tag now sees it as moved")
+	}
 	if a["rollback_tag"] != "" && a["rollback_up"] != "" {
 		return []string{"roll back:", oneLine(a["rollback_tag"]), oneLine(a["rollback_up"])}
 	}
