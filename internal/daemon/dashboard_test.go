@@ -84,6 +84,7 @@ func newRig(t *testing.T, token string) *dashboardRig {
 			return notify.Status{Enabled: true, Targets: []notify.TargetStatus{{URL: "#1 generic", Sent: 2, Failed: 1}}}
 		}
 	})
+	rig.h.planted = map[string]bool{"labels": true, "env": true, "password": true}
 	rig.svc = NewAPI(rig.h.d, st, st, hub, red.Redact)
 	rig.srv = httptest.NewServer(api.Handler(api.Options{Health: rig.h.d, Service: rig.svc, Token: token, Web: web.Handler(rig.svc)}))
 	t.Cleanup(rig.srv.Close)
@@ -257,7 +258,7 @@ func TestPagesRenderAndAreCleanHTML(t *testing.T) {
 			t.Errorf("GET %s: %d %.300s", p, code, body)
 			continue
 		}
-		if !strings.Contains(body, "<!doctype html>") || !strings.Contains(body, `<meta name="viewport"`) || !strings.Contains(body, "prefers-color-scheme") && false {
+		if !strings.Contains(body, "<!doctype html>") || !strings.Contains(body, `<meta name="viewport"`) {
 			t.Errorf("%s: not a full page", p)
 		}
 		// No inline script, handler, style or javascript: URL: the CSP forbids them and the pages must not need them.

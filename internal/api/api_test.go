@@ -242,12 +242,16 @@ func TestControlSocketPathsDoNotExistOnTCP(t *testing.T) {
 }
 
 func TestHEADWorksAndSendsNoBody(t *testing.T) {
-	h := handler(t, "")
-	req := httptest.NewRequest("HEAD", "/api/v1/status", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != 200 || rec.Body.Len() != 0 && false {
-		t.Fatalf("%d", rec.Code)
+	srv := httptest.NewServer(handler(t, ""))
+	defer srv.Close()
+	resp, err := http.Head(srv.URL + "/api/v1/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 || len(b) != 0 || resp.Header.Get("Content-Type") != "application/json" {
+		t.Fatalf("%d %q %v", resp.StatusCode, b, resp.Header)
 	}
 }
 
@@ -531,5 +535,25 @@ func TestMetrics(t *testing.T) {
 	}
 	if got := labelValue("a\"b\\c\nd"); got != `a\"b\\c\nd` {
 		t.Errorf("label escaping: %s", got)
+	}
+}
+
+// main serves with a ReadTimeout. net/http keeps that deadline on the connection while a handler runs, and its
+// background read then cancels the request: without the stream clearing it, every stream would end after the timeout.
+func TestStreamSurvivesTheServersReadTimeout(t *testing.T) {
+	svc := fixtureService()
+	ring := svc.Events.(*engine.Ring)
+	srv := httptest.NewUnstartedServer(Handler(Options{Health: okChecker{}, Service: svc}))
+	srv.Config.ReadTimeout = 300 * time.Millisecond
+	srv.Start()
+	defer srv.Close()
+	c := connect(t, srv.URL+"/api/v1/stream")
+	defer c.close()
+	time.Sleep(1200 * time.Millisecond)
+	e := engine.Event{ID: 8, Time: t0, Host: "nas", Key: "nas/web/proxy/1", Type: engine.Recovered, Message: "late"}
+	ring.Record(e)
+	svc.Hub.Notify(e)
+	if m := c.next(t); m["id"] != "8" {
+		t.Fatalf("the stream did not survive the read timeout: %v", m)
 	}
 }

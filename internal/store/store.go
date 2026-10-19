@@ -34,6 +34,7 @@ const schemaVersion = 3
 // Store is an open database.
 type Store struct {
 	db   *sql.DB
+	rdb  *sql.DB // a second, read-only connection for the API: a page view never queues behind (or in front of) a healer write
 	log  *slog.Logger
 	errs atomic.Int64
 }
@@ -58,11 +59,28 @@ func Open(dir string, log *slog.Logger) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
+	// WAL lets a reader run beside the writer. The reads of the API use their own connection; if it cannot be opened
+	// they share the writer's, which only costs a little latency.
+	s.rdb = db
+	if r, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)"); err == nil {
+		r.SetMaxOpenConns(2)
+		if err := r.Ping(); err == nil {
+			s.rdb = r
+		} else {
+			r.Close()
+			log.Warn("store: no separate read connection; the API shares the healer's", "error", err.Error())
+		}
+	}
 	return s, nil
 }
 
 // Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.rdb != s.db {
+		s.rdb.Close()
+	}
+	return s.db.Close()
+}
 
 // WriteErrors counts the writes that failed since Open.
 func (s *Store) WriteErrors() int64 { return s.errs.Load() }
@@ -498,7 +516,7 @@ func (s *Store) RecordEvent(e engine.Event) {
 // LastID is the highest event ID ever stored (also after retention deleted the newest rows); 0 for none.
 func (s *Store) LastID() uint64 {
 	var n sql.NullInt64
-	if err := s.db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'events'`).Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err := s.rdb.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'events'`).Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		s.fail("read event sequence", err)
 		return 0
 	}
@@ -538,7 +556,7 @@ func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
 	}
 	stmt := `SELECT id, at, host, key, container, type, message, attrs FROM events WHERE ` + strings.Join(where, " AND ") +
 		` ORDER BY id ` + order + ` LIMIT ?`
-	rows, err := s.db.Query(stmt, append(args, limit)...)
+	rows, err := s.rdb.Query(stmt, append(args, limit)...)
 	if err != nil {
 		return nil, err
 	}
@@ -563,7 +581,7 @@ func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
 // History returns the closed incidents of a key, newest first (the dashboard's
 // History page and the tests use it).
 func (s *Store) History(key string) ([]engine.ClosedIncident, error) {
-	rows, err := s.db.Query(`SELECT key, opened_at, class, closed_at, outcome FROM incidents WHERE closed_at IS NOT NULL AND (? = '' OR key = ?) ORDER BY closed_at DESC, opened_at DESC`, key, key)
+	rows, err := s.rdb.Query(`SELECT key, opened_at, class, closed_at, outcome FROM incidents WHERE closed_at IS NOT NULL AND (? = '' OR key = ?) ORDER BY closed_at DESC, opened_at DESC`, key, key)
 	if err != nil {
 		return nil, err
 	}

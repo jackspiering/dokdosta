@@ -21,7 +21,8 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 11. **Event attribute allow-list** (v3.9 item 6b) is a list of the 34 keys the engine and the daemon emit today, written by reading every `map[string]string{...}` and `attrs[...]` in `internal/engine` and `internal/daemon`. A new attribute has to be added to `allowedAttrs` to reach the API. The values of allowed keys are redacted but not otherwise inspected (the secrets test therefore plants its attribute secret under a key that is not allowed).
 12. **Event streams do not hold events.** The hub only wakes clients; each client reads the log from its cursor, so the engine's lock is never held for I/O and a stalled browser tab costs nothing. At most 32 streams. In a dry run the log is a 5,000-event ring: a client that was slower than 5,000 events misses some (the stored mode has no such loss).
 13. **Basic-auth challenge.** A 401 sends two `WWW-Authenticate` lines (Bearer, Basic) so that both a script and a browser know what to do.
-14. **HTTP server settings**: header timeout 5 s, read timeout 15 s, idle 2 min, no write timeout (the stream). Shutdown is graceful for 3 s (`RegisterOnShutdown(hub.Close)` ends the streams), then closed.
+14. **The API reads through its own SQLite connection.** The store's writer is a single connection and `RecordEvent` and `SaveKey` run under the engine's lock, so a page view on that connection could make the healing loop wait. `Query`, `LastID` and `History` use a second read-only connection (`mode=ro`, `query_only`; WAL lets it run beside the writer, and a test holds a write transaction open to prove a read does not wait). If it cannot be opened the reads share the writer's connection and a warning says so.
+15. **HTTP server settings**: header timeout 5 s, read timeout 15 s, idle 2 min, no write timeout (the stream). Shutdown is graceful for 3 s (`RegisterOnShutdown(hub.Close)` ends the streams), then closed.
 
 ## What was verified, and how
 
@@ -31,6 +32,8 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 - Every non-GET method (POST, PUT, PATCH, DELETE, OPTIONS, TRACE, CONNECT, PROPFIND) is 405 on every route including the control socket's paths, with and without the token, and none answers with CORS headers.
 - Pages: the inline `<script>`, `on*=`, `style=` and `javascript:` greps, and "no third-party origin" on every page; the import rule of `internal/web`.
 - `node --check` on `app.js`.
+- A stream survives a server `ReadTimeout` shorter than the stream (a regression test with a 300 ms timeout and an event after 1.2 s): `net/http` does not cancel a body-less GET's request at that deadline, so no extra code was needed.
+- The attribute allow-list is complete for everything the daemon tests emit: the daemon test harness fails any event whose attribute key `api.AttrAllowed` would drop (the dashboard test's planted keys excepted), across all the M1 to M5 scenarios.
 
 ## Not verified
 

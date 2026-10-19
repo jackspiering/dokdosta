@@ -357,3 +357,35 @@ func TestEventRowsAreCapped(t *testing.T) {
 		t.Fatalf("%d rows, first %d", n, first)
 	}
 }
+
+// The API reads through its own connection: it sees what the writer committed, and it cannot write.
+func TestReadsUseASeparateReadOnlyConnection(t *testing.T) {
+	s := open(t, t.TempDir())
+	defer s.Close()
+	if s.rdb == s.db {
+		t.Fatal("no separate read connection")
+	}
+	s.RecordEvent(ev(1, t0, "h/p/web/1", engine.IncidentOpened, nil))
+	s.SaveKey(sampleKey())
+	if got, err := s.Query(engine.EventQuery{}); err != nil || len(got) != 1 || s.LastID() != 1 {
+		t.Fatalf("%v %v", got, err)
+	}
+	s.CloseIncident(engine.ClosedIncident{Key: "h/p/web/1", Opened: t0, Closed: t0.Add(time.Minute), Class: "c", Outcome: "recovered"})
+	if h, err := s.History(""); err != nil || len(h) != 1 {
+		t.Fatalf("%v %v", h, err)
+	}
+	if _, err := s.rdb.Exec(`DELETE FROM events`); err == nil {
+		t.Fatal("the read connection can write")
+	}
+	// A busy writer does not stop a read.
+	tx, _ := s.db.Begin()
+	tx.Exec(`INSERT INTO events (id, at, host, key, container, type, message, attrs) VALUES (9, 0, 'h', 'k', '', 'T', '', '{}')`)
+	done := make(chan struct{})
+	go func() { s.Query(engine.EventQuery{}); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a read waited for the writer's open transaction")
+	}
+	tx.Rollback()
+}

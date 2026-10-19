@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackspiering/whalenurse/internal/api"
 	"github.com/jackspiering/whalenurse/internal/clock"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
@@ -24,6 +25,9 @@ type harness struct {
 	ctx  context.Context
 	cfg  config.Global
 	act  docker.Actor
+	// planted lists attribute keys a test puts on events on purpose (the dashboard's secrets test); every other
+	// attribute the daemon or the engine emits must be one the API lets through, or the test fails.
+	planted map[string]bool
 }
 
 // newHarness builds a daemon on a fake clock and a fake Docker. Startup settle
@@ -56,6 +60,13 @@ func newHarnessOpts(t *testing.T, tweak func(*config.Global), actor func(*docker
 func (h *harness) start(opts func(*Options)) {
 	bus := &engine.Bus{}
 	bus.Subscribe(h.rec.Record)
+	bus.Subscribe(func(e engine.Event) {
+		for k := range e.Attrs {
+			if !api.AttrAllowed(k) && !h.planted[k] {
+				h.t.Errorf("event %s carries the attribute %q, which the API drops: add it to api.allowedAttrs if it belongs in the timeline", e.Type, k)
+			}
+		}
+	})
 	o := Options{Config: h.cfg, Reader: h.fake, Actor: h.act, Clock: h.clk, Bus: bus}
 	if opts != nil {
 		opts(&o)

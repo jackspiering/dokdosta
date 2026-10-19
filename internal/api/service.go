@@ -51,6 +51,10 @@ var allowedAttrs = map[string]bool{
 	"rollback_up": true, "rung": true, "rungs": true, "scope": true, "sidecars": true, "until": true, "why": true,
 }
 
+// AttrAllowed reports whether an event attribute key may leave whalenurse. The daemon's tests subscribe a checker that
+// fails on any key the healer emits outside this list, so every scenario of those tests proves the list is complete.
+func AttrAllowed(key string) bool { return allowedAttrs[key] }
+
 // labelAllowed is the rule for labels: com.docker.compose.* and whalenurse.*, nothing else (plan §3.9).
 func labelAllowed(k string) bool {
 	return strings.HasPrefix(k, "com.docker.compose.") || strings.HasPrefix(k, "whalenurse.")
