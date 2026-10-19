@@ -2,15 +2,21 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackspiering/whalenurse/internal/clock"
+	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/daemon"
+	"github.com/jackspiering/whalenurse/internal/docker"
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/notify"
 )
 
 type fakeDaemon struct{ calls []string }
@@ -88,5 +94,116 @@ func TestSplitArgsAcceptsFlagsAfterThePositional(t *testing.T) {
 		if err != nil || len(pos) != 1 || pos[0] != "p/web" || *dur != "2h" {
 			t.Errorf("%v: pos=%v dur=%q err=%v", args, pos, *dur, err)
 		}
+	}
+}
+
+// ---- notifications: the URLs are secrets (plan v3.7) ----------------------------------------------------------
+
+// The tokens sit where real ones do: in the user info, in the path and in a query value, and in the host of a Discord URL.
+var leakTokens = []string{"tok-USERINFO-81237", "tok-PATH-55120", "tok-QUERY-90421", "tok-DOWN-31337", "tok-PINGUUID-77777"}
+
+func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
+	var statuses = map[string]int{"401": 401, "500": 500}
+	var urls []string
+	for name, code := range statuses {
+		code := code
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "nope "+r.URL.Path, code) }))
+		defer srv.Close()
+		host := strings.TrimPrefix(srv.URL, "http://")
+		switch name {
+		case "401":
+			urls = append(urls, "generic://u:tok-USERINFO-81237@"+host+"/hook/tok-PATH-55120?template=json&disabletls=yes&$k=tok-QUERY-90421")
+		default:
+			urls = append(urls, "generic://"+host+"/tok-PATH-55120/x?template=json&disabletls=yes&@Authorization=tok-QUERY-90421")
+		}
+	}
+	// A connection that is refused (the client's error quotes the URL), a URL Shoutrrr rejects, and one that is not a URL.
+	dead := httptest.NewServer(http.NotFoundHandler())
+	deadHost := strings.TrimPrefix(dead.URL, "http://")
+	dead.Close()
+	urls = append(urls,
+		"generic://"+deadHost+"/hook/tok-DOWN-31337?template=json&disabletls=yes",
+		"nosuchservice://tok-USERINFO-81237@host/tok-PATH-55120",
+		"tok-QUERY-90421-is-not-a-url")
+	ping := "http://" + deadHost + "/ping/tok-PINGUUID-77777"
+
+	env := []string{"WHALENURSE_NOTIFY_URLS=" + strings.Join(urls, " "), "WHALENURSE_HEARTBEAT_URL=" + ping,
+		"WHALENURSE_NOTIFY_TIMEOUT=2s", "WHALENURSE_HOST_ID=nas"}
+	cfg, warns, err := config.FromEnv(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	notifyBackoff = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { notifyBackoff = nil })
+	var logs bytes.Buffer
+	log := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	for _, w := range warns {
+		log.Warn("config", "detail", w)
+	}
+	bus := &engine.Bus{}
+	bus.Subscribe(daemon.LogSink(log))
+	nt, red := setupNotify(cfg, log, bus, nil)
+	pinger := &notify.Pinger{URL: cfg.PingURL, Interval: time.Hour, Timeout: time.Second, Log: log, Redact: red}
+	d := daemon.New(daemon.Options{Config: cfg, Reader: docker.NewFake(), Actor: docker.NewFake(), Clock: clock.Real{}, Bus: bus, Log: log,
+		NotifyStatus: func() notify.Status { st := nt.Status(); ps := pinger.Status(); st.Ping = &ps; return st }})
+
+	// Events that are sent, to every URL, and fail for each of the reasons above.
+	key := "nas/p/web/1"
+	bus.Publish(engine.Event{Host: "nas", Key: key, Container: "p-web-1", Type: engine.Suspended, Message: "every rung ran or was unavailable: unhealthy", Attrs: map[string]string{"reason": "ladder"}})
+	bus.Publish(engine.Event{Host: "nas", Key: key, Container: "p-web-1", Type: engine.Recovered, Message: "healthy"})
+	pinger.Tick(t.Context())
+	nt.Shutdown(30 * time.Second) // delivers everything, retries included
+
+	// `notify test`, and the status in every form it reaches a person.
+	var test bytes.Buffer
+	if err := runNotifyTest(t.Context(), &test, cfg); err == nil {
+		t.Error("the test should report failures")
+	}
+	var text bytes.Buffer
+	printStatus(&text, d.Status().(daemon.Status))
+	js, _ := json.Marshal(d.Status())
+	tcp, sock := handlers(d)
+	healthz := httptest.NewRecorder()
+	tcp.ServeHTTP(healthz, httptest.NewRequest("GET", "/healthz", nil))
+	sockStatus := httptest.NewRecorder()
+	sock.ServeHTTP(sockStatus, httptest.NewRequest("GET", "/v1/status", nil))
+
+	outputs := map[string]string{
+		"logs": logs.String(), "notify test": test.String(), "status text": text.String(), "status json": string(js),
+		"healthz": healthz.Body.String(), "socket status": sockStatus.Body.String(),
+	}
+	for name, out := range outputs {
+		if out == "" {
+			t.Errorf("%s: no output to check", name)
+		}
+		for _, tok := range leakTokens {
+			if strings.Contains(out, tok) {
+				t.Errorf("%s leaks %q:\n%s", name, tok, out)
+			}
+		}
+		for _, u := range append(urls, ping) {
+			if strings.Contains(out, u) {
+				t.Errorf("%s holds a whole URL: %s", name, u)
+			}
+		}
+	}
+	// The checks above mean something only if the failures happened and were reported.
+	if !strings.Contains(test.String(), "FAILED") || !strings.Contains(test.String(), "#1 generic") || !strings.Contains(test.String(), "#4 nosuchservice") || !strings.Contains(test.String(), "#5 invalid") {
+		t.Errorf("notify test:\n%s", test.String())
+	}
+	for _, want := range []string{"notification failed", "notification URL is invalid", "uptime ping failed"} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("the log lacks %q:\n%s", want, logs.String())
+		}
+	}
+	if !strings.Contains(text.String(), "notifications:") || !strings.Contains(text.String(), "#1 generic") || !strings.Contains(text.String(), "uptime ping") {
+		t.Errorf("status text shows no notification state:\n%s", text.String())
+	}
+}
+
+func TestNotifyTestNeedsURLs(t *testing.T) {
+	if err := runNotifyTest(t.Context(), &bytes.Buffer{}, config.Defaults()); err == nil {
+		t.Fatal("no URLs: an error, not a silent success")
 	}
 }

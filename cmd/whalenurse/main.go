@@ -30,6 +30,7 @@ import (
 	"github.com/jackspiering/whalenurse/internal/daemon"
 	"github.com/jackspiering/whalenurse/internal/docker"
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/notify"
 	"github.com/jackspiering/whalenurse/internal/store"
 )
 
@@ -52,6 +53,8 @@ func main() {
 		err = scopeCmd(cmd, args)
 	case "status":
 		err = statusCmd(args)
+	case "notify":
+		err = notifyCmd(args)
 	case "version":
 		fmt.Println("whalenurse", buildVersion())
 	case "help", "-h", "--help":
@@ -73,6 +76,7 @@ func usage() {
        whalenurse resume <project>[/<service>]
        whalenurse unsuspend <project>[/<service>]
        whalenurse status [--json]
+       whalenurse notify test
        whalenurse healthcheck
        whalenurse version
 
@@ -81,6 +85,7 @@ pause        stop all actions for a project or service; --for takes 30m, 2h, 1d 
 resume       lift a pause
 unsuspend    lift SUSPENDED so the ladder may run again
 status       show incidents, SUSPENDED and PAUSED containers, flap counts and the rate-limit budget
+notify test  send one test message to every WHALENURSE_NOTIFY_URLS URL and report each (needs no running daemon)
 healthcheck  exit 0 if the running daemon reports healthy (for the image HEALTHCHECK)
 
 pause, resume, unsuspend and status talk to the running daemon over its control socket
@@ -146,6 +151,7 @@ func runCmd(args []string) error {
 	// incidents and SUSPENDED states are not real, and must not be there for the next
 	// real run to find.
 	opts := daemon.Options{Config: cfg, Reader: cli, Clock: clock.Real{}, Bus: bus, Log: log, SelfID: selfID}
+	var ledger notify.Ledger // the notification dedupe is kept in the store too; a dry run has none
 	if cfg.DryRun {
 		log.Info("dry run: state is kept in memory only and nothing is written under the data directory")
 	} else {
@@ -160,8 +166,12 @@ func runCmd(args []string) error {
 		}
 		log.Info("state store opened", "dir", cfg.DataDir, "keys", len(snap.Keys), "pauses", len(snap.Pauses))
 		opts.Persist, opts.Snapshot, opts.Meta = st, snap, st
+		ledger = st
 		go pruneLoop(ctx, st, cfg, log)
 	}
+
+	nt, red := setupNotify(cfg, log, bus, ledger)
+	defer nt.Shutdown(5 * time.Second) // the last message before a stop is often the one that matters
 
 	var actor docker.Actor = cli
 	if cfg.DryRun {
@@ -170,7 +180,24 @@ func runCmd(args []string) error {
 	}
 	opts.Actor = actor
 	opts.Compose, opts.ComposeActor, opts.ComposeNote = composeFor(ctx, cfg, log)
+	var pinger *notify.Pinger
+	opts.NotifyStatus = func() notify.Status {
+		st := nt.Status()
+		if pinger != nil {
+			ps := pinger.Status()
+			st.Ping = &ps
+		}
+		return st
+	}
 	d := daemon.New(opts)
+	if cfg.PingURL != "" {
+		pinger = &notify.Pinger{
+			URL: cfg.PingURL, Interval: cfg.PingInterval, Timeout: cfg.NotifyTimeout, Log: log, Redact: red,
+			Healthy: func() bool { ok, _ := d.Healthy(); return ok },
+		}
+		go pinger.Run(ctx)
+		log.Info("uptime ping on", "interval", cfg.PingInterval.String())
+	}
 
 	tcpHandler, sockHandler := handlers(d)
 	if cfg.ControlSocket != "" {
@@ -195,6 +222,33 @@ func runCmd(args []string) error {
 	}
 	log.Info("stopped")
 	return nil
+}
+
+// setupNotify makes the notifier one more subscriber of the event stream. The URLs hold tokens, so everything about them
+// is logged by position and scheme ("#2 discord"), and every error goes through the redactor first. An invalid URL is
+// reported and skipped: a notification problem never stops the healing.
+// notifyBackoff is the wait before each retry of a failed delivery; nil means the notifier's default. Tests shorten it.
+var notifyBackoff []time.Duration
+
+func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus, ledger notify.Ledger) (*notify.Notifier, *notify.Redactor) {
+	red := notify.NewRedactor(append(append([]string{}, cfg.NotifyURLs...), cfg.PingURL)...)
+	targets := notify.NewTargets(cfg.NotifyURLs, red, cfg.NotifyTimeout)
+	for _, t := range targets {
+		if t.Sender == nil {
+			log.Error("notification URL is invalid and will not be used", "url", t.Label, "error", t.Err)
+		}
+	}
+	nt := notify.New(notify.Options{
+		Host: cfg.HostID, DryRun: cfg.DryRun, Log: log, Redact: red, Targets: targets,
+		Timeout: cfg.NotifyTimeout, RateLimit: cfg.NotifyRateLimit, Backoff: notifyBackoff, Ledger: ledger,
+	})
+	bus.Subscribe(nt.Handle)
+	if len(cfg.NotifyURLs) == 0 {
+		log.Info("notifications are off: WHALENURSE_NOTIFY_URLS is not set")
+	} else {
+		log.Info("notifications", "urls", len(cfg.NotifyURLs), "per_url_limit_per_hour", cfg.NotifyRateLimit, "dry_run_marked", cfg.DryRun)
+	}
+	return nt, red
 }
 
 // composeFor finds the compose binary (plan §3.4: WHALENURSE_COMPOSE_BIN, then the host plugin mounted read-only, then
@@ -248,6 +302,9 @@ func pruneLoop(ctx context.Context, st *store.Store, cfg config.Global, log *slo
 			log.Error("store prune failed", "error", err.Error())
 		} else if n > 0 {
 			log.Info("pruned old incident history", "incidents", n, "retention", cfg.HistoryRetention.String())
+		}
+		if err := st.PruneNotified(time.Now(), notify.DefaultDedupeFor); err != nil {
+			log.Error("notification ledger prune failed", "error", err.Error())
 		}
 	}
 	prune()
@@ -350,6 +407,56 @@ func statusCmd(args []string) error {
 	return nil
 }
 
+// notifyCmd is `whalenurse notify test`: one message to every URL, one line per URL. It reads the environment like the
+// daemon does (so `docker exec` sees the container's), needs no daemon, and prints URLs by position and scheme only.
+func notifyCmd(args []string) error {
+	if len(args) != 1 || args[0] != "test" {
+		return errors.New("usage: whalenurse notify test")
+	}
+	cfg, _, err := config.FromEnv(os.Environ())
+	if err != nil {
+		return err
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runNotifyTest(ctx, os.Stdout, cfg)
+}
+
+// runNotifyTest sends the test message to every URL of cfg and prints one line per URL.
+func runNotifyTest(ctx context.Context, w io.Writer, cfg config.Global) error {
+	if len(cfg.NotifyURLs) == 0 {
+		return errors.New("WHALENURSE_NOTIFY_URLS is not set: there is nothing to test")
+	}
+	red := notify.NewRedactor(cfg.NotifyURLs...)
+	targets := notify.NewTargets(cfg.NotifyURLs, red, cfg.NotifyTimeout)
+	defer func() {
+		for _, t := range targets {
+			if t.Sender != nil {
+				_ = t.Sender.Close()
+			}
+		}
+	}()
+	res := notify.SendTest(ctx, targets, red, cfg.NotifyTimeout, notify.TestMessage(cfg.HostID, cfg.DryRun))
+	if failed := notify.PrintTest(w, res); failed > 0 {
+		return fmt.Errorf("%d of %d notification URLs failed", failed, len(res))
+	}
+	return nil
+}
+
+func printNotify(w io.Writer, n notify.Status) {
+	fmt.Fprintf(w, "notifications: %s\n", n.Summary())
+	if p := n.Ping; p != nil {
+		line := fmt.Sprintf("uptime ping every %ds: %d sent", p.IntervalSec, p.Sent)
+		if p.Failed > 0 {
+			line += fmt.Sprintf(", %d failed (last: %s)", p.Failed, p.LastError)
+		}
+		if p.Skipped > 0 {
+			line += fmt.Sprintf(", %d skipped while unhealthy", p.Skipped)
+		}
+		fmt.Fprintln(w, line)
+	}
+}
+
 func printStatus(w io.Writer, st daemon.Status) {
 	flags := []string{}
 	if st.DryRun {
@@ -376,6 +483,7 @@ func printStatus(w io.Writer, st daemon.Status) {
 	}
 	fmt.Fprintln(w, rate)
 	printCompose(w, st.Compose)
+	printNotify(w, st.Notify)
 	if !e.RestoreUntil.IsZero() {
 		fmt.Fprintf(w, "restore window open until %s: starts are restores, kills set no marker\n", e.RestoreUntil.Local().Format(time.TimeOnly))
 	}

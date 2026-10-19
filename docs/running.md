@@ -72,6 +72,7 @@ docker exec whalenurse /whalenurse status [--json]
 docker exec whalenurse /whalenurse pause <project>[/<service>] [--for 2h]   # default 2h; --for 0 = until resume; 30m, 1d work
 docker exec whalenurse /whalenurse resume <project>[/<service>]
 docker exec whalenurse /whalenurse unsuspend <project>[/<service>]
+docker exec whalenurse /whalenurse notify test   # one test message to every notification URL
 ```
 
 - **pause** stops all actions for the project or service. Events are still recorded. A pause expires (default 2h) so a forgotten one cannot disable healing for good; when it ends, or on `resume`, the containers are looked at again within a second. A container outside compose is addressed by its name.
@@ -79,6 +80,27 @@ docker exec whalenurse /whalenurse unsuspend <project>[/<service>]
 - **status** lists every container that has an incident, a pause, flap history, a manual-stop marker or a crash-loop count, the pauses, and the rate-limit budget.
 
 There are no write endpoints on the TCP listener (`WHALENURSE_HTTP_ADDR` serves `/healthz` only): the commands exist only on the unix socket.
+
+## Notifications
+
+Set `WHALENURSE_NOTIFY_URLS` to one or more [Shoutrrr](https://github.com/nicholas-fedor/shoutrrr) URLs (ntfy, Gotify, Discord, Telegram, Slack, Matrix, Pushover, a generic webhook and [many more](https://nicholas-fedor.github.io/shoutrrr/)), separated by whitespace or by a comma that is followed by `scheme://` (a comma inside a URL, as in `ntfy://ntfy.sh/topic?tags=warning,skull`, is part of it):
+
+```yaml
+environment:
+  WHALENURSE_NOTIFY_URLS: >-
+    ntfy://ntfy.example.com/whalenurse-4f9k2
+    discord://TOKEN@WEBHOOKID
+```
+
+**The URLs are secrets** (a webhook id and token, a bot token, a private topic). whalenurse never logs one, never shows one in `status`, `/healthz` or an error, and refers to them as `#1 ntfy`, `#2 discord`. Keep them out of compose files you commit (use an env file).
+
+Check the setup first: `docker exec whalenurse /whalenurse notify test` sends one message to every URL and prints one line per URL, `ok` or `FAILED` with the reason (redacted); it exits 1 if any failed. A dry run (`run --dry-run`) sends notifications too, marked `[dry-run]`.
+
+What is sent: an action taken (`restarted`, `recreated`, or the failure), recovered, **giving up (SUSPENDED) with the cause**, unsuspended again (with the reason), whalenurse's own action rate limit reached (at most once an hour per URL), flapping, **a recreate blocked by the drift guard** (with the reason and what to do), a container that is left down by policy (a `restart: "no"` parent stopped by a host shutdown, with its dependents), a needed recreate that is not available, the version-gate warning, and pause and resume. Each message names the host and the container key, and fits a phone push (title 72, body 360 characters). The same event for the same container is sent once per incident, and that is remembered across restarts (the state store keeps it, 24 h; a dry run keeps it in memory only). Each URL has its own limit (`WHALENURSE_NOTIFY_RATE_LIMIT`, default 20 an hour; the important messages may use all of it, the routine ones half) and its own queue: a slow or dead URL never delays healing or another URL. Failures are logged by position and scheme, counted, and shown in `status`.
+
+**Uptime ping.** With `WHALENURSE_HEARTBEAT_URL` (a healthchecks.io or Uptime Kuma push URL) whalenurse sends a GET every `WHALENURSE_HEARTBEAT_INTERVAL` (default 5m) while it is healthy. When it is not (the events stream has been down too long), it stays quiet, so the monitor raises the alarm by the missing ping.
+
+Decisions and open points: [m3-notes.md](m3-notes.md).
 
 ## Settings
 
@@ -103,8 +125,13 @@ There are no write endpoints on the TCP listener (`WHALENURSE_HTTP_ADDR` serves 
 | `WHALENURSE_CONTROL_SOCKET` | `/run/whalenurse.sock` (`/healthz` and the CLI commands) |
 | `WHALENURSE_DRIFT_GUARD` | `strict` (or `warn`) |
 | `WHALENURSE_COMPOSE_BIN` | empty (see the lookup order above) |
+| `WHALENURSE_NOTIFY_URLS` | empty (none). Shoutrrr URLs; **secret**. See Notifications |
+| `WHALENURSE_NOTIFY_TIMEOUT` | `10s` (one delivery attempt, per URL) |
+| `WHALENURSE_NOTIFY_RATE_LIMIT` | `20` messages/hour per URL |
+| `WHALENURSE_HEARTBEAT_URL` | empty (none). Uptime ping URL; **secret** |
+| `WHALENURSE_HEARTBEAT_INTERVAL` | `5m` |
 
-Durations take `s`, `m`, `h` and also `d` (`30d`). Other `WHALENURSE_*` variables from the plan (`NOTIFY_URLS`, `HTTP_TOKEN`, `HEARTBEAT_URL`) are accepted with a warning and ignored until their milestone. An unknown `WHALENURSE_*` name logs a warning.
+Durations take `s`, `m`, `h` and also `d` (`30d`). `WHALENURSE_HTTP_TOKEN` from the plan is accepted with a warning and ignored until M5. An unknown `WHALENURSE_*` name logs a warning.
 
 ## What it does
 

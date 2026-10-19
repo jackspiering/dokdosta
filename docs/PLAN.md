@@ -1,7 +1,24 @@
-# whalenurse — implementation plan v3.6
+# whalenurse — implementation plan v3.7
 
-Status: v3.6, approved for implementation by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12). It is v3.5 plus the M2b findings below ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.5. Facts and versions are as of 17 Oct 2026 (16 Oct for the prior-art survey).
+Status: **v3.7, approved by the maintainer on 19 Oct 2026** (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.6. Facts and versions are as of 18 Oct 2026 (16 Oct for the prior-art survey).
 Repo: `github.com/jackspiering/whalenurse` (Go module path, GHCR image and binary are all lowercase).
+
+**Changes in v3.7** (from building M3; evidence in [m3-notes.md](m3-notes.md)):
+1. §3.12 (new): the notification rules. Shoutrrr is `github.com/nicholas-fedor/shoutrrr` v0.22.0 (vetted, see §5). `internal/notify` is one more subscriber of the domain event stream. It sends **only** these events: `ActionResult` (action taken), `Recovered`, `Suspended` (giving up, or flapping), `Unsuspended`, `DriftBlocked`, `DriftWarned`, `NotifyOnly`, `NeedsRecreate`, `RateLimited`, `RungsDisabled` (the version-gate warning), `Paused` and `Resumed` (the last two of those, `Unsuspended` and `RateLimited`, are items 13 and 14 below). Everything else stays in the log and the store.
+2. §3.12: delivery never touches healing. The subscriber only queues (the engine publishes under its lock); a dispatcher renders and deduplicates; one worker and one Shoutrrr sender per URL deliver with a timeout and two retries. A failure is logged (redacted) and counted, never published back onto the bus. A panic in a Shoutrrr service is a failed delivery too: Shoutrrr's router runs each service in a goroutine with no `recover` (v0.22.0), which would kill the daemon, so whalenurse locates the service through the router but calls it itself, under a `recover`. On a stop the queue is flushed for up to 5 s.
+3. §3.12, **a hard rule on secrets:** the notification URLs (and the uptime-ping URL) are tokens. They are never logged, never in `status`, `/healthz` or an error: a URL is known by its position and scheme (`#2 discord`), and every error text goes through a redactor that masks the URL, its user info, host, path segments and query values (and their escaped forms). Tests grep the logs, the status (text and JSON), `/healthz`, and the output of `notify test` for tokens placed in the user info, the path and the query.
+4. §3.12, dedupe: one message per (event type, container key, discriminator, **incident**). Events now carry an `incident` attribute (the opening time of the incident the key has open; `engine.AttrIncident`), so a restart of whalenurse does not mix incidents up. Events with no incident (`NotifyOnly`, `NeedsRecreate`, the version-gate warning) are deduplicated for 24 h. `Paused` and `Resumed` are commands and never deduplicated. `DriftBlocked` and its `Suspended(drift)` are one message. The dedupe is **persisted** in the store (item 15).
+5. §3.12, rate limit: `WHALENURSE_NOTIFY_RATE_LIMIT` messages per hour **per URL** (default 20). Routine messages may use half of it; the "important" ones (giving up, flapping, drift blocked, `NotifyOnly`, `NeedsRecreate`, rungs disabled) may use all of it, so a storm of "restarted" cannot swallow "giving up". The messages held back are counted and said in the next message that goes out ("N earlier messages were held back"), never dropped silently.
+6. §3.12, message shape: the title is `host: container headline`, the body starts with the container key (or `host <id>` for a host-wide event), then the cause and the next step. Limits: title 72 runes, body 360 runes (the "held back" note included: the details are cut to make room); a long container name is cut, never the headline or the key. Drift messages carry the guard's reason and a hint (the compose-upgrade wording is a hint, not a block, as in v3.6 item 12).
+7. §3.12, **dry-run sends notifications**, marked `[dry-run]` in the title and in the first line of the body. `whalenurse notify test` sends one message to every URL, one attempt each (no dedupe, no rate limit), and prints one line per URL (`ok` or `FAILED` with the redacted reason); it needs no running daemon, reads the environment like the daemon (so `docker exec` works), and exits non-zero if any URL failed or none is set.
+8. §3.8, §4: the uptime ping. `WHALENURSE_HEARTBEAT_URL` is pinged with a plain GET at once and then every `WHALENURSE_HEARTBEAT_INTERVAL` (default 5m), **only while `/healthz` would say healthy**; when it would not, the ping is skipped so the monitor alarms by the missing ping. (Called "uptime ping" in code and logs, because "heartbeat" already names the persisted `last_seen` of §3.3 (d).)
+9. §4: new variables `WHALENURSE_NOTIFY_TIMEOUT` (10 s per attempt), `WHALENURSE_NOTIFY_RATE_LIMIT` (20), `WHALENURSE_HEARTBEAT_INTERVAL` (5m). `WHALENURSE_NOTIFY_URLS` is split on whitespace or a comma that is followed by `scheme://`, so a comma inside a URL (ntfy `tags=a,b`, Telegram `chats=a,b`) stays in it. An invalid URL is logged (redacted), shown in `status` and skipped; it does not stop whalenurse.
+10. §7 M3: "upgraded during heal (with rollback command)" belongs to the pull rung and moves to **M4** with the `TagMoved` event, because nothing upgrades during a heal before M4. The M3 template list is the one in item 1.
+11. §5: the binary grows from about 19.6 MB to 28.0 MB (`CGO_ENABLED=0`, `-trimpath`), because Shoutrrr's root package registers every service (MQTT, XMPP, websocket and others). Accepted for v1; the alternative is a fork or a vendored subset.
+12. §6: unit tests for templates (every type, worst-case length, host and key always present), dedupe, rate limit, redaction and the token grep; the M3 integration tests as built.
+13. §3.12 (maintainer decision, 19 Oct 2026): **`Unsuspended` is notified, as a routine message** ("unsuspended" with the reason: back to healthy, a `create`, a start after a manual stop, or the `unsuspend` command). `Recovered` still follows `RECOVERY_PERIOD` later. `Suspended` and `Unsuspended` alternate within one incident, so each sent message makes the other one news again (otherwise a second "giving up" in the same incident would be swallowed, and the last word the user heard would be wrong). An `unsuspend` by command is never deduplicated.
+14. §3.12 (maintainer decision): **`RateLimited` (whalenurse's own action budget is spent) is notified**, as an important message, **at most once an hour per URL**, whichever container hit it ("action rate limit reached, healing waits": it is host-wide). The spacing is kept per URL in memory, and a skipped message spends none of the URL's own budget. After a restart of whalenurse the next one may come sooner.
+15. §3.10, §3.12 (maintainer decision): **the dedupe is persisted**: schema 2 adds the table `notified` (message identity, event type, key, time), read when the notifier starts and written as messages are accepted, pruned hourly beyond 24 h. A restart no longer repeats a `NotifyOnly` or an incident's messages. A dry run stores nothing, so its dedupe is in memory. A schema-1 database is migrated in place. An unreadable ledger is logged and the dedupe starts empty.
 
 **Changes in v3.6** (from building M2b; evidence in [m2b-notes.md](m2b-notes.md); the integration tests ran on compose v5.2.0, v5.6.0 and the latest release, on both image stores):
 1. §3.4: the fixed paths are `/host/docker-compose` (the host plugin, mounted read-only) and `/usr/libexec/whalenurse/docker-compose` (the bundled copy). *Bundled* is decided by the path that matched, never by comparing versions, so the version-skew check cannot be fooled. Under systemd the host's plugin directories are searched last. An explicit `WHALENURSE_COMPOSE_BIN` that does not work is an error, not a reason to use another binary. The `compose` package exposes typed methods only (no `down` can be expressed), runs compose from `/` with `COMPOSE_*`, `DOCKER_CONTEXT`, `DOCKER_CONFIG` and `WHALENURSE_*` removed from its environment, and a recreate whose inputs are missing or unreadable is skipped with a message that names the identical-path read-only mount.
@@ -114,7 +131,7 @@ Prior art (checked 16 Oct 2026):
 | Ladder | **One pass per incident** (restart → recreate → optional pull+recreate), then SUSPENDED. A **flap limit** suspends containers with repeated incidents |
 | Compose binary (container mode) | **Host's compose plugin mounted `:ro` first; bundled copy as fallback** |
 | Docker Go client | `github.com/moby/moby/client` + `github.com/moby/moby/api` (`github.com/docker/docker` no longer gets updates as of Engine v29) |
-| Notifications | Shoutrrr; leaning `nicholas-fedor/shoutrrr` (vet in M3) |
+| Notifications | Shoutrrr, `nicholas-fedor/shoutrrr` v0.22.0 (vetted in M3, v3.7; §3.12) |
 | Store | SQLite via `modernc.org/sqlite` (recommended in review; confirmed in M2a, v1.60.1) |
 | Dashboard | Read-only, off by default, built on a versioned JSON API; default port 8484 |
 | Control in v1 | CLI over a local unix socket (pause/resume/unsuspend/status). No network-exposed write endpoints |
@@ -381,7 +398,7 @@ Record a "tag moved by whalenurse" entry, because other stacks sharing the tag w
 - Rate limit, flap limit, cooldown backoff, `--dry-run` (log and notify only, with a dashboard banner).
 - Events-stream reconnect: resubscribe with `since=<last event time>`; the poll re-syncs state.
 - `/healthz` fails when the events stream has been down longer than a threshold. Use it as whalenurse's own healthcheck.
-- Optional heartbeat: ping `WHALENURSE_HEARTBEAT_URL` every few minutes.
+- Optional uptime ping: `WHALENURSE_HEARTBEAT_URL` every `WHALENURSE_HEARTBEAT_INTERVAL` (default 5m), only while healthy (§3.12).
 - Structured JSON logs.
 
 ### 3.9 Security
@@ -397,7 +414,7 @@ Record a "tag moved by whalenurse" entry, because other stacks sharing the tag w
 
 ### 3.10 Store
 - SQLite via `modernc.org/sqlite` in `WHALENURSE_DATA_DIR` (default `/data`).
-- Tables: per-key state, incidents and flap history, events (the autoincrement ID doubles as the `since` cursor), and notifications sent.
+- Tables: per-key state, incidents and flap history, events (the autoincrement ID doubles as the `since` cursor), and notifications sent (`notified`, the dedupe ledger of §3.12; schema 2, built in M3).
 - Retention: `WHALENURSE_HISTORY_RETENTION` (default 30d).
 
 ### 3.11 API and dashboard (read-only)
@@ -411,6 +428,38 @@ Record a "tag moved by whalenurse" entry, because other stacks sharing the tag w
 - **Tech:** `html/template`, a little vanilla JS (or vendored htmx), assets embedded with `embed`. No Node build.
 - **Hub readiness:** `host` in every record, a versioned API, monotonic per-host event IDs, UTC timestamps.
 
+### 3.12 Notifications (M3, v3.7)
+
+`internal/notify` is one more subscriber of the domain event stream, next to the log and the store, so what is sent cannot disagree with what is recorded.
+
+- **What is sent.** Only the events below. Everything else (`IncidentOpened`, `ActionStarted`, `RungUnavailable`, the manual-stop and restore events ...) stays in the log and the store.
+
+| Event | Message | Weight |
+|---|---|---|
+| `ActionResult` | action taken: `restarted`, `recreated`, `started`, or `restart failed` with the error; says why it was started and the rung | routine |
+| `Recovered` | recovered | routine |
+| `Unsuspended` | unsuspended, with the reason (v3.7 item 13) | routine |
+| `Suspended`, reason `ladder` | giving up, SUSPENDED, with the cause and `whalenurse unsuspend <scope>` | important |
+| `Suspended`, reason `flapping` | flapping, SUSPENDED | important |
+| `Suspended`, reason `drift` | *not sent*: `DriftBlocked` just before it says the same | |
+| `DriftBlocked` | recreate blocked, with the guard's reason, a hint (compose upgraded or skewed, tag moved, file changed) and the unsuspend command | important |
+| `DriftWarned` | recreating despite drift (`WHALENURSE_DRIFT_GUARD=warn`) | routine |
+| `NotifyOnly` | needs attention, nothing was done: a `restart: "no"` parent left down by a host shutdown, **with the dependents that stay down with it** | important |
+| `NeedsRecreate` | needs a recreate that is not available (version gate, no usable compose inputs, `recreate` not in `whalenurse.actions`) | important |
+| `RateLimited` | action rate limit reached, healing waits; at most once an hour per URL (v3.7 item 14) | important |
+| `RungsDisabled` | the version-gate warning: recreate and pull rungs disabled, and why | important |
+| `Paused`, `Resumed` | paused / resumed `<scope>` (including expiry) | routine |
+
+- **Shape.** Title: `[dry-run] host: container headline`. Body: the container key (or `host <id>`), then the cause and the next step. At most 72 runes of title and 360 of body; a long container name is cut, never the headline or the key line.
+- **Delivery never touches healing.** The engine publishes events under its lock, so the subscriber only queues (a full queue drops and counts). One dispatcher renders and deduplicates. **One worker and one Shoutrrr sender per URL** deliver in order, each attempt under `WHALENURSE_NOTIFY_TIMEOUT`, with two retries (after 2 s and 10 s). A hung URL delays nothing, not even another URL, and a panic inside a service is a failed delivery (whalenurse calls the located service itself under a `recover`, because Shoutrrr's router does not). A failure is logged and counted per URL; it is never published as a domain event. On a stop the queue is delivered for up to 5 s, then what is still in flight is aborted.
+- **Secrets.** The URLs hold tokens (a Discord webhook id and token are the host and the path, a Telegram bot token is the user name, ntfy and Gotify tokens are a path or a query value). A URL is only ever shown as its position and scheme, `#2 discord`. Every error text goes through a redactor built from the configured URLs that masks the URL, its user info, host, path segments (of 6 runes or more) and query values (of 4 or more), in their escaped forms too; Shoutrrr redacts its own errors since v0.22.0 as well, and this is a second layer. `config` never quotes these variables in an error or a warning. `status`, `/healthz` and `notify test` show counts and redacted reasons only.
+- **Dedupe.** One message per (event type, container key, discriminator, incident); the discriminator is the action and rung for `ActionResult`, the reason for `Suspended`, the findings for the drift events. The incident is the `incident` attribute the engine puts on every event of a key with an open incident (the incident's opening time), so the same event within one incident is said once, a new incident is news again, and a restart of whalenurse does not mix them up. Events with no incident are deduplicated for 24 h. Deliberate commands (`Paused`, `Resumed`, an `unsuspend` command) are never deduplicated. `Suspended` and `Unsuspended` make each other news again. **The dedupe is persisted** in the store's `notified` table (§3.10) and survives a restart.
+- **Rate limit.** `WHALENURSE_NOTIFY_RATE_LIMIT` messages per hour per URL (default 20), a sliding window. Routine messages may use the first half, important ones all of it. Messages held back are counted (`status` shows them) and the next message that goes out says how many ("N earlier messages were held back by the rate limit").
+- **Dry-run sends notifications**, marked `[dry-run]` in the title and in the first line of the body: that is how the maintainer checks the setup.
+- **`whalenurse notify test`:** one test message to every URL, one attempt each, no dedupe, no rate limit; one line per URL, `ok (143ms)` or `FAILED <redacted reason>`; exit 1 if any failed or `WHALENURSE_NOTIFY_URLS` is empty. It reads the environment, so `docker exec whalenurse /whalenurse notify test` tests what the daemon has, and it needs no running daemon.
+- **Uptime ping.** `WHALENURSE_HEARTBEAT_URL` (healthchecks.io, Uptime Kuma push) gets a plain GET at once and then every `WHALENURSE_HEARTBEAT_INTERVAL`, with the same timeout, **only while the daemon is healthy** (the `/healthz` condition); otherwise the ping is skipped, so the monitor alarms by the missing ping. The URL is a secret and is redacted like the others.
+- **`WHALENURSE_NOTIFY_URLS`** holds several URLs separated by whitespace or by a comma that is followed by `scheme://`. A comma inside a URL (`tags=warning,skull`, `chats=a,b`) is part of it. A URL that Shoutrrr rejects is logged by position and scheme, shown as `INVALID` in `status` and skipped.
+
 ## 4. Configuration (v1)
 
 Initial defaults; tune them after M0.
@@ -419,7 +468,9 @@ Initial defaults; tune them after M0.
 
 | Variable | Default |
 |---|---|
-| `WHALENURSE_NOTIFY_URLS` | — (Shoutrrr URLs, comma-separated) |
+| `WHALENURSE_NOTIFY_URLS` | — (Shoutrrr URLs, separated by whitespace or a comma before `scheme://`; secret; from M3) |
+| `WHALENURSE_NOTIFY_TIMEOUT` | `10s` (one delivery attempt, per URL; from M3) |
+| `WHALENURSE_NOTIFY_RATE_LIMIT` | `20` (messages/hour per URL; from M3) |
 | `WHALENURSE_DRY_RUN` | `false` |
 | `WHALENURSE_MODE` | `label` (or `all`) |
 | `WHALENURSE_POLL_INTERVAL` | `60s` |
@@ -439,7 +490,8 @@ Initial defaults; tune them after M0.
 | `WHALENURSE_CONTROL_SOCKET` | `/run/whalenurse.sock` (unix socket for `/healthz` and, from M2a, the CLI; added in M1) |
 | `WHALENURSE_HTTP_TOKEN` | — |
 | `WHALENURSE_HISTORY_RETENTION` | `30d` |
-| `WHALENURSE_HEARTBEAT_URL` | — |
+| `WHALENURSE_HEARTBEAT_URL` | — (uptime ping, secret; from M3) |
+| `WHALENURSE_HEARTBEAT_INTERVAL` | `5m` (from M3) |
 | `WHALENURSE_LOG_LEVEL` | `info` |
 
 **Labels:**
@@ -453,7 +505,7 @@ Initial defaults; tune them after M0.
 | `whalenurse.cooldown` | per-container override |
 | `whalenurse.flap-limit` | per-container override |
 
-**CLI:** `whalenurse run` (default), `pause`, `resume`, `unsuspend`, `status`.
+**CLI:** `whalenurse run` (default), `pause`, `resume`, `unsuspend`, `status`, `notify test` (v3.7).
 
 **Version minimums (fixed, not configurable):** Engine v25 for rung 1 (restart). Rungs 2 and 3 and the drift guard need Engine ≥ 28.1 and Compose ≥ v5.2.0. whalenurse checks them at startup, logs one warning if either is lower, disables rungs 2 and 3, and ends the ladder with notify + SUSPENDED after rung 1 (§3.6). `WHALENURSE_DRIFT_GUARD=warn` does not bypass this: below the minimum there is no recreate to guard.
 
@@ -479,7 +531,7 @@ internal/config/     env + label parsing
 - **`github.com/moby/moby/client` + `/api`.** The client was at v0.6.2 on 8 Oct 2026. It is pre-1.0, so minor versions can break; keep it behind `internal/docker`. API negotiation is the default (`WithAPIVersionNegotiation` is deprecated), and `Events()` returns a single `EventsResult`.
 - **Minimum Docker Engine v25** for rung 1 (restart). Engine v29 rejects API versions below 1.44. Rungs 2 and 3 and the drift guard require Engine ≥ 28.1 and Compose ≥ v5.2.0 (§3.6).
 - **`modernc.org/sqlite`.**
-- **`github.com/nicholas-fedor/shoutrrr`.** Was at v0.17.0 in Aug 2026; vet it in M3.
+- **`github.com/nicholas-fedor/shoutrrr`: vetted in M3 (18 Oct 2026), v0.22.0 (13 Oct 2026).** MIT. A maintained fork of `containrrr/shoutrrr`, whose last release is v0.8.0 (Aug 2023) and last commit May 2026; the fork has released weekly since Sep 2026 and commits daily, but is effectively one maintainer (30 contributors in all). It supports ntfy, Gotify, Discord, Telegram, Slack, Matrix, Mattermost, Rocket.Chat, Teams, Google Chat, Zulip, Signal, XMPP, Lark, WeCom, Pushover, Pushbullet, SignalGrid, IFTTT, Bark, Join, Home Assistant, MQTT, SMTP, Twilio, OpsGenie, PagerDuty, Notifiarr and a generic webhook (plus a logger). v0.22.0 has context-aware sends, a send budget per service and redacted errors and logs; whalenurse builds one router per URL with `CreateSenderWithOptions` and `SendContext` (the non-options constructors are deprecated). The root package registers every service, which costs about 8.5 MB of binary (v3.7 item 11).
 - No cron library in v1. If R4 needs one, `robfig/cron` is unmaintained (last release Jan 2020); use `go-co-op/gocron/v2` or a cron-expression parser plus your own timer.
 
 ## 6. Testing
@@ -509,7 +561,8 @@ internal/config/     env + label parsing
 - the startup version check: Engine below 28.1 or compose below v5.2.0 logs one warning, disables rungs 2 and 3, and an unhealthy container ends at notify + SUSPENDED after rung 1; with both at the minimum nothing is disabled;
 - stale-reference classification: `No such container` → recreate; `cannot join network namespace of a non running container` → heal the parent first, then restart the dependent;
 - a container still `restarting` after GRACE is re-inspected by the poll;
-- dependents are suppressed while the parent's incident is open.
+- dependents are suppressed while the parent's incident is open;
+- notifications (M3): the template of every notified event, with host and key always present and the limits held under worst-case text; events outside the list are not sent; dedupe per incident, per key, for 24 h without an incident, never for pause and resume or an unsuspend command, and one message for a drift suspension; the dedupe surviving a restart (real store, and the schema-1 migration); `Unsuspended` and `Suspended` alternating; `RateLimited` once an hour per URL; the per-URL rate limit with the critical reserve and the "held back" note; a failing URL is retried, counted and logged redacted; a hung URL, a full queue and a stalled dispatcher never block `Handle`, a panicking service is a failed delivery, and one URL never delays another; shutdown flushes; the redactor over every URL shape (user info, path, query, host, escaped forms, an unparsable URL), and the grep of the logs, `status`, `/healthz`, the socket status and the `notify test` output for tokens; URL splitting; the uptime ping (healthy only, failures redacted); the whole ladder through the daemon to a recording sender, and through Shoutrrr's generic service to a real HTTP receiver.
 
 **Other tests:**
 - **Rules:** scrubbed `docker inspect` fixtures, including captures from M0.
@@ -526,7 +579,7 @@ internal/config/     env + label parsing
 - **M2b:** the config-drift guard blocks a recreate after a compose edit;
 - **M2b:** the image-drift guard blocks a recreate after a re-tag, and does not block an unchanged container, on both image stores (the comparator of §3.6);
 - **M2b:** a ref-holding dependent skips the hash check and is recreated after its parent is;
-- **M3:** notifications reach a local webhook receiver;
+- **M3 (done; CI run 39121767631, all six legs):** notifications reach a local webhook receiver through Shoutrrr's generic service: the ladder ends in SUSPENDED (restart, recreate and one "giving up" with the cause, a dead URL beside the working one changing nothing), a recovery, and a dry run (marked, changes nothing);
 - **M4:** the pull rung, against a local `registry:2`.
 
 **CI matrix (built in M2b: 2 stores × 3 compose releases = 6 integration jobs):** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`test/m0/m0b/image-drift.sh`) runs on both stores today.
@@ -620,11 +673,11 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 - CI: the full compose matrix of §6 (v5.2.0, v5.6.0, latest) on both stores.
 - **Done when:** the M2b integration tests in §6 pass.
 
-### M3 — Notifications
-- Vet the Shoutrrr fork at the source: latest release, maintenance, licence.
-- Templates: action taken, recovered, giving up (with cause), flapping, drift blocked, upgraded during heal (with rollback command).
-- Dedupe and the optional heartbeat.
-- **Done when:** notifications are verified against a local webhook receiver in CI.
+### M3 — Notifications (done; v3.7 proposed)
+- Vet the Shoutrrr fork at the source: latest release, maintenance, licence. Done: §5.
+- `internal/notify` as a subscriber of the event stream (§3.12): templates for action taken, recovered, giving up (with the cause), flapping, drift blocked (with the reason and the compose-upgrade hint), `NotifyOnly` (including a `restart: "no"` parent left down with its dependents), the version-gate warning, paused and resumed. Dedupe per incident, a per-URL rate limit, the optional uptime ping, `whalenurse notify test`, secrets never shown.
+- Moved to M4: "upgraded during heal (with rollback command)" (§3.7), with `TagMoved`.
+- **Done when:** notifications are verified against a local webhook receiver in CI (§6).
 
 ### M4 — Pull rung
 - §3.7 end to end, including the `TagMoved` record and the dependents step.

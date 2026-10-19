@@ -8,8 +8,7 @@ import (
 )
 
 // LogSink returns the domain-event subscriber that writes the structured log.
-// "Notify" means this log line plus the domain event itself until M3 (Shoutrrr). Because it reads the same stream the store and API will, the
-// log cannot disagree with them.
+// It reads the same stream the store and the notifier (internal/notify) do, so the log cannot disagree with them.
 func LogSink(log *slog.Logger) func(engine.Event) {
 	return func(e engine.Event) {
 		level := slog.LevelInfo

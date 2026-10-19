@@ -30,6 +30,10 @@ services:
       WHALENURSE_DRY_RUN: "true" # log decisions only; remove once they look right
       # WHALENURSE_DRIFT_GUARD: strict # strict (default): a recreate that would deploy a compose edit or a moved image tag
       #                                # is skipped and the container is SUSPENDED; warn: recreate anyway and say so
+      # Notifications (Shoutrrr URLs; they hold tokens, so keep them in an env_file, not in a file you commit). Check them
+      # with: docker exec whalenurse /whalenurse notify test
+      # WHALENURSE_NOTIFY_URLS: "ntfy://ntfy.example.com/whalenurse-4f9k2 discord://TOKEN@WEBHOOKID"
+      # WHALENURSE_HEARTBEAT_URL: https://hc-ping.com/your-uuid # a ping every 5m while whalenurse is healthy
 
   # An opted-in container: whalenurse restarts it when it turns unhealthy, recreates it from its compose files if that does
   # not help, and suspends it if nothing does. network_mode: service:<parent> sidecars follow their parent.

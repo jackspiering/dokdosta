@@ -31,7 +31,7 @@ func (okInfo) Sys() any           { return nil }
 func okStat(string) (os.FileInfo, error) { return okInfo{}, nil }
 
 // newCompose builds a harness with a compose fake wired in. The Docker fake reports server (zero: Engine 29.9.1).
-func newCompose(t *testing.T, tweak func(*config.Global), cf *compose.Fake, server docker.ServerInfo) *cfH {
+func newCompose(t *testing.T, tweak func(*config.Global), cf *compose.Fake, server docker.ServerInfo, more ...func(*Options)) *cfH {
 	t.Helper()
 	if cf == nil {
 		cf = compose.NewFake()
@@ -56,6 +56,9 @@ func newCompose(t *testing.T, tweak func(*config.Global), cf *compose.Fake, serv
 			o.ComposeActor = compose.DryRun{}
 		}
 		o.Log = slog.New(slog.NewTextHandler(logbuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+		for _, fn := range more {
+			fn(o)
+		}
 	})
 	return &cfH{harness: h, cf: cf, log: logbuf}
 }

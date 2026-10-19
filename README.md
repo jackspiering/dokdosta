@@ -8,7 +8,7 @@
 
 When an opted-in container turns unhealthy, or stops and stays stopped, whalenurse restarts it. If that doesn't help, it recreates it from the stack's own compose files, together with any `network_mode: service:` sidecars that depend on it. If that fails too, it stops trying and tells you why.
 
-> **Status: M2b (compose recreate, the drift guard, dependents) is built; nothing is released yet.** `whalenurse run` restarts opted-in containers that go unhealthy or stop, recreates them from their compose files if that does not help, repairs `network_mode` sidecars, and suspends what it cannot fix. Notifications, the pull rung and the dashboard are still planned. See [docs/running.md](docs/running.md) for what works today and [docs/PLAN.md](docs/PLAN.md) for the design and milestones.
+> **Status: M3 (notifications) is built on top of M2b (compose recreate, the drift guard, dependents); nothing is released yet.** `whalenurse run` restarts opted-in containers that go unhealthy or stop, recreates them from their compose files if that does not help, repairs `network_mode` sidecars, and suspends what it cannot fix, telling you through Shoutrrr (ntfy, Gotify, Discord, Telegram and more). The pull rung and the dashboard are still planned. See [docs/running.md](docs/running.md) for what works today and [docs/PLAN.md](docs/PLAN.md) for the design and milestones.
 
 ## Why
 
