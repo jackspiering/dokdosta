@@ -61,7 +61,8 @@ wait_for 60 "the sidecar is healthy" is_healthy bop-sidecar
 wait_for 90 "whalenurse is healthy" is_healthy whalenurse
 wait_for 30 "the dashboard answers on localhost" curl -fsS -o /dev/null http://127.0.0.1:8484/
 api /api/v1/status | jq -e '.host == "demo"' >/dev/null
-curl -fsS http://127.0.0.1:8484/containers | grep -q "bop"
+listed() { curl -fsS http://127.0.0.1:8484/containers | grep -q bop; }
+wait_for 60 "the dashboard lists bop" listed
 
 step "break bop: unhealthy, and sticky so that a restart does not fix it"
 old_bop=$(cid bop)

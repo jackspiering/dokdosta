@@ -100,6 +100,16 @@ repository's *immutable releases* setting works (an existing immutable release m
     SC2086 note; the comment is reworded and the intended `disable=SC2086` written. The `workflows` job now runs actionlint.
 15. A broken anchor in `docs/m0-findings.md` (`#verdicts`, the heading is "4. Verdicts") was fixed because the new link test
     found it.
+16. **Image annotations are scoped** (found by the first CI run of the snapshot job): a snapshot builds one image per platform and
+    BuildKit refuses *index* annotations for a single-platform export ("index annotations not supported for single platform
+    export"). The per-platform `manifest:` annotations are always set; the `index:` ones are templated to an empty value in a
+    snapshot (GoReleaser ignores empty values) and set on a real release. Checked by rendering the buildx command of a snapshot
+    with a stub `docker` on `PATH` (six `manifest:` annotations, no `index:`); the real release's index annotations are not
+    rendered anywhere until a tag, which is one more reason for the `-rc` rehearsal. The labels (`org.opencontainers.image.source`
+    among them) are set in both.
+17. **The demo sets `WHALENURSE_STARTUP_SETTLE: 10s`** (the 2 m default is for a host that has just booted), and the CI demo job
+    waits for the dashboard to list bop rather than assuming it does at once (found by the first run of the demo job, which
+    got as far as "everything healthy, dashboard answers" on the image built from the commit).
 
 ## What was verified, and how
 

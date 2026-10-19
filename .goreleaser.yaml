@@ -73,13 +73,22 @@ dockers_v2:
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
       org.opencontainers.image.created: "{{ .Date }}"
+    # Annotations: on every platform manifest, and on the index of a real (multi-platform) release. A snapshot builds one image
+    # per platform, and BuildKit refuses index annotations for a single-platform export, so the index values are empty (and
+    # GoReleaser ignores an empty value) in a snapshot.
     annotations:
-      "index,manifest:org.opencontainers.image.title": whalenurse
-      "index,manifest:org.opencontainers.image.description": "Compose-aware self-healing for Docker hosts"
-      "index,manifest:org.opencontainers.image.source": "https://github.com/jackspiering/whalenurse"
-      "index,manifest:org.opencontainers.image.licenses": MIT
-      "index,manifest:org.opencontainers.image.version": "{{ .Version }}"
-      "index,manifest:org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "manifest:org.opencontainers.image.title": whalenurse
+      "manifest:org.opencontainers.image.description": "Compose-aware self-healing for Docker hosts"
+      "manifest:org.opencontainers.image.source": "https://github.com/jackspiering/whalenurse"
+      "manifest:org.opencontainers.image.licenses": MIT
+      "manifest:org.opencontainers.image.version": "{{ .Version }}"
+      "manifest:org.opencontainers.image.revision": "{{ .FullCommit }}"
+      "index:org.opencontainers.image.title": "{{ if not .IsSnapshot }}whalenurse{{ end }}"
+      "index:org.opencontainers.image.description": "{{ if not .IsSnapshot }}Compose-aware self-healing for Docker hosts{{ end }}"
+      "index:org.opencontainers.image.source": "{{ if not .IsSnapshot }}https://github.com/jackspiering/whalenurse{{ end }}"
+      "index:org.opencontainers.image.licenses": "{{ if not .IsSnapshot }}MIT{{ end }}"
+      "index:org.opencontainers.image.version": "{{ if not .IsSnapshot }}{{ .Version }}{{ end }}"
+      "index:org.opencontainers.image.revision": "{{ if not .IsSnapshot }}{{ .FullCommit }}{{ end }}"
 
 # digests.txt: the image digests, which the workflow attests (actions/attest) and cosign signs.
 docker_digest:

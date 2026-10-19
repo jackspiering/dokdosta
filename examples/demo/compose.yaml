@@ -34,10 +34,11 @@ services:
     environment:
       WHALENURSE_HOST_ID: demo
       WHALENURSE_HTTP_ADDR: ":8484"
-      # Short timings for the demo only; the defaults (30s, 30s, 60s) suit a real host.
+      # Short timings for the demo only; the defaults (30s grace, 30s cooldown, 60s poll, 2m settle) suit a real host.
       WHALENURSE_GRACE: 5s
       WHALENURSE_COOLDOWN: 10s
       WHALENURSE_POLL_INTERVAL: 15s
+      WHALENURSE_STARTUP_SETTLE: 10s
 
   # bop: healthy until told otherwise. `bop unhealthy sticky=true` makes /healthz fail and survive a restart, so the restart
   # rung cannot fix it and the recreate rung has to.
