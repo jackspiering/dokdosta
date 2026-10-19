@@ -144,10 +144,11 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		if by := attr("moved_by"); by != "" {
 			detail = append(detail, "tag moved by whalenurse's pull rung: "+scopeOf(by)+" at "+movedAt(attr("moved_at")))
 		}
+		// The next step comes before the hint: when the body is full it is the hint that gives way, never the command.
+		detail = append(detail, "then: "+unsuspendCmd(scope))
 		if hint := driftHint(findings, scope); hint != "" {
 			detail = append(detail, hint)
 		}
-		detail = append(detail, "then: "+unsuspendCmd(scope))
 
 	case engine.DriftWarned:
 		headline = "recreating despite drift (WHALENURSE_DRIFT_GUARD=warn)"

@@ -1,0 +1,64 @@
+# M4 notes
+
+Decisions, deviations and open questions for milestone M4 (the pull rung) of [PLAN.md](PLAN.md). The rules that changed are in the plan as **v3.8** (proposed 19 Oct 2026, for the maintainer's review). Where the plan was ambiguous this file says what was chosen and why, so the maintainer can overrule it.
+
+## Upstream check (19 Oct 2026)
+
+| Item | Result | Source |
+|---|---|---|
+| Docker Compose | **v5.6.0** (2 Oct 2026) is still the latest release; `main` is 127 commits ahead | GitHub API |
+| `compose pull` and `pull_policy` | **Not what the plan assumed.** `pull <svc>` skips an image whose `pull_policy` is `never` or `build` in every release, and `missing`/`if_not_present` when the image is already present: v5.2.0 skips for every tag; v5.6.0 and `main` still refresh a service with **no** policy and a `latest` tag, and skip other tags under `missing`. A skipped pull is silent (a `Skipped` event), so the digest does not change and a bare `pull` would make the rung say "no newer image" for an image it never looked up | `pkg/compose/pull.go` at v5.2.0, v5.6.0, `main`; `cmd/compose/pull.go` |
+| `pull --policy` | `--policy always` exists in v5.2.0 and v5.6.0 and sets `PullPolicy` on every service of the project before the pull, so it overrides `never`/`build`/`missing`. whalenurse therefore runs `pull --policy always <svc>` | `cmd/compose/pull.go` (lines 76, 89-94) |
+| `pull` and dependencies | `--include-deps` is off by default: `pull <svc>` pulls that one service's image | `cmd/compose/pull.go` |
+| `registry:2` | `library/registry:2` is current on Docker Hub (last pushed Feb 2025; there is also a `registry:3`); the task names `registry:2`, so that is what the tests use | Docker Hub API |
+| Go, moby client, sqlite, shoutrrr | unchanged since M3 (Go 1.27.2) | M3 notes |
+
+## Decisions the plan leaves open
+
+1. **`--policy always`** (plan v3.8 item 1; a deviation from the literal "compose pull <svc>"). The alternative, a bare `pull`, fails in the way the upstream check shows. The cost: `whalenurse.heal.pull=true` also overrides a deliberate `pull_policy: never`. I read the label as the more specific, explicit opt-in; a service that is built locally and has no registry copy simply fails the pull (an ordinary failed action, no harm).
+2. **What "changed" means.** The platform image ID of the reference (`image inspect --platform linux/<arch>`, the drift guard's comparator), read before and after: it is what will run. An index that gained another platform is not a change. The rollback uses the **plain** ID read before the pull (the index digest on the containerd store), because a platform manifest digest may not be taggable. The integration test runs the rollback as pasted, on both stores.
+3. **The guard before the pull.** Checks 1 and 3 only, as the task says. Compose's oracle says `Recreate` for a moved tag too, so a `Recreate` before a pull is a config finding unless `config --hash` still matches the label and the explicit comparison shows the image moved. That makes `restart,pull` ladders (see 9) work when another stack moved the tag. In the normal ladder (restart, recreate, pull) the guard is nearly a no-op, because rung 2 has just recreated the container and rung 2's own guard SUSPENDS on a moved tag (v3.6 item 6), so a pull-labelled container whose tag was moved by a stack beside it is SUSPENDED at rung 2 with a drift block, not pulled. That is the approved v3.6 behaviour; see open question 2.
+4. **Unchanged digest: immediate SUSPENDED.** `Result.Exhausted` ends the ladder without a cooldown, because nothing about the container changed. The giving-up message carries the cause; the pull's own `ActionResult` (outcome `unchanged`) is not notified, to keep it one message.
+5. **Changed digest: the move is recorded before the `up`.** The tag moved for every stack that shares it whether or not the `up` works. `TagMoved` is emitted after the `up`, so the message can say whether the recreate worked; if it failed, the title says "pulled a newer image, but the recreate failed" and the rollback is still given. "Upgraded" is only said for a container that was really replaced: after the non-forced `up` the container ID must have changed and the container must run, otherwise it is recreated with `--force-recreate` (`UpgradePostCheck`), exactly as the dependents step does.
+6. **Where the record lives.** The store's meta key `tagmoved:<normalized ref>` (JSON), not a new table: no schema migration, one row per reference, overwritten when the tag moves again. A dry run stores nothing (it never pulls). The reference is normalized (`nginx`, `nginx:latest`, `docker.io/library/nginx:latest`), and a move is claimed only while the reference still resolves to what that pull produced.
+7. **The upgrade message's size.** The rollback is two lines, `docker image tag <64-hex id> <ref>` and `docker compose -p ... --project-directory ... -f ... up -d --no-deps --pull never <svc>`. With real paths that is over the per-line cut (140) and can pass the body limit (360), and a command cut with an ellipsis is not the exact command. So those lines are pinned: never cut, and the other lines give way to them. For a message with pinned lines the body limit is 720 (plan v3.8 item 6, a change to the v3.7 size rule); the title limit is unchanged. A test pins the worst case (80-rune reference, 40-rune project, 60 and 70-rune paths) under 720. If a rollback is longer than that it is still kept whole. When there was no local copy of the old image, the message says "no rollback" instead of printing a command that cannot work.
+8. **Weight of the upgrade message: important.** It changes what is running and what every stack sharing the tag will see, and it carries the rollback, so it uses the reserve of the rate limit.
+9. **`whalenurse.actions=restart` plus `heal.pull=true`** gives the ladder `restart, pull` (the label appends rung 3 to whatever `actions` says; plan §3.2). The plain reading of "rung 3 runs only after restart and recreate failed" would require rung 2 in the ladder. I kept the label's meaning and did not add a rule; this is open question 1.
+10. **The loop is synchronous.** A pull blocks the loop for as long as it takes (bounded at 10 min; a recreate is bounded at 5 min and always was). `/healthz` and with it the uptime ping used to say "main loop silent" after `3*POLL_INTERVAL + 2 min` (5 min by default). `Healthy()` now tolerates an action in flight for up to 11 minutes (a unit test pins both sides). Not changed: `last_seen` is not written during a pull, so if whalenurse is killed in the middle of one, the shutdown window starts up to 10 minutes earlier than the kill (conservative for rule 4).
+11. **Private registries are unsupported** (plan v3.8 item 8): the compose child has no `DOCKER_CONFIG` and the image has no credentials. A login-protected registry makes the pull fail as an ordinary failed action ("pull failed", with compose's error). Documenting it is all M4 does.
+12. **Compose's `pull` of a service with `build:` and `image:`** is not special-cased: a pull failure ends as an ordinary failed action, and a pull that finds the registry copy changed is followed by the `up --no-build`.
+
+## What M4 built
+
+- `internal/compose`: `Actor.Pull` (`pull --policy always <svc>`), `DryRun.Pull`, `Fake.Pull`/`OnPull`, `GuardInput.Pull` and `checkBeforePull`, `RollbackCommands`.
+- `internal/rules`: `ActionPull` (planned by the ladder, never by the rules).
+- `internal/engine`: rung 3 in `heal` (rate-limited, `RungUnavailable`), `Result.Attrs` and `Result.Exhausted`, `BlockedWith`, `TagMoved` and `UpgradePostCheck`.
+- `internal/daemon`: `executePull`, the move record (`tagMove`, `normalizeRef`, `moverOf`), `guardVerdict` (shared by rungs 2 and 3, adds the mover to image findings), `unavailable` covers both rungs, `Healthy` tolerates an action in flight.
+- `internal/notify`: the upgrade message, the mover line on drift blocks, `pull` verbs, the pinned lines (`MaxBodyPinned`).
+- `test/integration`: the registry fixture, six M4 tests, the guard extensions and their unit tests.
+
+## Tests
+
+- Unit (`go test -race ./...`, no Docker): `compose` (the exact pull command line, the rollback quoting, the guard before a pull: clean, edited, image-only move allowed, hash unreadable blocks, a Recreate that is neither blocks, hash fallback, reference holders, the skew check kept), `engine` (rung 3 reached after restart and recreate with the cooldown doubled again, none without the label, unavailable together with rung 2, rate-limited, an unchanged pull suspends at once and stays, a failed pull does not, a dry run does not), `daemon` (`m4_test.go`: no label no pull; a restart that helps never reaches the pull; unchanged; upgraded with the sidecar recreated against the new parent, the compose call order and the `TagMoved` attributes; the force-recreate fallback; the tag moved but the up failed; a failing pull; the guard blocking before the pull; a moved tag allowed; a drift block on a shared tag naming the mover, and surviving a restart through the store's meta; no claim once the tag moved again; reference normalization; dry-run; the version gate; non-compose containers; health during an action), `notify` (the upgrade message with both commands whole, the failed-recreate variant, no rollback without an old image, the worst case under 720, no double messages, the mover line, dedupe per incident).
+- Mutation checks (by hand): running the pre-pull guard in rung-2 mode fails `TestPullAllowsATagThatMovedUnderTheContainer`; dropping the pull from `unavailable` fails the version-gate and non-compose tests; skipping the post-check fails the force-recreate test.
+- Integration (CI only, behind the guard, `whalenurse-test-*` only): see below.
+
+## What CI covered
+
+(filled in after the CI run)
+
+## Not verified
+
+(filled in after the CI run)
+
+## Open questions for the maintainer
+
+1. **`actions=restart` with `heal.pull=true`**: should rung 3 require rung 2 in the ladder (pull only after a recreate was at least possible)? Today the label appends the rung to whatever `actions` says (decision 9).
+2. **A pull-labelled container whose tag was moved by another stack** is SUSPENDED by rung 2's drift guard (v3.6 item 6) and never reaches its own pull, although a pull would take the very image that moved. Should rung 2's guard let an image-only move through for a container that has `heal.pull=true` (the pull is about to move it anyway), as the pull's own guard does? It is a one-line change, but it changes an approved v3.6 rule, so I did not make it.
+3. **A sidecar that shares the pulled image reference** (not only the parent): after the parent's pull moves the tag, the sidecar's own check 2 would block its dependents-step recreate ("the tag moved"), and it would stay stale. The tests give the sidecar a different image (busybox). Should the dependents step be allowed to take a tag that the parent's pull just moved? Not built; not obvious that it should be.
+4. **`--policy always` overriding a deliberate `pull_policy: never`** (decision 1).
+
+## [maintainer]
+
+- Review plan v3.8 (items 1 to 10) and the four questions above.
+- Nothing needs to be done on the real Docker host: the pull rung was exercised only against a loopback registry in CI.

@@ -159,3 +159,18 @@ func TestUpgradeIsDedupedPerIncident(t *testing.T) {
 		t.Fatalf("%q %q %q", d1, d2, d3)
 	}
 }
+
+// With the real, long image reference of a drift block that names the mover, the unsuspend command is still in the body
+// (found by CI: the hint and the reason had pushed it out). The hint is what gives way.
+func TestDriftBlockWithAMoverKeepsTheUnsuspendCommand(t *testing.T) {
+	ref := "127.0.0.1:32772/whalenurse-test/shared:latest"
+	findings := "image: image " + ref + " now resolves to c42447ac2b0e, but this container was created from dda213a6a6b0: the tag moved (whalenurse moved this tag: itest/whalenurse-test-pull-a-015936/app/1 pulled it at 2026-10-19T07:45:02Z)"
+	e := ev(engine.DriftBlocked, "itest/whalenurse-test-pull-b-3a0f41/api/1", "x", map[string]string{"findings": findings, "moved_by": "itest/whalenurse-test-pull-a-015936/app/1", "moved_at": "2026-10-19T07:45:02Z"})
+	m := renderOne(t, e, rctx{})
+	if !strings.Contains(m.Body, "whalenurse unsuspend whalenurse-test-pull-b-3a0f41/api") || !strings.Contains(m.Body, "tag moved by whalenurse's pull rung: whalenurse-test-pull-a-015936/app at 2026-10-19 07:45 UTC") {
+		t.Fatalf("%s", m.Body)
+	}
+	if utf8.RuneCountInString(m.Body) > MaxBody {
+		t.Fatalf("%d runes", utf8.RuneCountInString(m.Body))
+	}
+}
