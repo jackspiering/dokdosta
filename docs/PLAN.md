@@ -1,7 +1,19 @@
-# whalenurse — implementation plan v3.8
+# whalenurse — implementation plan v3.9
 
-Status: **v3.8, approved by the maintainer on 19 Oct 2026** (the M4 review: it is v3.7 plus the M4 findings and decisions below, [m4-notes.md](m4-notes.md), with the maintainer's answers in items 11 to 15). v3.7 was approved by the maintainer on 19 Oct 2026 (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.7. Facts and versions are as of 18 Oct 2026 (16 Oct for the prior-art survey).
+Status: **v3.9, proposed on 19 Oct 2026 and awaiting the maintainer's review** (it is v3.8 plus the M5 decisions below, [m5-notes.md](m5-notes.md)). v3.8 was approved by the maintainer on 19 Oct 2026 (the M4 review: it is v3.7 plus the M4 findings and decisions below, [m4-notes.md](m4-notes.md), with the maintainer's answers in items 11 to 15). v3.7 was approved by the maintainer on 19 Oct 2026 (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.8. Facts and versions are as of 18 Oct 2026 (16 Oct for the prior-art survey).
 Repo: `github.com/jackspiering/whalenurse` (Go module path, GHCR image and binary are all lowercase).
+
+**Changes in v3.9** (from building M5; evidence, deviations and open questions in [m5-notes.md](m5-notes.md)):
+1. §3.10, §3.11, **the domain events are persisted** (store schema 3, table `events`: `id INTEGER PRIMARY KEY AUTOINCREMENT`, time, host, key, container, type, message, attributes as JSON). The bus stamps the ID and the store inserts the event under that ID (`Bus.Seed(store.LastID())` at start, so IDs continue across restarts; `AUTOINCREMENT` keeps the counter after retention has deleted the newest rows, so an ID is never reused). Retention is `WHALENURSE_HISTORY_RETENTION` (applied by the hourly prune with the closed incidents) plus a cap of 100,000 rows. This is the API's `since` cursor and the timelines. **A dry run stores nothing**, so it serves an in-memory ring of the last 5,000 events (`engine.Ring`) and its IDs restart with the process. **A `since` above the host's last ID is a reset**: the reply has `reset: true` and starts from the beginning (a wiped store, a dry run that restarted), and the caller drops what it holds for that host.
+2. §3.11, **the API**: `GET /api/v1/status`, `/containers` (watched containers; `?all=1` for every one), `/containers/{key}`, `/events?since=&limit=&key=&type=` (oldest first; `Next` is the cursor), `/incidents`, and the SSE stream `/api/v1/stream` (`id:` is the event ID, so `Last-Event-ID` or `?since=` resumes from the event log; `?key=` narrows it; a `reset` event when the cursor is ahead; keepalive comments every 15 s; at most 32 streams; it ends on shutdown). The stream wakes on a hub subscriber that only signals (the engine publishes under its lock), and each client reads the log from its own cursor, so a slow client costs nothing. Every record carries `host`, every time is UTC RFC 3339 (`omitzero`, never `0001-01-01`), and `/api/v1/...` only gains fields. The documents are in `internal/api/doc.go`; the golden files in `internal/api/testdata/golden/` are the contract the hub (R1) will read.
+3. §3.11, `/metrics` (Prometheus text format 0.0.4, written by hand: no client library) is served **only with `WHALENURSE_METRICS=true`** (new variable, default false) and sits behind the same token.
+4. §3.9, §4, **the token** (`WHALENURSE_HTTP_TOKEN`). A request needs `Authorization: Bearer <token>`, **or HTTP Basic with the token as the password** (any user name). The second form is an addition to "bearer": a browser cannot send a bearer header on a page load or an `EventSource`, and with no POST there is no login form or cookie, so Basic is how the dashboard works behind a token. Both compare the SHA-256 of the input with the SHA-256 of the token in constant time. **The token is never read from the URL.** A 401 offers both challenges. `/healthz` needs no token (it says only the health text, for a reverse proxy or a monitor). There is no attempt throttle: use a long random token (a startup warning for under 16 characters).
+5. §3.9, **read-only, enforced in one wrapper** (`api.Secure`): only GET and HEAD are served, every other method gets 405 with `Allow: GET, HEAD` (before the token check, and with no CORS headers); the control socket's paths do not exist on TCP. On every response: `Content-Security-Policy: default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Cross-Origin-Resource-Policy`/`-Opener-Policy: same-origin`, `Cache-Control: no-store` (the static assets: `private, max-age=300`). So the templates have no inline script, `on*=` handler or `style=`; a test greps every rendered page for them.
+6. §3.9, **what leaves whalenurse** is decided in one place (`api.Service`), whichever endpoint, page or stream: (a) labels: only `com.docker.compose.*` and `whalenurse.*`; (b) event attributes: an allow-list of the keys the engine and the daemon emit (anything else is dropped, so a future attribute stays inside until someone adds it); (c) every message, attribute value and `State.Error` goes through the notification redactor, which now also knows the HTTP token, and is cut (2,000 runes; 600 for `State.Error`); (d) the environment, command, mounts and network settings of an inspect never enter `docker.Container` (a test plants them). `State.Error` of a container that failed to start is shown (it is the reason the container is down; it names paths such as a missing bind source, and the same text is already in the event messages).
+7. §3.11, **the dashboard** is server-rendered `html/template` over `api.Service`: `internal/web` imports `internal/api` and nothing else of whalenurse (a test checks its imports), so a page can show only what the API says. Assets are `embed`ded (one stylesheet with light/dark by `prefers-color-scheme` and a phone layout, one script of about 60 lines: it refetches the page when the stream announces an event and every 15 s, and swaps `<main>` and the banners; without JavaScript the pages work). Pages: `/` (healer status, compose binary and version, the version gate with its minimums, dry-run banner, action budget, counts, pauses, notifications, containers that need attention, the latest events), `/containers`, `/containers/{key}` (inspect summary, healer and ladder with the rungs run, SUSPENDED or PAUSED with reason, cause and expiry, the drift guard's last verdict, parent and dependents, the last upgrade with its rollback commands, incidents, timeline, allowed labels), `/history` (incidents, and events filtered by chips: links, because the CSP forbids forms).
+8. §3.11, **the drift status on the detail page is the guard's last verdict** (the last `DriftBlocked` or `DriftWarned` event of the key, or "blocking" while the key is SUSPENDED for drift), not a live check: the guard runs `compose` dry-runs and `config --hash`, which a page view must not trigger.
+9. §3.9, §3.8, **exposure**: the listener is off unless `WHALENURSE_HTTP_ADDR` is set. At startup whalenurse warns when it is not loopback and no token is set, and when the token is under 16 characters. Recommended: publish on `127.0.0.1:8484:8484`, behind a reverse proxy, or through a Tailscale container on a **shared bridge network** (`tailscale serve`), never `network_mode`. A tokenless listener on loopback is still reachable by DNS rebinding from a browser on the same machine; set a token if that matters (open question in m5-notes).
+10. §6, §7: the M5 tests (goldens per endpoint, every page rendered against a real store through a real daemon, the secrets test with positive controls, every non-GET refused on every route, the token cases, SSE replay and bounds, the import rule, the store and ring tests) and the CI integration test of the image (`TestImageServesTheDashboardBehindTheToken`, `...WithoutATokenOnLoopback`). M5 is done; **the pages were not looked at in a browser** (m5-notes).
 
 **Changes in v3.8** (from building M4; evidence and open questions in [m4-notes.md](m4-notes.md)):
 1. §3.7, **`compose pull --policy always <svc>`**, not a bare `pull <svc>`. Upstream check (compose v5.2.0, v5.6.0 and main, `pkg/compose/pull.go`, `cmd/compose/pull.go`): `compose pull` skips an image whose `pull_policy` is `never` or `build` in every release, and `missing`/`if_not_present` when the image is already present (v5.2.0 for every tag; v5.6.0 and later only refresh `latest` and a service with no policy). A skipped pull leaves the digest unchanged and the rung would say "no newer image" for an image it never looked up. `--policy always` (present in v5.2.0 and v5.6.0) overrides the service's policy for the project, so it replaces `missing`, `if_not_present`, the refresh windows and no policy at all; **`never` and `build` are respected, not overridden** (item 14). Nothing else is added (no `--include-deps`): one service. Compose's `up` stays `--pull never --no-build`.
@@ -427,22 +439,23 @@ Limitation: the pull uses the compose child's environment (no `DOCKER_CONFIG`), 
 - **Dashboard:**
   - Off by default, read-only, no write endpoints (so no CSRF surface).
   - Never render env vars or full inspect output; show only `com.docker.compose.*` and `whalenurse.*` labels.
-  - Optional bearer token.
+  - Optional token (v3.9 item 4): bearer, or the password of HTTP Basic for browsers. Constant-time compare; never taken from the URL.
+  - Only GET and HEAD are served; strict security headers and a CSP without inline script or style (v3.9 item 5); labels, event attributes and error text are filtered at one boundary (v3.9 item 6).
   - Recommended exposure: `127.0.0.1:8484:8484`, a reverse proxy, or a Tailscale container on a **shared bridge network** forwarding with `tailscale serve`. Not `network_mode`.
 - A socket proxy is roadmap (R3). Compose needs broad API access, so it adds little in v1.
 
 ### 3.10 Store
 - SQLite via `modernc.org/sqlite` in `WHALENURSE_DATA_DIR` (default `/data`).
-- Tables: per-key state, incidents and flap history, events (the autoincrement ID doubles as the `since` cursor), and notifications sent (`notified`, the dedupe ledger of §3.12; schema 2, built in M3).
-- Retention: `WHALENURSE_HISTORY_RETENTION` (default 30d).
+- Tables: per-key state, incidents and flap history, events (`events`, schema 3, built in M5: the autoincrement ID doubles as the `since` cursor and is never reused), and notifications sent (`notified`, the dedupe ledger of §3.12; schema 2, built in M3).
+- Retention: `WHALENURSE_HISTORY_RETENTION` (default 30d) for closed incidents and events, hourly; events are also capped at 100,000 rows.
 
 ### 3.11 API and dashboard (read-only)
-- **API:** `/api/v1/status`, `/api/v1/containers`, `/api/v1/containers/{key}`, `/api/v1/events?since=<cursor>`, plus an SSE stream. Alongside it: `/healthz` and an optional Prometheus `/metrics`.
+- **API:** `/api/v1/status`, `/api/v1/containers`, `/api/v1/containers/{key}`, `/api/v1/events?since=<cursor>`, `/api/v1/incidents`, plus the SSE stream `/api/v1/stream` (built in M5; v3.9 items 1 to 3). Alongside it: `/healthz` and an optional Prometheus `/metrics` (`WHALENURSE_METRICS`).
 - The dashboard uses only this API, and the hub (R1) will reuse it as the agent contract.
 - **Pages:**
   - Overview: counts, healer status, compose binary and version, dry-run banner, rate-limit budget.
   - Containers: state, health, incident and rung, cooldown, flap count, badges, effective config.
-  - Container detail: timeline, inspect summary, drift status, parent and dependents.
+  - Container detail: timeline, inspect summary, drift status (the guard's last verdict), parent and dependents, the last upgrade with its rollback commands.
   - History.
 - **Tech:** `html/template`, a little vanilla JS (or vendored htmx), assets embedded with `embed`. No Node build.
 - **Hub readiness:** `host` in every record, a versioned API, monotonic per-host event IDs, UTC timestamps.
@@ -506,9 +519,10 @@ Initial defaults; tune them after M0.
 | `WHALENURSE_COMPOSE_BIN` | — (see §3.4; from M2b) |
 | `WHALENURSE_HOST_ID` | hostname |
 | `WHALENURSE_DATA_DIR` | `/data` |
-| `WHALENURSE_HTTP_ADDR` | empty (dashboard off; `:8484` in examples) |
+| `WHALENURSE_HTTP_ADDR` | empty (dashboard, API and `/healthz` off; `127.0.0.1:8484` or `:8484` in examples; from M5 it serves the dashboard and the API) |
 | `WHALENURSE_CONTROL_SOCKET` | `/run/whalenurse.sock` (unix socket for `/healthz` and, from M2a, the CLI; added in M1) |
-| `WHALENURSE_HTTP_TOKEN` | — |
+| `WHALENURSE_HTTP_TOKEN` | — (secret; bearer or Basic password for the dashboard and API; `/healthz` stays open; from M5) |
+| `WHALENURSE_METRICS` | `false` (serve `/metrics` on the HTTP listener; from M5) |
 | `WHALENURSE_HISTORY_RETENTION` | `30d` |
 | `WHALENURSE_HEARTBEAT_URL` | — (uptime ping, secret; from M3) |
 | `WHALENURSE_HEARTBEAT_INTERVAL` | `5m` (from M3) |
@@ -539,8 +553,8 @@ internal/engine/     incidents, ladder, flap limit, rules (pure, injected clock)
 internal/rules/      inspect classification (State.Error, exit codes, heal-exited), fixture-tested
 internal/store/      SQLite persistence + retention
 internal/notify/     Shoutrrr wrapper, templates, dedupe, heartbeat
-internal/api/        /api/v1 JSON + SSE, /healthz, /metrics
-internal/web/        dashboard templates + embedded assets
+internal/api/        /api/v1 JSON + SSE, /healthz, /metrics; the documents (the hub contract) and the output rules
+internal/web/        dashboard templates + embedded assets (imports internal/api only)
 internal/control/    unix-socket control server for the CLI
 internal/config/     env + label parsing
 ```
@@ -587,7 +601,7 @@ internal/config/     env + label parsing
 **Other tests:**
 - **Rules:** scrubbed `docker inspect` fixtures, including captures from M0.
 - **Store:** state survives a restart; retention pruning.
-- **API:** golden JSON per endpoint (this is the future hub contract); dashboard pages render against a fixture store, with a test that env values never appear in output.
+- **API (built in M5):** golden JSON per endpoint (this is the future hub contract); every dashboard page renders against a real store through a real daemon; a test plants secrets (an environment variable, labels outside the allowed prefixes, notification and ping URLs, the HTTP token, an event attribute) and greps every page, endpoint, the event stream and `/metrics` (with positive controls and mutation-checked: without the redactor or the attribute allow-list it fails); every non-GET method is refused on every route, with and without the token; the token cases (bearer, Basic, wrong, prefix, query); SSE replay, resume, key filter, reset, shutdown and the stream bound; pages carry no inline script, handler or style; `internal/web` imports only `internal/api`.
 
 **Integration tests** (CI, real Docker, projects `whalenurse-test-*` only). The tag says which milestone owns the test:
 - **M2a:** toggled healthcheck → restart, then "needs recreate (M2b)", then SUSPENDED (rung 2 does not exist yet);
@@ -600,6 +614,7 @@ internal/config/     env + label parsing
 - **M2b:** the image-drift guard blocks a recreate after a re-tag, and does not block an unchanged container, on both image stores (the comparator of §3.6);
 - **M2b:** a ref-holding dependent skips the hash check and is recreated after its parent is;
 - **M3 (done; CI run 39121767631, all six legs):** notifications reach a local webhook receiver through Shoutrrr's generic service: the ladder ends in SUSPENDED (restart, recreate and one "giving up" with the cause, a dead URL beside the working one changing nothing), a recovery, and a dry run (marked, changes nothing);
+- **M5 (done; v3.9):** the image with `WHALENURSE_HTTP_ADDR` set and published on `127.0.0.1:<random port>`: `/api/v1/status` is 401 without the token (also with a wrong one and with the token in the query) and 200 with it (bearer, and Basic for the dashboard), the security headers are there, `/healthz` and nothing else needs no token, `/metrics` is behind the token, every other method is 405 on the API, the control-socket paths and the dashboard, the opted-in container is listed with allowed labels only, the token is not in the event history; and a second image run without a token is open on loopback and still read-only.
 - **M4 (done; v3.8 items 10 to 14):** the pull rung, against a local `registry:2`: the registry round trip (and the positive control that docker events reports a pull), no label means no pull, no newer image means SUSPENDED, a newer image means upgraded with the sidecar repaired and a notification whose rollback runs as pasted, a drift block on a shared tag names who moved it, dry-run does not pull, the version gate disables the rung; `pull_policy: never` is not pulled and `missing` is overridden; `heal.pull` without recreate keeps the rung off; rung 2 of a pull-enabled container takes a moved tag and says so (the rollback runs as pasted); a sidecar sharing the image takes its parent's moved tag (its rollback is in the message).
 
 **CI matrix (built in M2b: 2 stores × 3 compose releases = 6 integration jobs):** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`test/m0/m0b/image-drift.sh`) runs on both stores today.
@@ -703,9 +718,9 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 - §3.7 end to end, including the `TagMoved` record, the "upgraded during heal" notification with its rollback, and the dependents step.
 - **Done when:** the integration test against a local `registry:2` passes; with no newer image, the pull rung goes straight to SUSPENDED.
 
-### M5 — Dashboard (read-only)
-- §3.11: API, SSE, pages, token, optional `/metrics`, retention.
-- **Done when:** golden JSON tests pass, pages render against a fixture store, and the no-secrets-rendered test passes.
+### M5 — Dashboard (read-only) (done; v3.9)
+- §3.11: API, SSE, pages, token, optional `/metrics`, retention (v3.9).
+- **Done when:** golden JSON tests pass, pages render against a fixture store, and the no-secrets-rendered test passes; and the CI integration test fetches `/api/v1/status` from the image with and without the token.
 
 ### M6 — Polish and public release
 - Full README; docs (env and label reference, security, exit-code guide, deployment examples).

@@ -18,6 +18,7 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     group_add: ["GID"] # the image runs as uid 65532, which cannot read the socket otherwise
+    # ports: ["127.0.0.1:8484:8484"] # the dashboard, if WHALENURSE_HTTP_ADDR is set
     tmpfs:
       - /run:uid=65532,gid=65532,mode=0700 # the control socket (the image's healthcheck) lives here
     volumes:
@@ -34,6 +35,12 @@ services:
       # with: docker exec whalenurse /whalenurse notify test
       # WHALENURSE_NOTIFY_URLS: "ntfy://ntfy.example.com/whalenurse-4f9k2 discord://TOKEN@WEBHOOKID"
       # WHALENURSE_HEARTBEAT_URL: https://hc-ping.com/your-uuid # a ping every 5m while whalenurse is healthy
+      # The read-only dashboard and API (docs/running.md). Off unless the address is set; publish it on loopback only (the
+      # ports line below) and put a reverse proxy or a Tailscale container on a shared bridge network in front. Keep the
+      # token in an env_file, not here.
+      # WHALENURSE_HTTP_ADDR: ":8484"
+      # WHALENURSE_HTTP_TOKEN: ${WHALENURSE_HTTP_TOKEN}
+      # WHALENURSE_METRICS: "true"
 
   # An opted-in container: whalenurse restarts it when it turns unhealthy, recreates it from its compose files if that does
   # not help, and suspends it if nothing does. network_mode: service:<parent> sidecars follow their parent.
