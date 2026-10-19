@@ -7,7 +7,7 @@
 {{with .Healer.Suspended}}
 <div class="banner banner-bad" role="status">
   <strong>SUSPENDED ({{.Reason}}){{if not .Since.IsZero}} since {{timeTag .Since}}{{end}}.</strong>
-  {{if .Cause}}{{message .Cause}}{{end}}
+  {{if $.Banner}}{{$.Banner}}{{else if .Cause}}{{message .Cause}}{{end}}
   <br>Nothing more is tried until it recovers, is recreated or started by hand, or you run <code>docker exec whalenurse /whalenurse unsuspend {{$.Scope}}</code>.
 </div>
 {{end}}
@@ -71,7 +71,6 @@
 {{with .LastUpgrade}}
 <h2>Last upgrade during heal</h2>
 <p>{{badge (ifelse .OK "info" "bad") .Kind}} {{timeTag .At}} · <code>{{.Ref}}</code>: <code>{{short .OldImage}}</code> → <code>{{short .NewImage}}</code>{{if not .OK}} · failed{{end}}</p>
-<p>{{.Message}}</p>
 {{if .Sidecars}}<p>Sidecars recreated with it: {{range .Sidecars}}<code>{{.}}</code> {{end}}</p>{{end}}
 {{if .RollbackTag}}
 <p>To roll back, run these two commands on the host, one after the other:</p>

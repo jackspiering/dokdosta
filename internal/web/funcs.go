@@ -22,6 +22,7 @@ var funcs = template.FuncMap{
 	"expiry":        expiry,
 	"message":       message,
 	"relBadge":      relBadge,
+	"blockedRung":   blockedRung,
 	"ifelse": func(c bool, a, b string) string {
 		if c {
 			return a
@@ -94,6 +95,16 @@ func skippedSet(c api.ContainerDoc) map[string]bool {
 	return m
 }
 
+// blockedRung is the rung the drift guard stopped: the first one that did not run, when the container is SUSPENDED for
+// drift. Empty for any other state.
+func blockedRung(c api.ContainerDoc) string {
+	sp := c.Healer.Suspended
+	if sp == nil || sp.Reason != "drift" || c.Healer.RungsRun >= len(c.Ladder) {
+		return ""
+	}
+	return c.Ladder[c.Healer.RungsRun]
+}
+
 // ladder says how far the incident has got: "1 of 2 rungs run, 1 skipped (not available), next: recreate".
 func ladder(c api.ContainerDoc) string {
 	if c.Healer.IncidentOpened.IsZero() {
@@ -119,6 +130,9 @@ func ladder(c api.ContainerDoc) string {
 	if skipped > 0 {
 		s += fmt.Sprintf(", %d skipped (not available)", skipped)
 	}
+	if r := blockedRung(c); r != "" {
+		s += ", " + r + " blocked (drift)"
+	}
 	if c.Healer.NextRung != "" {
 		s += ", next: " + c.Healer.NextRung
 	}
@@ -137,6 +151,8 @@ func ladderPath(c api.ContainerDoc) string {
 			parts = append(parts, r+" skipped – not available")
 		case i < c.Healer.RungsRun:
 			parts = append(parts, r+" ✓")
+		case r == blockedRung(c):
+			parts = append(parts, r+" ✗ blocked (drift)")
 		case i == c.Healer.RungsRun && c.Healer.NextRung != "":
 			parts = append(parts, r+" (next)")
 		default:
@@ -196,12 +212,17 @@ var dryRunSays = regexp.MustCompile(` \(its dry-run says: [^)]*\): the compose f
 // message writes a message of the event log for people: compose's raw dry-run words ("Recreate, Recreated, Starting,
 // Started") become a plain sentence, and the original text stays one click away under "details".
 func message(s string) template.HTML {
+	orig := s
+	s = pausedFor.ReplaceAllStringFunc(s, pausedFriendly)
 	plain := dryRunSays.ReplaceAllString(s, ": the configuration or the image changed since it was created")
+	if plain == orig || plain == s {
+		return template.HTML(template.HTMLEscapeString(s)) // nothing to fold away (a pause was only reworded)
+	}
 	if plain == s {
 		return template.HTML(template.HTMLEscapeString(s))
 	}
 	return template.HTML(template.HTMLEscapeString(plain) +
-		` <details class="raw"><summary>details</summary><code>` + template.HTMLEscapeString(s) + `</code></details>`)
+		` <details class="raw"><summary>details</summary><code>` + template.HTMLEscapeString(orig) + `</code></details>`)
 }
 
 // relBadge says in one badge what the other end of a network_mode link is doing: "running, healthy", "exited",
@@ -236,4 +257,106 @@ func relBadge(r api.RelationDoc) template.HTML {
 		}
 	}
 	return badge(kind, text)
+}
+
+// pausedFor matches the end of the engine's Paused message: "for 2h0m0s (until 2026-10-19T19:05:52Z)".
+var pausedFor = regexp.MustCompile(` for ([0-9hms.]+) \(until (\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ)\)`)
+
+// pausedFriendly rewrites that as " for 2h, until 19:05" (the date is added when the pause ends on another UTC day).
+func pausedFriendly(m string) string {
+	sub := pausedFor.FindStringSubmatch(m)
+	d, err1 := time.ParseDuration(sub[1])
+	until, err2 := time.Parse(time.RFC3339, sub[2])
+	if err1 != nil || err2 != nil {
+		return m
+	}
+	clock := until.UTC().Format("15:04")
+	if until.UTC().YearDay() != time.Now().UTC().YearDay() || until.UTC().Year() != time.Now().UTC().Year() {
+		clock = until.UTC().Format("2 Jan 15:04")
+	}
+	return " for " + shortDur(d) + ", until " + clock
+}
+
+// shortDur is a duration without its zero units: 2h, 1h 30m, 45m, 1m 30s.
+func shortDur(d time.Duration) string {
+	d = d.Round(time.Second)
+	h, m, s := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60
+	var parts []string
+	if h > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", h))
+	}
+	if m > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", m))
+	}
+	if s > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%ds", s))
+	}
+	return strings.Join(parts, " ")
+}
+
+// driftBlock matches the Suspended message the engine writes when the drift guard blocked the recreate:
+// "recreate skipped by the drift guard (<finding>): <why the incident opened>".
+var driftBlock = regexp.MustCompile(`^recreate skipped by the drift guard \((.*)\): (.*)$`)
+
+// driftWhy turns the guard's finding into the reason in plain words.
+func driftWhy(finding string) string {
+	switch {
+	case strings.HasPrefix(finding, "config: compose would recreate"), strings.HasPrefix(finding, "config: config --hash"):
+		return "the configuration or image changed since the container was created"
+	case strings.HasPrefix(finding, "image ") && strings.Contains(finding, "the tag moved"):
+		return "the image tag moved since the container was created"
+	default:
+		return finding
+	}
+}
+
+// capital upper-cases the first letter, and says "Unhealthy" for the one reason every incident of a healthcheck gives.
+func capital(why string) string {
+	if why == "healthcheck reports unhealthy" {
+		return "Unhealthy"
+	}
+	if why == "" {
+		return why
+	}
+	return strings.ToUpper(why[:1]) + why[1:]
+}
+
+// suspendedText is the plain sentence for a Suspended message of a drift block, and ok reports whether it was one.
+// restarted says that a restart ran and did not help (only the container's page knows it). short leaves the drift
+// explanation out: the DriftBlocked row of the timeline carries it.
+func suspendedText(msg string, restarted, short bool) (string, bool) {
+	m := driftBlock.FindStringSubmatch(msg)
+	if m == nil {
+		return "", false
+	}
+	lead := capital(m[2])
+	if short {
+		return lead + "; the recreate was blocked by the drift guard, so the container is SUSPENDED.", true
+	}
+	if restarted {
+		return lead + "; a restart didn't help, and the recreate was blocked because " + driftWhy(m[1]) + ".", true
+	}
+	return lead + "; the recreate was blocked because " + driftWhy(m[1]) + ".", true
+}
+
+// suspendedHTML is the banner text: the plain sentence with the original under details, or the message as it is.
+func suspendedHTML(msg string, restarted bool) template.HTML {
+	text, ok := suspendedText(msg, restarted, false)
+	if !ok {
+		return message(msg)
+	}
+	return template.HTML(template.HTMLEscapeString(text) +
+		` <details class="raw"><summary>details</summary><code>` + template.HTMLEscapeString(msg) + `</code></details>`)
+}
+
+// eventText is what the What column says: a Suspended event of a drift block without the drift explanation (the
+// DriftBlocked event next to it has it), everything else through message.
+func eventText(typ, msg string) template.HTML {
+	if typ == "Suspended" {
+		if text, ok := suspendedText(msg, false, true); ok {
+			return template.HTML(template.HTMLEscapeString(text) +
+				` <details class="raw"><summary>details</summary><code>` + template.HTMLEscapeString(msg) + `</code></details>`)
+		}
+	}
+	return message(msg)
 }

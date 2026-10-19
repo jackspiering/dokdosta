@@ -67,9 +67,9 @@ table.grid { width: 100%; border-collapse: collapse; background: var(--panel); b
 .raw { display: inline-block; margin-left: 0.25rem; }
 .raw summary { cursor: pointer; color: var(--accent); font-size: 0.85em; }
 .raw code { display: block; margin-top: 0.3rem; font-size: 0.8em; }
-.cmd { position: relative; margin: 0.5rem 0; }
-.cmd pre { margin: 0; padding-right: 4.5rem; white-space: pre; overflow-x: auto; word-break: normal; overflow-wrap: normal; }
-.copy { display: none; position: absolute; top: 0.4rem; right: 0.4rem; font: inherit; font-size: 0.8rem; padding: 0.15rem 0.6rem; color: var(--accent); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
+.cmd { display: flex; align-items: flex-start; gap: 0.5rem; margin: 0.5rem 0; }
+.cmd pre { flex: 1 1 auto; min-width: 0; margin: 0; white-space: pre; overflow-x: auto; word-break: normal; overflow-wrap: normal; }
+.copy { display: none; flex: none; font: inherit; font-size: 0.8rem; padding: 0.3rem 0.7rem; color: var(--accent); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; cursor: pointer; }
 .js .copy { display: inline-block; }
 .copy:hover { border-color: var(--accent); }
 .offscreen { position: fixed; left: -9999px; top: 0; }
@@ -81,6 +81,7 @@ table.grid { width: 100%; border-collapse: collapse; background: var(--panel); b
   .grid td { display: block; position: relative; border: 0; padding: 0.15rem 0.75rem 0.15rem 8rem; min-height: 1.6rem; overflow-wrap: anywhere; }
   .grid td::before { content: attr(data-label); position: absolute; left: 0.75rem; top: 0.3rem; width: 6.5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); overflow-wrap: normal; }
   .grid td.nowrap, .grid td.nowrap time { white-space: normal; }
+  .grid td.none { display: none; } /* a card does not list the fields that have nothing to say */
 }
 @media (max-width: 40rem) {
   main { padding: 0.25rem 0.6rem 1.5rem; }

@@ -136,3 +136,88 @@ func TestInScopeMirrorsTheEnginesRule(t *testing.T) {
 		t.Error("a key without a host")
 	}
 }
+
+func TestSuspendedTextInPlainWords(t *testing.T) {
+	cfg := "recreate skipped by the drift guard (config: compose would recreate this container (its dry-run says: Recreate, Recreated, Starting, Started): the compose file, an env file or the image changed since it was created): healthcheck reports unhealthy"
+	img := "recreate skipped by the drift guard (image web:1 now resolves to aaaa, but this container was created from bbbb: the tag moved): healthcheck reports unhealthy"
+	hash := "recreate skipped by the drift guard (config: config --hash is h2, the container was created with h1: the compose file or an env file changed): container exited with code 1"
+	unv := "recreate skipped by the drift guard (unverified: image web:1 cannot be resolved for linux/amd64: no such image): healthcheck reports unhealthy"
+	for _, c := range []struct {
+		msg              string
+		restarted, short bool
+		want             string
+	}{
+		{cfg, true, false, "Unhealthy; a restart didn't help, and the recreate was blocked because the configuration or image changed since the container was created."},
+		{cfg, false, false, "Unhealthy; the recreate was blocked because the configuration or image changed since the container was created."},
+		{img, true, false, "Unhealthy; a restart didn't help, and the recreate was blocked because the image tag moved since the container was created."},
+		{hash, false, false, "Container exited with code 1; the recreate was blocked because the configuration or image changed since the container was created."},
+		{unv, true, false, "Unhealthy; a restart didn't help, and the recreate was blocked because unverified: image web:1 cannot be resolved for linux/amd64: no such image."},
+		{cfg, true, true, "Unhealthy; the recreate was blocked by the drift guard, so the container is SUSPENDED."},
+	} {
+		got, ok := suspendedText(c.msg, c.restarted, c.short)
+		if !ok || got != c.want {
+			t.Errorf("%q\n got %q\nwant %q", c.msg[:60], got, c.want)
+		}
+	}
+	// Anything else is not rewritten.
+	if _, ok := suspendedText("every rung ran or was unavailable: healthcheck reports unhealthy", true, false); ok {
+		t.Error("a ladder suspension is not a drift block")
+	}
+	if got := string(suspendedHTML("every rung ran or was unavailable: x", true)); got != "every rung ran or was unavailable: x" {
+		t.Errorf("%s", got)
+	}
+	// The Suspended row of a timeline is short; any other event keeps its text.
+	if got := string(eventText("Suspended", cfg)); strings.Contains(got[:strings.Index(got, "<details")], "changed since") {
+		t.Errorf("the short row repeats the drift explanation: %s", got)
+	}
+	if got := string(eventText("DriftBlocked", "recreate skipped by the drift guard: config: compose would recreate this container (its dry-run says: Recreate): the compose file, an env file or the image changed since it was created")); !strings.Contains(got, "the configuration or the image changed since it was created") {
+		t.Errorf("the DriftBlocked row keeps its explanation: %s", got)
+	}
+}
+
+func TestPauseMessageIsFriendly(t *testing.T) {
+	until := time.Now().UTC().Add(2 * time.Hour)
+	msg := "paused whalenurse-test-demo/cache for 2h0m0s (until " + until.Format(time.RFC3339) + ")"
+	got := string(message(msg))
+	clock := until.Format("15:04")
+	if until.YearDay() != time.Now().UTC().YearDay() {
+		clock = until.Format("2 Jan 15:04")
+	}
+	if want := "paused whalenurse-test-demo/cache for 2h, until " + clock; got != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+	if strings.Contains(got, "details") {
+		t.Error("a reworded pause has nothing to fold")
+	}
+	for in, want := range map[time.Duration]string{2 * time.Hour: "2h", 90 * time.Minute: "1h 30m", 45 * time.Minute: "45m", 90 * time.Second: "1m 30s", 30 * time.Second: "30s", 26 * time.Hour: "26h"} {
+		if got := shortDur(in); got != want {
+			t.Errorf("shortDur(%v) = %q, want %q", in, got, want)
+		}
+	}
+	// Other text and an unparsable duration are left as they are.
+	if got := string(message("resumed web: expired")); got != "resumed web: expired" {
+		t.Error(got)
+	}
+}
+
+func TestBlockedRungHasItsOwnMarker(t *testing.T) {
+	c := api.ContainerDoc{
+		Ladder: []string{"restart", "recreate", "pull"},
+		Healer: api.HealerDoc{IncidentOpened: time.Now(), RungsRun: 1, Suspended: &api.SuspendDoc{Reason: "drift"}},
+	}
+	if got, want := ladderPath(c), "restart ✓ → recreate ✗ blocked (drift) → pull"; got != want {
+		t.Errorf("ladderPath = %q, want %q", got, want)
+	}
+	if got, want := ladder(c), "1 of 3 rungs run, recreate blocked (drift)"; got != want {
+		t.Errorf("ladder = %q, want %q", got, want)
+	}
+	// Suspended for another reason, or all rungs run: no blocked marker.
+	c.Healer.Suspended.Reason = "ladder"
+	if strings.Contains(ladderPath(c), "blocked") || blockedRung(c) != "" {
+		t.Error("a ladder suspension is not a block")
+	}
+	c.Healer.Suspended.Reason, c.Healer.RungsRun = "drift", 3
+	if blockedRung(c) != "" {
+		t.Error("nothing is left to block")
+	}
+}

@@ -78,7 +78,8 @@ type page struct {
 	Detail   *api.ContainerDetailDoc
 	Scope    string // project/service, as `whalenurse unsuspend` takes it
 	Timeline eventTable
-	Debug    bool // ?debug=1: the events the dashboard hides by default are shown
+	Debug    bool          // ?debug=1: the events the dashboard hides by default are shown
+	Banner   template.HTML // the SUSPENDED banner's sentence
 
 	// history
 	Incidents  incidentTable
@@ -123,9 +124,10 @@ func (h *handler) fail(w http.ResponseWriter, code int, heading, msg string) {
 // (a container that is gone, or a pause scope, must never lead to a 404).
 type eventRow struct {
 	api.EventDoc
-	Label string // what to show in the Container column
-	Link  string // empty: no link
-	Scope bool   // Label is a pause scope
+	Label string        // what to show in the Container column
+	Link  string        // empty: no link
+	Scope bool          // Label is a pause scope
+	Text  template.HTML // the What column
 }
 
 type eventTable struct {
@@ -155,7 +157,7 @@ func (h *handler) known() map[string]bool {
 func eventRows(evs []api.EventDoc, known map[string]bool) []eventRow {
 	rows := make([]eventRow, 0, len(evs))
 	for _, e := range evs {
-		r := eventRow{EventDoc: e}
+		r := eventRow{EventDoc: e, Text: eventText(e.Type, e.Message)}
 		switch scope := e.Attrs["scope"]; {
 		case scope != "" && (e.Type == "Paused" || e.Type == "Resumed"):
 			// A pause covers a project or a service, so it links to the list of the containers under it.
@@ -239,6 +241,10 @@ func (h *handler) container(w http.ResponseWriter, r *http.Request) {
 	}
 	p := h.base("container", d.Name)
 	p.Detail, p.Debug = &d, debug
+	if sp := d.Healer.Suspended; sp != nil {
+		restarted := len(d.Ladder) > 0 && d.Ladder[0] == "restart" && d.Healer.RungsRun >= 1
+		p.Banner = suspendedHTML(sp.Cause, restarted)
+	}
 	known := h.known()
 	p.Timeline = eventTable{Rows: eventRows(d.Timeline, known)}
 	p.Incidents = incidentTable{Rows: incidentRows(d.Incidents, known)}

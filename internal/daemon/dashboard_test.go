@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/jackspiering/whalenurse/internal/api"
+	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
 	"github.com/jackspiering/whalenurse/internal/engine"
@@ -601,5 +602,140 @@ func TestCompanionNamesAreFinal(t *testing.T) {
 		if strings.Contains(body, "0123456789ab_") {
 			t.Errorf("%s shows compose's temporary name", p)
 		}
+	}
+}
+
+// driftRig is a container that the drift guard really blocked, through the compose fake: restart, then the recreate
+// refused because compose says it would recreate, so it is SUSPENDED for drift.
+func driftRig(t *testing.T) *dashboardRig {
+	t.Helper()
+	st, err := store.Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	hub := api.NewHub()
+	cf := compose.NewFake()
+	cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
+	h := newCompose(t, nil, cf, docker.ServerInfo{}, func(o *Options) {
+		o.Persist, o.Meta, o.Version = st, st, "v-test"
+		o.Bus.Seed(st.LastID())
+		o.Bus.Subscribe(st.RecordEvent)
+		o.Bus.Subscribe(hub.Notify)
+	})
+	web := h.svc(hexID("a1"), "p", "web")
+	h.tick()
+	h.set(web.ID, unhealthy)
+	h.advance(6 * time.Minute)
+	if h.count(engine.DriftBlocked) != 1 {
+		t.Fatalf("the drift guard did not block: %v", h.rec.Types())
+	}
+	r := &dashboardRig{h: h.harness, hub: hub, st: st}
+	r.svc = NewAPI(h.d, st, st, hub, nil)
+	r.srv = httptest.NewServer(api.Handler(api.Options{Health: h.d, Service: r.svc, Web: web2(r.svc)}))
+	t.Cleanup(r.srv.Close)
+	return r
+}
+
+func web2(s *api.Service) http.Handler { return web.Handler(s) }
+
+func TestADriftSuspensionReadsInPlainLanguage(t *testing.T) {
+	r := driftRig(t)
+	_, page := r.fetch(t, "/containers/h/p/web/1", "")
+
+	// The banner: one plain sentence, the raw text under details.
+	i := strings.Index(page, "<strong>SUSPENDED (")
+	if i < 0 {
+		t.Fatalf("no SUSPENDED banner:\n%s", page)
+	}
+	banner := page[i:]
+	banner = strings.ReplaceAll(banner[:strings.Index(banner, "</div>")], "&#39;", "'")
+	for _, want := range []string{"Unhealthy; a restart didn't help, and the recreate was blocked because the configuration or image changed since the container was created.",
+		`<details class="raw"><summary>details</summary>`, "recreate skipped by the drift guard (config: compose would recreate this container (its dry-run says:"} {
+		if !strings.Contains(banner, want) {
+			t.Errorf("the banner lacks %q:\n%s", want, banner)
+		}
+	}
+	if plain := banner[:strings.Index(banner, "<details")]; strings.Contains(plain, "dry-run says") || strings.Contains(plain, "recreate skipped by the drift guard (") {
+		t.Errorf("the nested phrase is still in the sentence:\n%s", plain)
+	}
+
+	// The ladder marks the blocked rung, and the list says so.
+	if !strings.Contains(page, "restart ✓ → recreate ✗ blocked (drift)") {
+		t.Errorf("ladder:\n%s", regexp.MustCompile(`(?s).*(<dt>Ladder.*?</dd>).*`).ReplaceAllString(page, "$1"))
+	}
+	_, list := r.fetch(t, "/containers", "")
+	if !strings.Contains(list, "recreate blocked (drift)") {
+		t.Errorf("list lacks the blocked rung")
+	}
+
+	// The timeline: the Suspended row is short and does not repeat the drift explanation the DriftBlocked row carries.
+	tl := section(page, "Timeline")
+	rows := strings.Split(tl, "<tr>")
+	var susp, blocked string
+	for _, row := range rows {
+		switch {
+		case strings.Contains(row, `class="etype">Suspended<`):
+			susp = row
+		case strings.Contains(row, `class="etype">DriftBlocked<`):
+			blocked = row
+		}
+	}
+	if susp == "" || blocked == "" {
+		t.Fatalf("timeline rows missing:\n%s", tl)
+	}
+	visible := func(row string) string {
+		if i := strings.Index(row, "<details"); i >= 0 {
+			return row[:i]
+		}
+		return row
+	}
+	if !strings.Contains(visible(susp), "the recreate was blocked by the drift guard, so the container is SUSPENDED.") || strings.Contains(visible(susp), "changed since") {
+		t.Errorf("the Suspended row:\n%s", susp)
+	}
+	if !strings.Contains(visible(blocked), "compose would recreate this container: the configuration or the image changed since it was created") {
+		t.Errorf("the DriftBlocked row:\n%s", blocked)
+	}
+}
+
+// What a person reads in the pages, not the machine forms: a pause says "for 1h, until 19:05"; the upgrade card has no raw
+// "...; recreated" line under its badge; a card lists no field that says "none".
+func TestFriendlyTextsAndCards(t *testing.T) {
+	r := newRig(t, "")
+	r.drive()
+	_, hist := r.fetch(t, "/history?type=Paused,Resumed", "")
+	if !regexp.MustCompile(`paused p/side for 1h, until \d\d:\d\d`).MatchString(hist) && !regexp.MustCompile(`paused p/side for 1h, until \d+ \w{3} \d\d:\d\d`).MatchString(hist) {
+		t.Errorf("pause row:\n%s", section(hist, "Events"))
+	}
+	if regexp.MustCompile(`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\)?<`).MatchString(strings.ReplaceAll(section(hist, "Events"), `datetime="`, `X`)) && strings.Contains(section(hist, "Events"), "(until 20") {
+		t.Errorf("the pause row still shows an ISO timestamp")
+	}
+	if strings.Contains(hist, "for 1h0m0s") {
+		t.Error("the Go duration is shown")
+	}
+	_, web := r.fetch(t, "/containers/nas/p/web/1", "")
+	up := section(web, "Last upgrade during heal")
+	if up == "" || strings.Contains(up, "; recreated") || !strings.Contains(up, "Upgraded") {
+		t.Errorf("the upgrade card:\n%s", up)
+	}
+	// The cells that say "none" are marked, and the stylesheet hides them in a card.
+	_, list := r.fetch(t, "/containers", "")
+	if n := strings.Count(list, `class="none"`); n < 3 {
+		t.Errorf("only %d cells marked none", n)
+	}
+	for _, row := range strings.Split(list, "<tr>")[1:] {
+		for _, cell := range regexp.MustCompile(`(?s)<td data-label="(Health|Incident|Cooldown)"([^>]*)>(.*?)</td>`).FindAllStringSubmatch(row, -1) {
+			if strings.Contains(cell[3], ">none<") && !strings.Contains(cell[2], `class="none"`) {
+				t.Errorf("a %s cell says none and is not marked: %s", cell[1], cell[0])
+			}
+		}
+	}
+	_, css := r.fetch(t, "/static/app.css", "")
+	if !regexp.MustCompile(`@media \(max-width: 56\.25rem\) \{[^@]*\.grid td\.none \{ display: none; \}`).MatchString(css) {
+		t.Error("the stylesheet does not hide the none cells in cards")
+	}
+	// The copy button is beside the code, not on top of it.
+	if !strings.Contains(css, ".cmd { display: flex;") || strings.Contains(css, ".copy { display: none; position: absolute") {
+		t.Error("the copy button must sit beside the scroll area")
 	}
 }

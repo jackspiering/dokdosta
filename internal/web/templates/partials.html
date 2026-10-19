@@ -7,10 +7,10 @@
   <tr>
     <td data-label="Container"><a href="{{containerPath .Key}}">{{.Name}}</a><br><span class="muted key">{{.Key}}</span></td>
     <td data-label="State">{{.State}}{{if .RestartCount}} <span class="muted">({{.RestartCount}} restarts)</span>{{end}}</td>
-    <td data-label="Health">{{if .Health}}{{.Health}}{{else}}<span class="muted">none</span>{{end}}</td>
+    <td data-label="Health"{{if not .Health}} class="none"{{end}}>{{if .Health}}{{.Health}}{{else}}<span class="muted">none</span>{{end}}</td>
     <td data-label="Healer">{{template "healerbadges" .}}</td>
-    <td data-label="Incident">{{if not .Healer.IncidentOpened.IsZero}}{{.Healer.Class}}<br><span class="muted">{{ladder .}}</span>{{else}}<span class="muted">none</span>{{end}}</td>
-    <td data-label="Cooldown">{{if cooling .Healer.CooldownUntil}}{{expiry .Healer.CooldownUntil}}{{else}}<span class="muted">none</span>{{end}}</td>
+    <td data-label="Incident"{{if .Healer.IncidentOpened.IsZero}} class="none"{{end}}>{{if not .Healer.IncidentOpened.IsZero}}{{.Healer.Class}}<br><span class="muted">{{ladder .}}</span>{{else}}<span class="muted">none</span>{{end}}</td>
+    <td data-label="Cooldown"{{if not (cooling .Healer.CooldownUntil)}} class="none"{{end}}>{{if cooling .Healer.CooldownUntil}}{{expiry .Healer.CooldownUntil}}{{else}}<span class="muted">none</span>{{end}}</td>
     <td data-label="Flaps">{{if .Watched}}{{.Healer.Flaps}} / {{.Healer.FlapLimit}}{{else}}<span class="muted">not watched</span>{{end}}</td>
   </tr>
   {{end}}
@@ -42,7 +42,7 @@
     <td data-label="Time" class="nowrap">{{timeTag .Time}}</td>
     {{if $show}}<td data-label="{{if .Scope}}Pause scope{{else}}Container{{end}}">{{if .Link}}<a href="{{.Link}}">{{.Label}}</a>{{else if .Label}}{{.Label}}{{else}}<span class="muted">host</span>{{end}}</td>{{end}}
     <td data-label="Event"><span class="etype">{{.Type}}</span></td>
-    <td data-label="What">{{message .Message}}</td>
+    <td data-label="What">{{.Text}}</td>
   </tr>
   {{end}}
   </tbody>
