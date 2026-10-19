@@ -20,9 +20,10 @@ import (
 // The receiver listens on loopback and the healer runs in this process, so nothing leaves the machine.
 
 type webhook struct {
-	mu   sync.Mutex
-	msgs []hookMsg
-	srv  *httptest.Server
+	mu      sync.Mutex
+	msgs    []hookMsg
+	srv     *httptest.Server
+	project string // only messages about this compose project count: other tests' leftovers on the host talk too
 }
 
 type hookMsg struct {
@@ -30,9 +31,9 @@ type hookMsg struct {
 	Message string `json:"message"`
 }
 
-func newWebhook(t *testing.T) *webhook {
+func newWebhook(t *testing.T, project string) *webhook {
 	t.Helper()
-	w := &webhook{}
+	w := &webhook{project: project}
 	w.srv = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		var m hookMsg
@@ -55,7 +56,13 @@ func (w *webhook) url() string {
 func (w *webhook) all() []hookMsg {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	return append([]hookMsg(nil), w.msgs...)
+	var out []hookMsg
+	for _, m := range w.msgs {
+		if strings.Contains(m.Message, w.project) {
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // matching returns the messages whose title contains every one of parts.
@@ -99,7 +106,7 @@ func deadURL(t *testing.T) string {
 func TestNotificationsReachTheReceiverWhenTheLadderEndsInSuspended(t *testing.T) {
 	g, cli := requireIntegration(t)
 	s := stuckStack(t, g, cli, "notify-ladder")
-	hook := newWebhook(t)
+	hook := newWebhook(t, s.project)
 	dead := deadURL(t)
 
 	r := startDaemonOpts(t, g, cli, daemonOpts{NotifyURLs: []string{dead, hook.url()}})
@@ -154,7 +161,7 @@ func TestNotificationsReachTheReceiverOnRecovery(t *testing.T) {
 	waitFor(t, "app to be healthy", 60*time.Second, func() bool { return s.container("app").Health == "healthy" })
 	before := s.container("app")
 	breakWritableLayer(t, g, s, "app")
-	hook := newWebhook(t)
+	hook := newWebhook(t, s.project)
 
 	r := startDaemonOpts(t, g, cli, daemonOpts{NotifyURLs: []string{hook.url()}})
 	waitFor(t, "the app to be recreated and healthy", 150*time.Second, func() bool {
@@ -178,7 +185,7 @@ func TestADryRunNotifiesAndMarksTheMessages(t *testing.T) {
 	s := appStack(t, g, cli, "notify-dry")
 	before := s.container("app")
 	breakApp(t, g, s)
-	hook := newWebhook(t)
+	hook := newWebhook(t, s.project)
 
 	r := startDaemonOpts(t, g, cli, daemonOpts{Dry: true, NotifyURLs: []string{hook.url()}})
 	waitFor(t, "the dry-run restart", 90*time.Second, func() bool { return countFor(r.Rec, engine.ActionResult, s.key("app")) >= 1 })
