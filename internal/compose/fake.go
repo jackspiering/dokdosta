@@ -7,7 +7,7 @@ import (
 
 // Call records one call on a Fake.
 type Call struct {
-	Verb    string // dry-run | hash | recreate | up
+	Verb    string // dry-run | hash | recreate | up | pull
 	Project Project
 }
 
@@ -22,6 +22,7 @@ type Fake struct {
 	HashFn     func(p Project) (string, error)
 	OnRecreate func(p Project) error
 	OnUp       func(p Project) error
+	OnPull     func(p Project) error
 }
 
 // NewFake returns a Fake that reports compose 5.6.0 from the host plugin.
@@ -83,6 +84,14 @@ func (f *Fake) Up(_ context.Context, p Project) error {
 	f.record("up", p)
 	if f.OnUp != nil {
 		return f.OnUp(p)
+	}
+	return nil
+}
+
+func (f *Fake) Pull(_ context.Context, p Project) error {
+	f.record("pull", p)
+	if f.OnPull != nil {
+		return f.OnPull(p)
 	}
 	return nil
 }

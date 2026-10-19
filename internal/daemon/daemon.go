@@ -113,10 +113,12 @@ type Daemon struct {
 	idx         index
 	compState   atomic.Pointer[composeState] // the startup version gate, readable from the control socket
 	depGate     map[string]depGate           // one dependent at a time per parent, keyed by the raw container: reference
+	moves       map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
 
 	eventsUp   atomic.Bool
 	eventsDown atomic.Int64 // unix nanos when the stream went down; 0 while up
 	lastTick   atomic.Int64
+	acting     atomic.Int64 // unix nanos when the action in progress started; 0 when none
 }
 
 // New builds a Daemon.
@@ -235,6 +237,10 @@ func (d *Daemon) Healthy() (bool, string) {
 		if now.Sub(down) > limit {
 			return false, fmt.Sprintf("docker events stream down for %s", now.Sub(down).Round(time.Second))
 		}
+	}
+	// The loop is busy, not dead, while it runs an action: a pull or a recreate can take minutes.
+	if since := d.acting.Load(); since != 0 && now.Sub(time.Unix(0, since)) < pullTimeout+time.Minute {
+		return true, "ok (an action is running)"
 	}
 	if beat := time.Unix(0, d.lastTick.Load()); now.Sub(beat) > 3*d.cfg.PollInterval+actionTimeout {
 		return false, fmt.Sprintf("main loop silent for %s", now.Sub(beat).Round(time.Second))
@@ -700,6 +706,12 @@ func (d *Daemon) adjust(c docker.Container, cfg config.Container, dec rules.Deci
 // between the decision and the action, and an API restart of a dependent whose parent ID is gone turns a running
 // dependent into an exited one (E1).
 func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container) {
+	d.acting.Store(d.clk.Now().UnixNano())
+	defer d.acting.Store(0)
+	if plan.Act == rules.ActionPull {
+		d.executePull(ctx, t, c, dec, plan, cfg)
+		return
+	}
 	if plan.Act.IsRecreate() {
 		d.executeRecreate(ctx, t, c, dec, plan, cfg)
 		return

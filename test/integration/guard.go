@@ -11,11 +11,16 @@
 //	Down      the ONLY place that runs `down -v`, and only for matching projects
 //	Ctr       stop/start/restart/kill/exec on a container whose project label matches
 //	PullBase  pulls only the base images in BaseImages
-//	Tag/Untag/Build  image tags under whalenurse-test/ only; a build may start FROM a base image only
+//	Tag/Untag/Build  image tags under whalenurse-test/ (or in the test registry, 127.0.0.1:<port>/whalenurse-test/) only; a
+//	          build may start FROM a base image only
+//	Push/PullRegistry  push or pull references of the test registry only (M4: a registry:2 on loopback, started as a
+//	          whalenurse-test-* compose project)
+//	RunRollback  runs the rollback commands of an "upgraded during heal" message, after checking them line by line
 //	Actor     wraps whalenurse's own docker.Actor so the healer under test cannot
 //	          touch a container outside a matching project either
 //	ComposeRunner  the compose Runner the healer under test runs compose through: only `up` (with -d --no-deps --pull never
-//	          --no-build), `config --hash` and `version`, only with -p <matching project>; never down, rm, pull or build
+//	          --no-build), `pull --policy always <one service>` (rung 3), `config --hash` and `version`, only with -p
+//	          <matching project>; never down, rm, build or an up that could pull
 //
 // Reads (inspect, ps, logs) use plain docker. This file has no build tag so
 // the guard itself is unit-tested without Docker (guard_test.go).
@@ -42,7 +47,7 @@ import (
 var ProjectRE = regexp.MustCompile(`^whalenurse-test-[a-z0-9][a-z0-9_-]*$`)
 
 // BaseImages are the only images the tests may pull.
-var BaseImages = []string{"busybox:1.37"}
+var BaseImages = []string{"busybox:1.37", "registry:2"}
 
 // Runner runs an external command and returns its stdout.
 type Runner interface {
@@ -265,11 +270,71 @@ var _ docker.Actor = Actor{}
 // TagPrefix is the only image namespace the tests may create.
 const TagPrefix = "whalenurse-test/"
 
+// RegistryRE is the only kind of registry reference the tests may push to or pull from: the loopback registry:2 that a
+// test starts for itself, in the whalenurse-test/ namespace. 127.0.0.1 and not localhost: no resolver, no ::1, and the
+// Engine treats 127.0.0.0/8 as an insecure (plain HTTP) registry by default.
+var RegistryRE = regexp.MustCompile(`^127\.0\.0\.1:[0-9]{2,5}/whalenurse-test/[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$`)
+
+// ImageIDRE is an image ID as `docker image inspect --format {{.Id}}` prints it.
+var ImageIDRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
 func requireTag(tag string) error {
-	if !strings.HasPrefix(tag, TagPrefix) || strings.ContainsAny(tag, " \t\n;&|$`") {
-		return refuse("image tag %q is not under %s", tag, TagPrefix)
+	if strings.ContainsAny(tag, " \t\n;&|$`") || !(strings.HasPrefix(tag, TagPrefix) || RegistryRE.MatchString(tag)) {
+		return refuse("image tag %q is not under %s or in the test registry", tag, TagPrefix)
 	}
 	return nil
+}
+
+func requireRegistryRef(ref string) error {
+	if !RegistryRE.MatchString(ref) {
+		return refuse("%q is not a reference of the test registry (127.0.0.1:<port>/whalenurse-test/...)", ref)
+	}
+	return nil
+}
+
+// Push pushes a reference of the test registry.
+func (g *Guard) Push(ctx context.Context, ref string) error {
+	if err := requireRegistryRef(ref); err != nil {
+		return err
+	}
+	_, err := g.R.Run(ctx, "docker", "push", "-q", ref)
+	return err
+}
+
+// PullRegistry pulls a reference of the test registry.
+func (g *Guard) PullRegistry(ctx context.Context, ref string) error {
+	if err := requireRegistryRef(ref); err != nil {
+		return err
+	}
+	_, err := g.R.Run(ctx, "docker", "pull", "-q", ref)
+	return err
+}
+
+// PublishedPort reads the host port a container published for a container port ("5000/tcp"): where the registry is.
+func (g *Guard) PublishedPort(ctx context.Context, ctr, port string) (string, error) {
+	p, err := g.ProjectOf(ctx, ctr)
+	if err != nil {
+		return "", err
+	}
+	if err := RequireProject(p); err != nil {
+		return "", err
+	}
+	out, err := g.R.Run(ctx, "docker", "port", ctr, port)
+	if err != nil {
+		return "", err
+	}
+	line, _, _ := strings.Cut(strings.TrimSpace(out), "\n")
+	_, hostPort, ok := strings.Cut(line, ":")
+	if !ok {
+		return "", fmt.Errorf("cannot read a published port from %q", out)
+	}
+	return hostPort[strings.LastIndex(hostPort, ":")+1:], nil
+}
+
+// ImageID reads the ID of a local image (a read).
+func (g *Guard) ImageID(ctx context.Context, ref string) (string, error) {
+	out, err := g.R.Run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", ref)
+	return strings.TrimSpace(out), err
 }
 
 // Tag points dst, a whalenurse-test/ tag, at src: a base image or another whalenurse-test/ tag.
@@ -277,12 +342,12 @@ func (g *Guard) Tag(ctx context.Context, src, dst string) error {
 	if err := requireTag(dst); err != nil {
 		return err
 	}
-	ok := strings.HasPrefix(src, TagPrefix)
+	ok := strings.HasPrefix(src, TagPrefix) || RegistryRE.MatchString(src) || ImageIDRE.MatchString(src)
 	for _, b := range BaseImages {
 		ok = ok || src == b
 	}
 	if !ok {
-		return refuse("tag source %q is neither a base image nor under %s", src, TagPrefix)
+		return refuse("tag source %q is neither a base image, nor under %s, nor in the test registry, nor an image ID", src, TagPrefix)
 	}
 	_, err := g.R.Run(ctx, "docker", "tag", src, dst)
 	return err
@@ -346,9 +411,9 @@ func (g *Guard) ImagePulls(ctx context.Context, since, until string) (int, error
 
 // ---- compose, as whalenurse runs it --------------------------------------------------------------------------------
 
-// CheckComposeCommand is the filter in front of whalenurse's compose: it accepts exactly the three shapes the compose
-// package builds and nothing else. A command whalenurse should never run (down, rm, pull, build, run, a different project,
-// an up that could pull or build or touch other services) is REFUSED.
+// CheckComposeCommand is the filter in front of whalenurse's compose: it accepts exactly the four shapes the compose
+// package builds and nothing else. A command whalenurse should never run (down, rm, build, run, a different project,
+// a pull that is not `--policy always <one service>`, an up that could pull or build or touch other services) is REFUSED.
 func CheckComposeCommand(args []string) error {
 	if len(args) < 3 || args[0] != "-p" {
 		return refuse("compose command does not start with -p <project>: %v", args)
@@ -381,6 +446,11 @@ sub:
 	case "config":
 		if len(rest) != 1 || !strings.HasPrefix(rest[0], "--hash=") || strings.ContainsAny(rest[0], ",*") {
 			return refuse("compose config with %v: only --hash=<one service>", rest)
+		}
+	case "pull":
+		// Rung 3 only: one service, with the policy flag, nothing else (no --include-deps).
+		if len(rest) != 3 || rest[0] != "--policy" || rest[1] != "always" || strings.HasPrefix(rest[2], "-") {
+			return refuse("compose pull with %v: only --policy always <one service>", rest)
 		}
 	case "up":
 		want := map[string]bool{"-d": false, "--no-deps": false, "--no-build": false}
@@ -449,7 +519,8 @@ func (r *ComposeRunner) Log() []string {
 	return append([]string(nil), r.log...)
 }
 
-// Mutating returns the logged commands that could have changed something: an up that is not a --dry-run.
+// Mutating returns the logged commands that could have changed something: an up that is not a --dry-run (a pull is
+// counted by Pulls).
 func (r *ComposeRunner) Mutating() []string {
 	var out []string
 	for _, l := range r.Log() {
@@ -460,4 +531,65 @@ func (r *ComposeRunner) Mutating() []string {
 	return out
 }
 
+// Pulls returns the logged `compose pull` commands: rung 3, the only place whalenurse fetches an image.
+func (r *ComposeRunner) Pulls() []string {
+	var out []string
+	for _, l := range r.Log() {
+		if strings.Contains(l, " pull --policy ") {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
 var _ compose.Runner = (*ComposeRunner)(nil)
+
+// ---- the rollback of an upgrade -------------------------------------------------------------------------------------
+
+var rollbackTagRE = regexp.MustCompile(`^docker image tag (sha256:[0-9a-f]{64}) (\S+)$`)
+
+// RunRollback runs the two lines of the rollback an "upgraded during heal" message gave, exactly as a person would paste
+// them, after checking each: the first must tag an image ID onto a reference of the test registry; the second must be
+// `docker compose -p <test project> [--project-directory D] [-f F]... [--env-file E]... up -d --no-deps --pull never <svc>`.
+// Anything else is REFUSED, so a rollback that named another project or added a flag cannot do harm.
+func (g *Guard) RunRollback(ctx context.Context, tagLine, upLine string) error {
+	m := rollbackTagRE.FindStringSubmatch(tagLine)
+	if m == nil {
+		return refuse("rollback line %q is not `docker image tag <image id> <ref>`", tagLine)
+	}
+	if err := requireTag(m[2]); err != nil {
+		return err
+	}
+	args := strings.Fields(upLine)
+	if len(args) < 6 || args[0] != "docker" || args[1] != "compose" || args[2] != "-p" {
+		return refuse("rollback line %q is not a docker compose -p command", upLine)
+	}
+	if err := RequireProject(args[3]); err != nil {
+		return err
+	}
+	tail := []string{"up", "-d", "--no-deps", "--pull", "never"}
+	rest := args[4:]
+	i := 0
+	for i < len(rest) && (rest[i] == "--project-directory" || rest[i] == "-f" || rest[i] == "--env-file") {
+		if i+1 >= len(rest) || strings.ContainsAny(rest[i+1], "'\"$`;&|") {
+			return refuse("rollback line %q: odd value for %s", upLine, rest[i])
+		}
+		i += 2
+	}
+	rest = rest[i:]
+	if len(rest) != len(tail)+1 || strings.HasPrefix(rest[len(tail)], "-") {
+		return refuse("rollback line %q does not end in `%s <service>`", upLine, strings.Join(tail, " "))
+	}
+	for j, w := range tail {
+		if rest[j] != w {
+			return refuse("rollback line %q does not end in `%s <service>`", upLine, strings.Join(tail, " "))
+		}
+	}
+	// Both lines are good: now run them, in order.
+	if err := g.Tag(ctx, m[1], m[2]); err != nil {
+		return err
+	}
+	g.touch(args[3])
+	_, err := g.R.Run(ctx, "docker", args[1:]...)
+	return err
+}

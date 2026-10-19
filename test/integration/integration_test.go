@@ -191,7 +191,12 @@ type running struct {
 	Rec     *engine.Recorder
 	D       *daemon.Daemon
 	Compose *ComposeRunner // every compose command the healer ran
+	stop    func()
 }
+
+// Stop ends the healer now (the test cleanup would do it at the end): a test that runs a rollback by hand must not
+// have the healer undoing it.
+func (r *running) Stop() { r.stop() }
 
 type daemonOpts struct {
 	Dry         bool
@@ -262,8 +267,9 @@ func startDaemonOpts(t *testing.T, g *Guard, cli *docker.Moby, o daemonOpts) *ru
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); _ = d.Run(ctx) }()
-	t.Cleanup(func() { cancel(); <-done })
-	return &running{Rec: rec, D: d, Compose: runner}
+	stop := func() { cancel(); <-done }
+	t.Cleanup(stop)
+	return &running{Rec: rec, D: d, Compose: runner, stop: stop}
 }
 
 // startDaemon runs the healer with real rung 1 and rung 2 (or none of them, with dry).

@@ -35,6 +35,8 @@ const (
 	DriftWarned         EventType = "DriftWarned"  // WHALENURSE_DRIFT_GUARD=warn: the recreate went ahead despite what the guard found
 	RungsDisabled       EventType = "RungsDisabled"
 	DependentPostCheck  EventType = "DependentPostCheck" // a dependent was still stale after a non-forced up: recreating it with --force-recreate
+	TagMoved            EventType = "TagMoved"           // rung 3 pulled a newer image: the tag now points elsewhere, for every stack that shares it
+	UpgradePostCheck    EventType = "UpgradePostCheck"   // after the pull's non-forced up the container was still the old one: recreating it with --force-recreate
 )
 
 // Event is one domain event. IDs are monotonic per host and times are UTC, so

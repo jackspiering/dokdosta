@@ -27,6 +27,11 @@ type Actor interface {
 	// --force-recreate. Compose hashes the resolved container:<id>, so the new parent ID makes it recreate the dependent
 	// itself (E2b, E2d).
 	Up(ctx context.Context, p Project) error
+	// Pull is rung 3's first step and the only call in whalenurse that fetches an image: `pull --policy always <svc>`.
+	// Nothing else is added (no --include-deps), so it refreshes the one service's image and nothing else. It does not
+	// recreate anything: the caller compares what the reference resolves to before and after, and only a changed image
+	// is followed by Up (plan §3.7).
+	Pull(ctx context.Context, p Project) error
 }
 
 // Compose runs a compose binary through a Runner.
@@ -86,6 +91,15 @@ func (c *Compose) Up(ctx context.Context, p Project) error {
 	return err
 }
 
+// Pull runs `pull --policy always <svc>`. --policy always makes compose ignore the service's own pull_policy: without
+// it, `never`, `build` and (before v5.6.0, and for a tag other than latest) `missing` and `if_not_present` make
+// `compose pull` skip an image that is already present, and the rung would report "no newer image" for an image it never
+// looked up (upstream check, plan v3.8). The label whalenurse.heal.pull=true is the opt-in to exactly this.
+func (c *Compose) Pull(ctx context.Context, p Project) error {
+	_, err := c.run.Run(ctx, c.cmd(p, "pull", "--policy", "always", p.Service))
+	return err
+}
+
 var _ Reader = (*Compose)(nil)
 var _ Actor = (*Compose)(nil)
 
@@ -97,6 +111,7 @@ type DryRun struct {
 
 func (d DryRun) Recreate(_ context.Context, p Project) error { return d.note("recreate", p) }
 func (d DryRun) Up(_ context.Context, p Project) error       { return d.note("up", p) }
+func (d DryRun) Pull(_ context.Context, p Project) error     { return d.note("pull", p) }
 
 func (d DryRun) note(verb string, p Project) error {
 	if d.Would != nil {

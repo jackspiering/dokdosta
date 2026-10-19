@@ -35,6 +35,8 @@ func (s *stub) Run(_ context.Context, name string, args ...string) (string, erro
 		return "id-" + args[len(args)-1] + "\n", nil
 	case strings.HasPrefix(line, "docker ps"):
 		return s.psOut, nil
+	case strings.HasPrefix(line, "docker port"):
+		return "127.0.0.1:49153\n[::1]:49153\n", nil
 	}
 	return "", nil
 }
@@ -231,6 +233,7 @@ func TestComposeFilterAcceptsExactlyWhatTheComposePackageBuilds(t *testing.T) {
 		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --hash=web",
 		"-p whalenurse-test-a version --short",
 		"-p whalenurse-test-a version",
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env pull --policy always web", // rung 3
 	} {
 		if err := CheckComposeCommand(strings.Fields(ok)); err != nil {
 			t.Errorf("%s: %v", ok, err)
@@ -244,6 +247,13 @@ func TestComposeFilterRefuses(t *testing.T) {
 		"down after the files":       "-p whalenurse-test-a --project-directory /s -f /s/c.yaml down",
 		"rm":                         "-p whalenurse-test-a rm -f web",
 		"pull":                       "-p whalenurse-test-a pull web",
+		"pull with the policy first": "-p whalenurse-test-a pull web --policy always",
+		"pull policy missing":        "-p whalenurse-test-a pull --policy missing web",
+		"pull with dependencies":     "-p whalenurse-test-a pull --policy always --include-deps web",
+		"pull all services":          "-p whalenurse-test-a pull --policy always",
+		"pull two services":          "-p whalenurse-test-a pull --policy always web db",
+		"pull a flag as a service":   "-p whalenurse-test-a pull --policy always --quiet",
+		"pull of another project":    "-p prod pull --policy always web",
 		"build":                      "-p whalenurse-test-a build web",
 		"run":                        "-p whalenurse-test-a run web",
 		"stop":                       "-p whalenurse-test-a stop web",
@@ -294,8 +304,14 @@ func TestComposeRunnerOnlyRunsWhatTheFilterAccepts(t *testing.T) {
 	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a down")}); !errors.Is(err, ErrRefused) {
 		t.Fatalf("down: %v", err)
 	}
-	if len(rec.ran) != 1 || len(r.Log()) != 1 || len(r.Mutating()) != 1 {
+	if len(rec.ran) != 1 || len(r.Log()) != 1 || len(r.Mutating()) != 1 || len(r.Pulls()) != 0 {
 		t.Fatalf("%v %v", rec.ran, r.Log())
+	}
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a pull --policy always web")}); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Pulls()) != 1 || len(r.Mutating()) != 1 {
+		t.Fatalf("a pull is counted by Pulls: %v / %v", r.Pulls(), r.Mutating())
 	}
 	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a --dry-run --progress json up -d --no-deps --pull never --no-build web")}); err != nil {
 		t.Fatal(err)
@@ -336,5 +352,95 @@ func TestImageHelpersStayInTheirNamespace(t *testing.T) {
 	}
 	if len(s.mutations()) != 4 {
 		t.Fatalf("%v", s.mutations())
+	}
+}
+
+// ---- the test registry (M4) ---------------------------------------------------------------------------------------
+
+const regRef = "127.0.0.1:49153/whalenurse-test/pull-app:latest"
+
+func TestRegistryHelpersStayInTheTestRegistry(t *testing.T) {
+	s := &stub{projects: map[string]string{"reg": "whalenurse-test-registry-ab12", "other": "prod"}}
+	g := &Guard{R: s}
+	ctx := context.Background()
+	for _, ref := range []string{
+		"", "busybox:1.37", "localhost:5000/whalenurse-test/x:1", "127.0.0.1/whalenurse-test/x:1", "127.0.0.1:5000/x:1",
+		"127.0.0.1:5000/whalenurse-test", "127.0.0.1:5000/other/x:1", "127.0.0.1:5000/whalenurse-test/x y", "127.0.0.1:5000/whalenurse-test/x;rm",
+		"ghcr.io/jackspiering/whalenurse:latest", "10.0.0.5:5000/whalenurse-test/x:1", "127.0.0.1:5000/whalenurse-test/../x:1x/$(id)",
+		"127.0.0.1:5000@evil.com/whalenurse-test/x:1", "docker.io/127.0.0.1:5000/whalenurse-test/x:1",
+	} {
+		refused(t, g.Push(ctx, ref))
+		refused(t, g.PullRegistry(ctx, ref))
+	}
+	if len(s.mutations()) != 0 {
+		t.Fatalf("a refused call ran: %v", s.mutations())
+	}
+	if err := g.Push(ctx, regRef); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.PullRegistry(ctx, regRef); err != nil {
+		t.Fatal(err)
+	}
+	// Tag and Build accept a registry reference as a destination, an image ID as a source, and nothing looser.
+	id := "sha256:" + strings.Repeat("a", 64)
+	if err := g.Tag(ctx, id, regRef); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Tag(ctx, "whalenurse-test/v2:1", regRef); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Build(ctx, regRef, "FROM busybox:1.37\nRUN echo v1 > /version\n"); err != nil {
+		t.Fatal(err)
+	}
+	refused(t, g.Tag(ctx, "sha256:abc", regRef))
+	refused(t, g.Tag(ctx, id+"x", regRef))
+	refused(t, g.Tag(ctx, id, "prod/app:1"))
+	refused(t, g.Tag(ctx, "127.0.0.1:49153/other/x:1", regRef))
+	// The registry itself is a base image, and only as itself.
+	if err := g.PullBase(ctx, "registry:2"); err != nil {
+		t.Fatal(err)
+	}
+	refused(t, g.PullBase(ctx, "registry:3"))
+	// The published port is read only for a container of a test project.
+	if p, err := g.PublishedPort(ctx, "reg", "5000/tcp"); err != nil || p != "49153" {
+		t.Fatalf("%q %v", p, err)
+	}
+	if _, err := g.PublishedPort(ctx, "other", "5000/tcp"); !errors.Is(err, ErrRefused) {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestRunRollbackRunsOnlyWhatARollbackIs(t *testing.T) {
+	id := "sha256:" + strings.Repeat("a", 64)
+	tagLine := "docker image tag " + id + " " + regRef
+	good := "docker compose -p whalenurse-test-a --project-directory /tmp/s -f /tmp/s/compose.yaml up -d --no-deps --pull never web"
+	s := &stub{}
+	g := &Guard{R: s}
+	ctx := context.Background()
+	if err := g.RunRollback(ctx, tagLine, good); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"docker tag " + id + " " + regRef, "docker " + strings.TrimPrefix(good, "docker ")}
+	if got := s.mutations(); strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Fatalf("%v", got)
+	}
+	for name, tc := range map[string][2]string{
+		"another project":       {tagLine, strings.Replace(good, "whalenurse-test-a", "prod", 1)},
+		"an extra flag":         {tagLine, strings.Replace(good, "up -d", "up -d --force-recreate", 1)},
+		"a different command":   {tagLine, "docker compose -p whalenurse-test-a down"},
+		"down in the middle":    {tagLine, "docker compose -p whalenurse-test-a down && " + good},
+		"quoted path":           {tagLine, strings.Replace(good, "/tmp/s ", "'/tmp/s;x' ", 1)},
+		"a shell metacharacter": {tagLine, good + " ; id"},
+		"pull may pull":         {tagLine, strings.Replace(good, "--pull never", "--pull always", 1)},
+		"not docker":            {tagLine, "sh -c id"},
+		"tag onto a bad ref":    {"docker image tag " + id + " prod/app:1", good},
+		"tag from a name":       {"docker image tag busybox:1.37 " + regRef, good},
+		"tag with more":         {tagLine + " && docker rm x", good},
+	} {
+		s2 := &stub{}
+		refused(t, (&Guard{R: s2}).RunRollback(ctx, tc[0], tc[1]))
+		if m := s2.mutations(); len(m) != 0 {
+			t.Errorf("%s: a refused rollback reached docker (not even its tag may run): %v", name, m)
+		}
 	}
 }

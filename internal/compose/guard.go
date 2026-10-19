@@ -51,6 +51,11 @@ type GuardInput struct {
 	// RefHolder: network_mode, ipc, pid or volumes_from names another service or container. Compose hashes those after
 	// resolving them, so neither the oracle nor `config --hash` can be trusted for it (E4, E5) and check 1 is skipped.
 	RefHolder bool
+	// Pull: the check before rung 3's pull (plan §3.7). Checks 1 and 3 run; check 2 is not a finding, because the pull is
+	// about to move the tag itself. Compose's dry-run says "Recreate" for a moved tag as well and cannot say why, so a
+	// Recreate is a config finding unless `config --hash` still matches the label and the explicit comparison shows the
+	// image moved: then it is the image alone, which a pull is meant to change.
+	Pull bool
 }
 
 // Guard runs the three drift checks of plan §3.6 before a recreate.
@@ -61,6 +66,9 @@ type Guard struct {
 
 // Check returns the findings; none means the recreate may go ahead. It never changes anything.
 func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
+	if in.Pull {
+		return g.checkBeforePull(ctx, in)
+	}
 	var out []Finding
 
 	// Check 1: config drift. The oracle is compose's own decision and covers config and image drift together;
@@ -99,6 +107,42 @@ func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
 		}
 	}
 	return out
+}
+
+// checkBeforePull is Check for rung 3: the config drift check and the version-skew check, not the image check.
+func (g Guard) checkBeforePull(ctx context.Context, in GuardInput) []Finding {
+	var out []Finding
+	var configDrift string
+	if !in.RefHolder {
+		var f *Finding
+		configDrift, f, _ = g.configCheck(ctx, in)
+		if f != nil {
+			out = append(out, *f)
+		}
+		if configDrift != "" && g.onlyTheImageMoved(ctx, in) {
+			configDrift = ""
+		}
+	}
+	if configDrift != "" {
+		if msg := g.skew(in); msg != "" {
+			out = append(out, Finding{CheckSkew, msg})
+		} else {
+			out = append(out, Finding{CheckConfig, configDrift + g.upgraded(in)})
+		}
+	}
+	return out
+}
+
+// onlyTheImageMoved reports whether the compose config is unchanged (its hash equals the label) while the image the
+// reference resolves to is not the one the container was created from. Anything it cannot establish is "no".
+func (g Guard) onlyTheImageMoved(ctx context.Context, in GuardInput) bool {
+	f, drift := g.imageCheck(ctx, in)
+	if f != nil || drift == "" {
+		return false
+	}
+	want := in.Labels[LabelConfigHash]
+	hash, err := g.Compose.ConfigHash(ctx, in.Project)
+	return err == nil && want != "" && hash == want
 }
 
 // configCheck is check 1. It returns the drift message (empty for none), a finding when the check could not be made, and
