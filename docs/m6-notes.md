@@ -115,8 +115,8 @@ Locally (no Docker daemon was used; no integration test was run, per the working
 - **GoReleaser v2.18.3, built from source with syft v1.55.0**: `goreleaser check` passes, and `goreleaser release --snapshot
   --skip=sign,docker,publish` builds both archives, both SPDX SBOMs and a `checksums.txt` that lists all four; the amd64 binary
   prints `whalenurse 0.0.0-SNAPSHOT-<sha>` and the arm64 one is a static ELF.
-- `docker compose config -q` on the three compose examples (with their variables, and without them: the message names
-  `DOCKER_GID`), `systemd-analyze verify` on the unit (clean, pointed at a real binary; with a typo'd directive it prints a
+- `docker compose config -q` on the three compose examples (with their variables, and without them: the message says a required variable is missing; which one it names first depends on the compose version),
+  `systemd-analyze verify` on the unit (clean, pointed at a real binary; with a typo'd directive it prints a
   warning, which is why CI fails on any output) and `systemd-analyze --offline=true security` (1.4).
 - `cosign sign-blob --help` / `verify-blob --help` show the `--bundle` and `--yes` flags the configuration uses.
 

@@ -155,7 +155,7 @@ jobs:
             echo "== examples/$d"
             (cd "examples/$d" && DOCKER_GID=999 DEMO_DIR="$PWD" docker compose config -q)
             # without the variables the file must refuse to start, with a message that says what to do
-            (cd "examples/$d" && ! docker compose config -q 2>"$RUNNER_TEMP/err.txt"); grep -q DOCKER_GID "$RUNNER_TEMP/err.txt"
+            (cd "examples/$d" && ! docker compose config -q 2>"$RUNNER_TEMP/err.txt"); grep -q "required variable" "$RUNNER_TEMP/err.txt"
           done
           echo "== examples/full (with .env.example)"
           (cd examples/full && docker compose --env-file .env.example config -q)
