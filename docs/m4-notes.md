@@ -55,6 +55,16 @@ CI run [39220206164](https://github.com/jackspiering/whalenurse/actions/runs/392
 - `TestDryRunNeverPulls`: no `compose pull`, no mutating compose command, no pull event, the image and container untouched, "would pull" messages all marked `[dry-run]`.
 - `TestVersionGateDisablesThePullRung`: with a faked Engine 28.0.4, only the restart ran, `RungUnavailable` for recreate and pull, compose never ran.
 
+**After the review follow-ups** (decisions 1 to 4 above): CI run [39243154833](https://github.com/jackspiering/whalenurse/actions/runs/39243154833) (PR #12, commit 64dd774, the last code change; the commit that records it changes only this file): all 10 jobs green, all six integration legs, with the new tests on every leg:
+
+- `TestPullRungRespectsPullPolicyNever` (real compose: the policy is read with `config --format json --no-env-resolution`, nothing is pulled, the giving-up message says "pull rung does not apply (pull_policy never)") and `TestPullRungOverridesPullPolicyMissing` (a `missing` policy on a non-latest tag is upgraded on compose 5.2.0, 5.6.0 and latest, which closes the "not observed" gap of the first build).
+- `TestHealPullWithoutRecreateKeepsThePullRungOff` (restart only, compose never runs).
+- `TestRung2TakesAMovedTagForAPullEnabledContainer`: the neighbour's pull moved the tag, the pull-enabled container's rung 2 was not blocked, took v2, one `Upgraded` message with the rollback, and the rollback executed as pasted put v1 back, on both stores (so the container's `.Image` is a taggable ID on the containerd store too).
+- `TestSidecarSharingTheImageTakesTheMovedTag`: the sidecar on the same image reference was recreated against the new parent on v2 without a drift block, its service is in the message's one `up` line, and the pasted rollback put both services back on v1.
+- The shared-tag test without the pull label still blocks and names the mover.
+
+One leg (containerd, compose 5.2.0) failed once on the previous commit in `TestVersionGateDisablesThePullRung` ("1 image pull events below the gate") although whalenurse had run no compose command at all and the same test passed on the other five legs and in the earlier runs. The cause was not identified (the log did not name the image). The M4 assertions now count only pulls of the test registry's images (others are logged and not counted) and query `docker events` from the exact start time instead of one second earlier; the guard's `ImagePullRefs` lists what was pulled. `TestHealNeverPulls` (M2b) keeps its unfiltered count. If a stray event about a registry image ever shows up again, the log now says which.
+
 ## Not verified
 
 - **The integration tests were not run locally** (the plan forbids it; CI is their only run), and the throwaway-VM scenario was not run: M4 changed nothing that scenario checks, but a pull from a real registry (Docker Hub, GHCR) was not exercised, only the loopback one over plain HTTP. TLS to a real registry from the built image (the CA bundle in `distroless/static`) is untested, as in M3.
