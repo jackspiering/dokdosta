@@ -8,9 +8,11 @@
 // Rung 2 (recreate) is carried out by the daemon through compose. The engine
 // only plans it (Plan.Act is ActionRecreate or ActionRecreateStale), and the
 // daemon runs the drift guard in between and reports the verdict back through
-// Blocked or Warned. Where a rung cannot run (the version gate, no compose
-// inputs) the ladder records RungUnavailable and moves on, so an unhealthy
-// container then goes restart, then SUSPENDED.
+// Blocked or Warned. Rung 3 (pull, opt-in) is planned the same way (ActionPull);
+// when the daemon finds the pulled image unchanged it says so in Result.Exhausted
+// and the ladder ends at once. Where a rung cannot run (the version gate, no
+// compose inputs) the ladder records RungUnavailable and moves on, so an
+// unhealthy container then goes restart, then SUSPENDED.
 //
 // The Engine is safe for concurrent use: the daemon loop drives it, and the
 // control socket's commands (pause, resume, unsuspend, status) call it from HTTP
@@ -62,7 +64,7 @@ type Target struct {
 
 // Plan is what the daemon should do after Evaluate.
 type Plan struct {
-	Act       rules.Action // ActionNone, ActionRestart, ActionStart, ActionRecreate or ActionRecreateStale
+	Act       rules.Action // ActionNone, ActionRestart, ActionStart, ActionRecreate, ActionRecreateStale or ActionPull
 	Rung      string
 	RecheckAt time.Time // inspect again then (cooldown, recovery period); zero for none
 }
@@ -71,6 +73,12 @@ type Plan struct {
 type Result struct {
 	Err    error
 	DryRun bool
+	// Attrs are added to the ActionResult event (the pull rung says its outcome and the image here).
+	Attrs map[string]string
+	// Exhausted, when set, says the action found nothing left to try: the pull rung sets it when the pulled image is the
+	// one already there. The ladder is then spent at once, without a cooldown, and the container is SUSPENDED with this
+	// text as the cause (plan §3.7: "if the digest is unchanged, notify and SUSPEND").
+	Exhausted string
 }
 
 type window struct{ start, end time.Time } // end zero: still open
@@ -249,6 +257,37 @@ func (e *Engine) Busy(key string) bool {
 		}
 	}
 	return false
+}
+
+// IncidentOpenedAt returns when the key's open incident was opened.
+func (e *Engine) IncidentOpenedAt(key string) (time.Time, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if st, ok := e.keys[key]; ok && st.incident != nil {
+		return st.incident.opened, true
+	}
+	return time.Time{}, false
+}
+
+// RungNotApplicable skips the rung the plan named, without running it and without spending a rate-limit slot: the
+// service's own configuration rules it out (the pull rung of a service with pull_policy never or build). When it was
+// the last rung the ladder is spent and the container is SUSPENDED, with why as the cause.
+func (e *Engine) RungNotApplicable(t Target, rung, why string, cfg config.Container) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st := e.state(t.Key)
+	defer e.flush(t.Key, st)
+	inc := st.incident
+	if inc == nil {
+		return
+	}
+	e.emit(t, RungUnavailable, fmt.Sprintf("rung %q skipped: %s", rung, why), map[string]string{"rung": rung, "not_applicable": "true"})
+	inc.rung++
+	st.dirty = true
+	if inc.rung >= len(cfg.Actions) {
+		inc.spent, inc.spentReason = true, ReasonLadder
+		e.suspend(t, st, "every rung ran or was unavailable: "+why, rules.Decision{Class: inc.class})
+	}
 }
 
 // IncidentOpen reports whether the key has an incident, and whether it is SUSPENDED.
@@ -664,7 +703,7 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 			continue
 		}
 		switch r {
-		case config.RungRestart, config.RungRecreate:
+		case config.RungRestart, config.RungRecreate, config.RungPull:
 			if !e.rateOK(now) {
 				if !inc.rateNoted {
 					inc.rateNoted = true
@@ -674,12 +713,15 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 			}
 			inc.rateNoted = false
 			act := d.Action
-			if r == config.RungRecreate && !act.IsRecreate() {
+			switch {
+			case r == config.RungRecreate && !act.IsRecreate():
 				act = rules.ActionRecreate // rung 2 after a restart: compose --force-recreate
+			case r == config.RungPull:
+				act = rules.ActionPull // rung 3: pull, and an up only if the image changed (the daemon decides)
 			}
 			return Plan{Act: act, Rung: r}
 		default:
-			e.emit(t, RungUnavailable, fmt.Sprintf("rung %q: the pull rung is not built yet (M4); skipped", r), map[string]string{"rung": r})
+			e.emit(t, RungUnavailable, fmt.Sprintf("rung %q is not a rung whalenurse knows; skipped", r), map[string]string{"rung": r})
 			inc.rung++
 			st.dirty = true
 		}
@@ -697,6 +739,12 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 // the container is SUSPENDED, because the pull rung would be stopped by the same findings. The daemon calls it instead
 // of Begin, so no rate-limit slot is spent. It reports false when the incident is gone or already suspended.
 func (e *Engine) Blocked(t Target, d rules.Decision, findings []string) bool {
+	return e.BlockedWith(t, d, findings, nil)
+}
+
+// BlockedWith is Blocked with extra attributes on the DriftBlocked event: when the tag that moved was moved by
+// whalenurse's own pull rung, the daemon says which container did it and when (plan §3.6, §3.7).
+func (e *Engine) BlockedWith(t Target, d rules.Decision, findings []string, extra map[string]string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	st := e.state(t.Key)
@@ -706,7 +754,11 @@ func (e *Engine) Blocked(t Target, d rules.Decision, findings []string) bool {
 		return false
 	}
 	cause := strings.Join(findings, "; ")
-	e.emit(t, DriftBlocked, "recreate skipped by the drift guard: "+cause, map[string]string{"class": string(d.Class), "findings": cause})
+	attrs := map[string]string{"class": string(d.Class), "findings": cause}
+	for k, v := range extra {
+		attrs[k] = v
+	}
+	e.emit(t, DriftBlocked, "recreate skipped by the drift guard: "+cause, attrs)
 	inc.spent, inc.spentReason = true, ReasonDrift
 	e.suspend(t, st, "recreate skipped by the drift guard ("+cause+"): "+d.Reason, d)
 	return true
@@ -766,6 +818,9 @@ func (e *Engine) End(t Target, plan Plan, res Result, cfg config.Container) (rec
 		msg = "failed: " + res.Err.Error()
 	}
 	attrs := e.actionAttrs(plan, res.Err == nil)
+	for k, v := range res.Attrs {
+		attrs[k] = v
+	}
 	if res.DryRun {
 		attrs["dry_run"] = "true"
 		msg = "dry-run: would " + string(plan.Act)
@@ -773,6 +828,13 @@ func (e *Engine) End(t Target, plan Plan, res Result, cfg config.Container) (rec
 	e.emit(t, ActionResult, string(plan.Act)+" "+msg, attrs)
 	inc := st.incident
 	if inc == nil {
+		return time.Time{}
+	}
+	if res.Exhausted != "" && res.Err == nil && !res.DryRun {
+		// Nothing left to try (the pull found no newer image): no cooldown to wait out, the ladder is spent.
+		inc.rung++
+		inc.spent, inc.spentReason = true, ReasonLadder
+		e.suspend(t, st, "every rung ran or was unavailable: "+res.Exhausted, rules.Decision{Class: inc.class})
 		return time.Time{}
 	}
 	cd := config.CooldownFor(e.p.BaseCooldown, cfg.Cooldown, inc.rung)

@@ -21,6 +21,7 @@ const (
 	ActionStart         Action = "start"           // API start: created or exited
 	ActionRecreate      Action = "recreate"        // compose --force-recreate, skipping the restart rung that cannot help (a network that is gone)
 	ActionRecreateStale Action = "recreate-stale"  // a dependent whose parent was recreated: compose up without --force-recreate (plan §3.5)
+	ActionPull          Action = "pull"            // rung 3 (opt-in): compose pull, then an up if the image changed; only the ladder plans it, never the rules
 	ActionNeedsRecreate Action = "needs-recreate"  // advisory: a recreate is what it needs, but none is available (version gate, no usable compose labels)
 	ActionWaitForParent Action = "wait-for-parent" // act only on the parent
 	ActionNotify        Action = "notify"          // log + domain event, no action

@@ -7,7 +7,7 @@ import (
 
 // Call records one call on a Fake.
 type Call struct {
-	Verb    string // dry-run | hash | recreate | up
+	Verb    string // dry-run | hash | policy | recreate | up | pull
 	Project Project
 }
 
@@ -20,8 +20,10 @@ type Fake struct {
 	Bin        Binary
 	OracleFn   func(p Project, containerName string) (Oracle, error) // default: an unchanged container
 	HashFn     func(p Project) (string, error)
+	PolicyFn   func(p Project) (string, error) // default: no pull_policy
 	OnRecreate func(p Project) error
 	OnUp       func(p Project) error
+	OnPull     func(p Project) error
 }
 
 // NewFake returns a Fake that reports compose 5.6.0 from the host plugin.
@@ -71,6 +73,14 @@ func (f *Fake) ConfigHash(_ context.Context, p Project) (string, error) {
 	return "", ErrUnparseable
 }
 
+func (f *Fake) PullPolicy(_ context.Context, p Project) (string, error) {
+	f.record("policy", p)
+	if f.PolicyFn != nil {
+		return f.PolicyFn(p)
+	}
+	return "", nil
+}
+
 func (f *Fake) Recreate(_ context.Context, p Project) error {
 	f.record("recreate", p)
 	if f.OnRecreate != nil {
@@ -83,6 +93,14 @@ func (f *Fake) Up(_ context.Context, p Project) error {
 	f.record("up", p)
 	if f.OnUp != nil {
 		return f.OnUp(p)
+	}
+	return nil
+}
+
+func (f *Fake) Pull(_ context.Context, p Project) error {
+	f.record("pull", p)
+	if f.OnPull != nil {
+		return f.OnPull(p)
 	}
 	return nil
 }

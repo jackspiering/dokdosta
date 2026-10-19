@@ -1,7 +1,24 @@
-# whalenurse — implementation plan v3.7
+# whalenurse — implementation plan v3.8
 
-Status: **v3.7, approved by the maintainer on 19 Oct 2026** (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.6. Facts and versions are as of 18 Oct 2026 (16 Oct for the prior-art survey).
+Status: **v3.8, approved by the maintainer on 19 Oct 2026** (the M4 review: it is v3.7 plus the M4 findings and decisions below, [m4-notes.md](m4-notes.md), with the maintainer's answers in items 11 to 15). v3.7 was approved by the maintainer on 19 Oct 2026 (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.7. Facts and versions are as of 18 Oct 2026 (16 Oct for the prior-art survey).
 Repo: `github.com/jackspiering/whalenurse` (Go module path, GHCR image and binary are all lowercase).
+
+**Changes in v3.8** (from building M4; evidence and open questions in [m4-notes.md](m4-notes.md)):
+1. §3.7, **`compose pull --policy always <svc>`**, not a bare `pull <svc>`. Upstream check (compose v5.2.0, v5.6.0 and main, `pkg/compose/pull.go`, `cmd/compose/pull.go`): `compose pull` skips an image whose `pull_policy` is `never` or `build` in every release, and `missing`/`if_not_present` when the image is already present (v5.2.0 for every tag; v5.6.0 and later only refresh `latest` and a service with no policy). A skipped pull leaves the digest unchanged and the rung would say "no newer image" for an image it never looked up. `--policy always` (present in v5.2.0 and v5.6.0) overrides the service's policy for the project, so it replaces `missing`, `if_not_present`, the refresh windows and no policy at all; **`never` and `build` are respected, not overridden** (item 14). Nothing else is added (no `--include-deps`): one service. Compose's `up` stays `--pull never --no-build`.
+2. §3.7, §3.6 check 1, **the guard before a pull runs checks 1 and 3 only** (`GuardInput.AllowImageMove`). Compose's dry-run oracle says `Recreate` for a moved tag as well and cannot say why, so before a pull a `Recreate` is a config finding **unless** `config --hash` still equals the container's label **and** the explicit comparison shows the image moved: then it is the image alone, which a pull is meant to change, and it does not block. Anything that cannot be established blocks. (Rung 2's guard blocks and SUSPENDS on a moved tag, v3.6 item 6, except for a container with `heal.pull=true`, which takes the move: item 12.)
+3. §3.2, §3.7, **an unchanged digest SUSPENDS at once** (no cooldown to wait out), with the cause "the pull found no newer image for <ref> (still <id>)". "Changed" means the platform image ID (`image inspect --platform linux/<arch>`, the drift comparator) moved, because that is what will run. The unchanged pull does not send its own message: the giving-up message says it.
+4. §3.7, **after a changed pull**: the move is recorded at once (the tag has moved for every stack that shares it, whether or not the `up` works), then the non-forced `up -d --no-deps --pull never --no-build <svc>`, then a **post-check that the container really was replaced** (compose recreates on a changed image by itself, E5; if it left the old container, it is recreated with `--force-recreate`; "upgraded" is announced only for a container that was replaced and runs), then `TagMoved`, then the dependents step exactly as after rung 2. The pull spends a rate-limit slot and, like rung 2, is skipped (`RungUnavailable`) with the version gate or without usable compose inputs: **rungs 2 and 3 are unavailable together**.
+5. §3.6, §3.7, **`TagMoved`** (new domain event; attributes: reference, old and new image ID, the image to roll back to, the two rollback commands, `ok`/`error`). The record (reference normalized, so `nginx`, `nginx:latest` and `docker.io/library/nginx:latest` are one; which container's pull rung; when; old and new IDs) is kept in the store's meta and survives a restart. A drift block (image finding) on another stack that shares the tag **names the container that moved it and when**, on its own line of the message and as event attributes, **only while the reference still resolves to what that pull produced**; if someone moved it again, nothing is claimed.
+6. §3.12, **the "upgraded during heal" notification** (`TagMoved`; important): old → new image (12 hex digits each) and the exact rollback, two lines at the end of the body that are never cut: `docker image tag <old image id> <ref>` and `docker compose -p <project> --project-directory <dir> -f <file>... [--env-file <f>...] up -d --no-deps --pull never <svc>` (the host's `docker compose`, not whalenurse's binary). The old image is the **plain** ID read before the pull (the index digest on the containerd store, which can be tagged; the platform manifest digest may not be). **A change to the v3.7 size rule:** the body limit is 360 runes, except for a message with commands to copy, whose commands are kept whole and whose limit is 720; the title limit is unchanged. If the commands are longer than that, they are still kept whole. The pull's own `ActionResult` is not notified when it has an outcome (`unchanged`, `upgraded`, `upgrade-failed`): the giving-up and the upgrade message say it. A failed pull command is an ordinary failed action ("pull failed", with the error). A dry run says "would pull", marked, and records nothing.
+7. §3.8, §3.3 (d), **actions that block the loop** (the loop is synchronous: a pull, an `up` and a forced recreate can run for minutes): (a) `/healthz` and the uptime ping tolerate an **action in flight**: the "main loop silent" check is skipped for 11 minutes from the start of the current phase (the pull, the up and a forced recreate each restart the count); a pull is bounded at 10 minutes (`pullTimeout`). (b) **The `last_seen` heartbeat is written from a goroutine of its own while an action runs** (every 5 s), because the shutdown window within one boot ends 5 minutes after `last_seen` (§3.3 rule 4): without it a daemon restart in the middle of a long action would put the containers it stopped outside the window, and a `restart: "no"` app that exits 1 on SIGTERM would be started, the bug of v3.5. This also covers rung 2's recreate (5 minutes), which sat on that edge.
+8. §3.7, **private registries are not supported by rung 3**: the compose child process runs without `DOCKER_CONFIG` (§3.4) and the image carries no credentials, so a registry that needs a login fails the pull as an ordinary failed action. Recorded as a limitation, not a block.
+9. §3.2: **rung 3 requires rung 2** (maintainer decision, item 11): see there. (The first M4 build appended the pull to whatever `actions` said.)
+10. §6, §7: the M4 integration tests against a local `registry:2` (a `whalenurse-test-registry-*` project on `127.0.0.1:<port>`; the Guard accepts only `127.0.0.1:<port>/whalenurse-test/...` for push, pull and tags, only `pull --policy always <one service>` from compose, and runs the rollback lines only after checking them): no label, no pull; no newer image, SUSPENDED; newer image, upgraded with the sidecar repaired and the rollback executed as pasted; a drift block on a shared tag that names the mover; dry-run does not pull; the version gate disables the rung. A positive control (docker events reports the pull) backs every "no pull happened" assertion. The tests of items 11 to 14 are listed there. M4 is done.
+11. §3.2, §4 (maintainer decision, 19 Oct 2026): **rung 3 requires rung 2.** `whalenurse.heal.pull=true` with no `recreate` in `whalenurse.actions` gives one warning (the label warning, once per container: "needs recreate in whalenurse.actions") and the pull rung stays off; the ladder is whatever `actions` says. With `recreate` present (the default) the label appends the pull as before.
+12. §3.6 check 2, §3.7 (maintainer decision): **rung 2 lets an image-only drift through for a container with `heal.pull=true`** (the same guard mode as before a pull: `GuardInput.AllowImageMove`; config drift, an oracle `Recreate` that `config --hash` cannot attribute to the image alone, and "can't verify" still block). A recreate that ends on a different image than the container was created from (`.Image` of the container before and after, the same field the rollback tags) is **"upgraded during heal"**: a new domain event `Upgraded`, notified with the same message as `TagMoved` and the rollback (tag the old image ID, then up), and it says the tag was moved by someone else. Without the label a moved tag blocks and SUSPENDS as in v3.6.
+13. §3.5, §3.7 (maintainer decision): **the dependents step may take a tag that its parent's own pull moved in this incident, and only that**: for a stale sidecar the drift guard runs in the same mode only if the reference still resolves to what that pull produced, the pull was made by a service the sidecar's `depends_on` names, after that service's incident opened (and the incident is still open), and the sidecar was created from the image that pull replaced. Anything else is image drift as before. The sidecar's rollback is **in the same upgrade message**: the sidecars that run the same image reference and were created from the replaced image are found when the pull starts (also when they are already stale), and the one `up` line names the parent and them (`... up -d --no-deps --pull never app side`; the tag line is the same for all). A sidecar's own recreate says nothing of its own.
+14. §3.7 (maintainer decision): **the pull rung respects `pull_policy: never` and `build`.** Before the guard, whalenurse reads the service's policy with `config --format json --no-env-resolution <svc>` (a new typed compose method; only `services.<svc>.pull_policy` is read, the rest, which can hold interpolated secrets, is dropped and never logged). For `never` or `build`, or if the policy cannot be read (fail closed), rung 3 does not run, no rate-limit slot is spent, a `RungUnavailable` event records it, and, the pull being the last rung, the container is SUSPENDED with the cause **"pull rung does not apply (pull_policy never)"** (or "cannot read the service's pull_policy (...)"), which is the one giving-up message. A dry run reads the policy too. `--policy always` replaces `missing`, `if_not_present`, the refresh windows and no policy. The CI matrix pins this with a real compose: a service with `pull_policy: never` is not pulled; a service with `pull_policy: missing` on a tag other than latest (which a bare `pull` skips in v5.2.0 and v5.6.0) is.
+15. §3.12, §5 (maintainer decision): **720 runes for the upgrade message is approved**; with sidecars the commands are still kept whole (the parent and sidecars are one `up` line). **Private registries stay unsupported** for rung 3 and are documented as such; an optional read-only `DOCKER_CONFIG` mount is a candidate for M6.
 
 **Changes in v3.7** (from building M3; evidence in [m3-notes.md](m3-notes.md)):
 1. §3.12 (new): the notification rules. Shoutrrr is `github.com/nicholas-fedor/shoutrrr` v0.22.0 (vetted, see §5). `internal/notify` is one more subscriber of the domain event stream. It sends **only** these events: `ActionResult` (action taken), `Recovered`, `Suspended` (giving up, or flapping), `Unsuspended`, `DriftBlocked`, `DriftWarned`, `NotifyOnly`, `NeedsRecreate`, `RateLimited`, `RungsDisabled` (the version-gate warning), `Paused` and `Resumed` (the last two of those, `Unsuspended` and `RateLimited`, are items 13 and 14 below). Everything else stays in the log and the store.
@@ -159,7 +176,7 @@ more than FLAP_LIMIT incidents (default 3) within FLAP_WINDOW (default 24h)
 any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)--> re-evaluate
 ```
 
-- **Rungs:** set per container with `whalenurse.actions` (default `restart,recreate`). Rung 3 is appended only with `whalenurse.heal.pull=true`. Each rung runs once per incident. Rungs 2 and 3 are available only with Engine ≥ 28.1 and Compose ≥ v5.2.0; otherwise they are disabled at startup and the ladder ends after rung 1 (§3.6, *Minimum versions per rung*).
+- **Rungs:** set per container with `whalenurse.actions` (default `restart,recreate`). Rung 3 is appended only with `whalenurse.heal.pull=true`, and only if `recreate` is in the ladder (v3.8 item 11). Each rung runs once per incident. Rungs 2 and 3 are available only with Engine ≥ 28.1 and Compose ≥ v5.2.0; otherwise they are disabled at startup and the ladder ends after rung 1 (§3.6, *Minimum versions per rung*).
 - **Recovered means:**
   - with a healthcheck: health is `healthy`;
   - without one: the container is running and `RestartCount` has not changed for `RECOVERY_PERIOD`.
@@ -358,7 +375,7 @@ A recreate deploys whatever is on disk and in the local image store *now*. The g
    - **`image inspect --platform` needs Engine 28.1 or later** (API 1.49; docker/cli added the flag after v28.0.4, and the GitHub runner's Engine 28.0.4 answered `unknown flag: --platform` in the first CI run of the `image-drift` job). There is **no fallback and no store guessing** for older Engines: see *Minimum versions per rung* below.
    - The oracle already covers image drift for the services it checks. Run this explicit comparison for the services the oracle skips and whenever the hash fallback is used.
    - Fresh Engine v29 installs default to the containerd store, and a host that has run the classic store stays on it unless `containerd-snapshotter` is set explicitly. The CI `image-drift` job runs the check on both stores.
-   - Allowed only for rung 3.
+   - Not a finding before rung 3's pull (v3.8 item 2): the pull is about to move the tag.
 3. **Compose version skew** (only when running the bundled compose fallback):
    - Compare the container's `com.docker.compose.version` label (present; `5.6.0` in the fixtures) with the bundled version.
    - If both the versions and the hashes differ, report "can't verify drift (compose X on host vs Y in whalenurse)". This blocks, also in `warn`.
@@ -366,7 +383,7 @@ A recreate deploys whatever is on disk and in the local image store *now*. The g
    - This is a real risk: v5.5.0 changed image-digest reconciliation and v5.6.0 pinned the hash byte layout. M0 had only one compose version, so skew is exercised by the CI matrix (§6).
 
 **On any failure:** skip the recreate, notify with the specific cause, and set SUSPENDED.
-- If whalenurse itself moved a shared tag (via rung 3 on another service), the message says which service did it and when.
+- If whalenurse itself moved a shared tag (via rung 3 on another service), the message says which service did it and when (v3.8 item 5).
 
 **Strictness:** `WHALENURSE_DRIFT_GUARD=strict|warn` (default `strict`). `warn` recreates anyway and says so, for **verified drift only** (a `config` or `image` finding); a "can't verify" finding (a check that could not be made, the bundled compose's version skew) still blocks (v3.6, item 11).
 
@@ -378,18 +395,20 @@ A recreate deploys whatever is on disk and in the local image store *now*. The g
 
 ### 3.7 Pull rung (opt-in, `whalenurse.heal.pull=true`)
 
-Runs only after restart and recreate have failed.
-1. Run `<compose> pull <svc>`.
-2. If the digest is unchanged, skip to notify + SUSPENDED.
-3. If it changed, run `up ... --pull never`, then the dependents step.
+Runs only after restart and recreate have failed (it needs `recreate` in the ladder, v3.8 item 11) and only above the version gate, §3.6. In this order:
+0. Read the service's `pull_policy`; `never` and `build` (or an unreadable policy) end the rung without running it: SUSPENDED with "pull rung does not apply (pull_policy ...)" (v3.8 item 14).
+1. Run drift checks 1 and 3 (§3.6; the guard in pull mode, v3.8 item 2) **before** the pull, not after it. After a pull that changed the image, the dry-run oracle reports `Recreate` because the image changed (E5), so checking afterwards would block every pull rung. A blocked check skips the pull, notifies, and SUSPENDS (`DriftBlocked`).
+2. Read what the image reference resolves to for `linux/<arch>` (and the plain ID, for the rollback). Run `<compose> ... pull --policy always <svc>` (v3.8 item 1). Read the reference again.
+3. If the platform image ID is unchanged: notify (the giving-up message says "the pull found no newer image for <ref>") and SUSPEND at once.
+4. If it changed: record the move (`TagMoved`, below), run `up -d --no-deps --pull never --no-build <svc>` (not forced), check that the container was replaced (`--force-recreate` if it was not), then the dependents step (§3.5), in which a sidecar may take this move and only this one (v3.8 item 13).
 
-Run drift checks 1 and 3 (§3.6) **before** step 1, not after the pull. After a pull that changed the image, the dry-run oracle reports `Recreate` because the image changed (E5), so checking afterwards would block every pull rung. After the pull, only check that the digest changed.
+The notification ("upgraded during heal", from `TagMoved`) includes:
+- the old image → new image;
+- the exact rollback commands: `docker image tag <old-id> <ref>`, then `<docker compose> -p ... up -d --no-deps --pull never <svc> [<sidecar>...]` (the old image stays local until pruned); the same message, as `Upgraded`, when rung 2 of a `heal.pull=true` container took a tag that someone else had moved (v3.8 item 12).
 
-The notification includes:
-- the old digest → new digest;
-- the exact rollback command, e.g. `docker image tag <old-id> <ref> && <compose> ... up -d --no-deps --pull never <svc>` (the old image stays local until pruned).
+`TagMoved` records that whalenurse moved a tag: the container, the time and the old and new IDs, in the store's meta, kept until the same reference is moved again. Other stacks sharing the tag will now see image drift, and when the drift guard blocks one of them, its message says which container moved the tag and when (only while the reference still resolves to what that pull produced). A dry run never pulls and records nothing.
 
-Record a "tag moved by whalenurse" entry, because other stacks sharing the tag will now see image drift.
+Limitation: the pull uses the compose child's environment (no `DOCKER_CONFIG`), so it cannot log in to a private registry (v3.8 item 15; a read-only `DOCKER_CONFIG` mount is an M6 candidate).
 
 ### 3.8 Guardrails
 - Opt-in label `whalenurse.enable=true`, or `WHALENURSE_MODE=all`.
@@ -436,13 +455,14 @@ Record a "tag moved by whalenurse" entry, because other stacks sharing the tag w
 
 | Event | Message | Weight |
 |---|---|---|
-| `ActionResult` | action taken: `restarted`, `recreated`, `started`, or `restart failed` with the error; says why it was started and the rung | routine |
+| `ActionResult` | action taken: `restarted`, `recreated`, `started`, `pulled`, or `restart failed` with the error; says why it was started and the rung. Not sent for a pull with an outcome (`unchanged`, `upgraded`, `upgrade-failed`): the two rows below say it | routine |
 | `Recovered` | recovered | routine |
 | `Unsuspended` | unsuspended, with the reason (v3.7 item 13) | routine |
-| `Suspended`, reason `ladder` | giving up, SUSPENDED, with the cause and `whalenurse unsuspend <scope>` | important |
+| `Suspended`, reason `ladder` | giving up, SUSPENDED, with the cause (also "the pull found no newer image") and `whalenurse unsuspend <scope>` | important |
 | `Suspended`, reason `flapping` | flapping, SUSPENDED | important |
 | `Suspended`, reason `drift` | *not sent*: `DriftBlocked` just before it says the same | |
-| `DriftBlocked` | recreate blocked, with the guard's reason, a hint (compose upgraded or skewed, tag moved, file changed) and the unsuspend command | important |
+| `TagMoved`, `Upgraded` | **upgraded during heal** (v3.8): the pull rung brought a newer image (`TagMoved`), or rung 2 of a `heal.pull=true` container took a tag that someone else moved (`Upgraded`): old → new, the sidecars recreated with it, and the exact rollback commands (never cut; body up to 720) | important |
+| `DriftBlocked` | recreate blocked, with the guard's reason, a hint (compose upgraded or skewed, tag moved, file changed), who moved the tag if it was whalenurse's pull rung, and the unsuspend command | important |
 | `DriftWarned` | recreating despite drift (`WHALENURSE_DRIFT_GUARD=warn`) | routine |
 | `NotifyOnly` | needs attention, nothing was done: a `restart: "no"` parent left down by a host shutdown, **with the dependents that stay down with it** | important |
 | `NeedsRecreate` | needs a recreate that is not available (version gate, no usable compose inputs, `recreate` not in `whalenurse.actions`) | important |
@@ -450,7 +470,7 @@ Record a "tag moved by whalenurse" entry, because other stacks sharing the tag w
 | `RungsDisabled` | the version-gate warning: recreate and pull rungs disabled, and why | important |
 | `Paused`, `Resumed` | paused / resumed `<scope>` (including expiry) | routine |
 
-- **Shape.** Title: `[dry-run] host: container headline`. Body: the container key (or `host <id>`), then the cause and the next step. At most 72 runes of title and 360 of body; a long container name is cut, never the headline or the key line.
+- **Shape.** Title: `[dry-run] host: container headline`. Body: the container key (or `host <id>`), then the cause and the next step. At most 72 runes of title and 360 of body (720 for a message with commands to copy, whose commands are never cut: v3.8 item 6); a long container name is cut, never the headline or the key line.
 - **Delivery never touches healing.** The engine publishes events under its lock, so the subscriber only queues (a full queue drops and counts). One dispatcher renders and deduplicates. **One worker and one Shoutrrr sender per URL** deliver in order, each attempt under `WHALENURSE_NOTIFY_TIMEOUT`, with two retries (after 2 s and 10 s). A hung URL delays nothing, not even another URL, and a panic inside a service is a failed delivery (whalenurse calls the located service itself under a `recover`, because Shoutrrr's router does not). A failure is logged and counted per URL; it is never published as a domain event. On a stop the queue is delivered for up to 5 s, then what is still in flight is aborted.
 - **Secrets.** The URLs hold tokens (a Discord webhook id and token are the host and the path, a Telegram bot token is the user name, ntfy and Gotify tokens are a path or a query value). A URL is only ever shown as its position and scheme, `#2 discord`. Every error text goes through a redactor built from the configured URLs that masks the URL, its user info, host, path segments (of 6 runes or more) and query values (of 4 or more), in their escaped forms too; Shoutrrr redacts its own errors since v0.22.0 as well, and this is a second layer. `config` never quotes these variables in an error or a warning. `status`, `/healthz` and `notify test` show counts and redacted reasons only.
 - **Dedupe.** One message per (event type, container key, discriminator, incident); the discriminator is the action and rung for `ActionResult`, the reason for `Suspended`, the findings for the drift events. The incident is the `incident` attribute the engine puts on every event of a key with an open incident (the incident's opening time), so the same event within one incident is said once, a new incident is news again, and a restart of whalenurse does not mix them up. Events with no incident are deduplicated for 24 h. Deliberate commands (`Paused`, `Resumed`, an `unsuspend` command) are never deduplicated. `Suspended` and `Unsuspended` make each other news again. **The dedupe is persisted** in the store's `notified` table (§3.10) and survives a restart.
@@ -501,7 +521,7 @@ Initial defaults; tune them after M0.
 | `whalenurse.enable` | `true` to opt in |
 | `whalenurse.actions` | default `restart,recreate` |
 | `whalenurse.heal-exited` | `crashed` \| `always` \| `never` |
-| `whalenurse.heal.pull` | `true` \| `false` |
+| `whalenurse.heal.pull` | `true` \| `false`; needs `recreate` in `actions`, else the pull stays off with a warning; never runs for `pull_policy: never\|build` |
 | `whalenurse.cooldown` | per-container override |
 | `whalenurse.flap-limit` | per-container override |
 
@@ -525,7 +545,7 @@ internal/control/    unix-socket control server for the CLI
 internal/config/     env + label parsing
 ```
 
-**Domain event stream:** one stream (`IncidentOpened`, `ActionStarted`, `ActionResult`, `Suspended`, `Recovered`, `Paused`, `TagMoved`, …). Store, notify and API/SSE all subscribe to it, so notifications and history can't disagree.
+**Domain event stream:** one stream (`IncidentOpened`, `ActionStarted`, `ActionResult`, `Suspended`, `Recovered`, `Paused`, `TagMoved` and `Upgraded` (built in M4), …). Store, notify and API/SSE all subscribe to it, so notifications and history can't disagree.
 
 **Dependencies** (check the latest version at implementation time):
 - **`github.com/moby/moby/client` + `/api`.** The client was at v0.6.2 on 8 Oct 2026. It is pre-1.0, so minor versions can break; keep it behind `internal/docker`. API negotiation is the default (`WithAPIVersionNegotiation` is deprecated), and `Events()` returns a single `EventsResult`.
@@ -580,7 +600,7 @@ internal/config/     env + label parsing
 - **M2b:** the image-drift guard blocks a recreate after a re-tag, and does not block an unchanged container, on both image stores (the comparator of §3.6);
 - **M2b:** a ref-holding dependent skips the hash check and is recreated after its parent is;
 - **M3 (done; CI run 39121767631, all six legs):** notifications reach a local webhook receiver through Shoutrrr's generic service: the ladder ends in SUSPENDED (restart, recreate and one "giving up" with the cause, a dead URL beside the working one changing nothing), a recovery, and a dry run (marked, changes nothing);
-- **M4:** the pull rung, against a local `registry:2`.
+- **M4 (done; v3.8 items 10 to 14):** the pull rung, against a local `registry:2`: the registry round trip (and the positive control that docker events reports a pull), no label means no pull, no newer image means SUSPENDED, a newer image means upgraded with the sidecar repaired and a notification whose rollback runs as pasted, a drift block on a shared tag names who moved it, dry-run does not pull, the version gate disables the rung; `pull_policy: never` is not pulled and `missing` is overridden; `heal.pull` without recreate keeps the rung off; rung 2 of a pull-enabled container takes a moved tag and says so (the rollback runs as pasted); a sidecar sharing the image takes its parent's moved tag (its rollback is in the message).
 
 **CI matrix (built in M2b: 2 stores × 3 compose releases = 6 integration jobs):** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`test/m0/m0b/image-drift.sh`) runs on both stores today.
 
@@ -673,14 +693,14 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 - CI: the full compose matrix of §6 (v5.2.0, v5.6.0, latest) on both stores.
 - **Done when:** the M2b integration tests in §6 pass.
 
-### M3 — Notifications (done; v3.7 proposed)
+### M3 — Notifications (done; v3.7)
 - Vet the Shoutrrr fork at the source: latest release, maintenance, licence. Done: §5.
 - `internal/notify` as a subscriber of the event stream (§3.12): templates for action taken, recovered, giving up (with the cause), flapping, drift blocked (with the reason and the compose-upgrade hint), `NotifyOnly` (including a `restart: "no"` parent left down with its dependents), the version-gate warning, paused and resumed. Dedupe per incident, a per-URL rate limit, the optional uptime ping, `whalenurse notify test`, secrets never shown.
-- Moved to M4: "upgraded during heal (with rollback command)" (§3.7), with `TagMoved`.
+- Moved to M4 and done there: "upgraded during heal (with rollback command)" (§3.7), with `TagMoved`.
 - **Done when:** notifications are verified against a local webhook receiver in CI (§6).
 
-### M4 — Pull rung
-- §3.7 end to end, including the `TagMoved` record and the dependents step.
+### M4 — Pull rung (done; v3.8)
+- §3.7 end to end, including the `TagMoved` record, the "upgraded during heal" notification with its rollback, and the dependents step.
 - **Done when:** the integration test against a local `registry:2` passes; with no newer image, the pull rung goes straight to SUSPENDED.
 
 ### M5 — Dashboard (read-only)
@@ -690,6 +710,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 ### M6 — Polish and public release
 - Full README; docs (env and label reference, security, exit-code guide, deployment examples).
 - Example compose files: host compose plugin mount, stacks mount, dashboard via a Tailscale container on a shared bridge network.
+- Candidate: an optional read-only `DOCKER_CONFIG` mount so that the pull rung can log in to a private registry (v3.8 item 15).
 - `SECURITY.md` and `CHANGELOG.md`.
 - GoReleaser: multi-arch images on `ghcr.io/jackspiering/whalenurse` plus binaries; optional systemd unit.
 - [maintainer] Announce.

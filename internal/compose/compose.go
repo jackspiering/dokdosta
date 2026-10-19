@@ -16,6 +16,10 @@ type Reader interface {
 	DryRunUp(ctx context.Context, p Project, containerName string) (Oracle, error)
 	// ConfigHash runs `config --hash=<svc>` (the fallback of check 1).
 	ConfigHash(ctx context.Context, p Project) (string, error)
+	// PullPolicy runs `config --format json --no-env-resolution <svc>` and returns the service's pull_policy ("" when it
+	// has none). Only that one field is read: the rest of the rendered config (which can hold interpolated secrets) is
+	// dropped, never logged.
+	PullPolicy(ctx context.Context, p Project) (string, error)
 }
 
 // Actor is the mutating half. Both methods deploy what is on disk and in the local image store now, so the drift guard
@@ -27,6 +31,11 @@ type Actor interface {
 	// --force-recreate. Compose hashes the resolved container:<id>, so the new parent ID makes it recreate the dependent
 	// itself (E2b, E2d).
 	Up(ctx context.Context, p Project) error
+	// Pull is rung 3's first step and the only call in whalenurse that fetches an image: `pull --policy always <svc>`.
+	// Nothing else is added (no --include-deps), so it refreshes the one service's image and nothing else. It does not
+	// recreate anything: the caller compares what the reference resolves to before and after, and only a changed image
+	// is followed by Up (plan §3.7).
+	Pull(ctx context.Context, p Project) error
 }
 
 // Compose runs a compose binary through a Runner.
@@ -76,6 +85,14 @@ func (c *Compose) ConfigHash(ctx context.Context, p Project) (string, error) {
 	return ParseConfigHash(res.Stdout, p.Service)
 }
 
+func (c *Compose) PullPolicy(ctx context.Context, p Project) (string, error) {
+	res, err := c.run.Run(ctx, c.cmd(p, "config", "--format", "json", "--no-env-resolution", p.Service))
+	if err != nil {
+		return "", err
+	}
+	return ParsePullPolicy(res.Stdout, p.Service)
+}
+
 func (c *Compose) Recreate(ctx context.Context, p Project) error {
 	_, err := c.run.Run(ctx, c.cmd(p, upArgs(p, true)...))
 	return err
@@ -83,6 +100,15 @@ func (c *Compose) Recreate(ctx context.Context, p Project) error {
 
 func (c *Compose) Up(ctx context.Context, p Project) error {
 	_, err := c.run.Run(ctx, c.cmd(p, upArgs(p, false)...))
+	return err
+}
+
+// Pull runs `pull --policy always <svc>`. --policy always makes compose ignore the service's own pull_policy: without
+// it, `never`, `build` and (before v5.6.0, and for a tag other than latest) `missing` and `if_not_present` make
+// `compose pull` skip an image that is already present, and the rung would report "no newer image" for an image it never
+// looked up (upstream check, plan v3.8). The label whalenurse.heal.pull=true is the opt-in to exactly this.
+func (c *Compose) Pull(ctx context.Context, p Project) error {
+	_, err := c.run.Run(ctx, c.cmd(p, "pull", "--policy", "always", p.Service))
 	return err
 }
 
@@ -97,6 +123,7 @@ type DryRun struct {
 
 func (d DryRun) Recreate(_ context.Context, p Project) error { return d.note("recreate", p) }
 func (d DryRun) Up(_ context.Context, p Project) error       { return d.note("up", p) }
+func (d DryRun) Pull(_ context.Context, p Project) error     { return d.note("pull", p) }
 
 func (d DryRun) note(verb string, p Project) error {
 	if d.Would != nil {

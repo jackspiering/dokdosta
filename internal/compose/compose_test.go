@@ -195,6 +195,42 @@ func TestCommandLines(t *testing.T) {
 	}
 }
 
+// The pull is the one command that fetches an image. It is exactly `pull --policy always <service>`: one service, no
+// --include-deps, nothing that builds or recreates, and --policy always so a pull_policy of never, build or missing in the
+// compose file cannot turn the rung into a silent no-op (compose v5.2.0 and v5.6.0 both honour the flag).
+func TestPullCommandLine(t *testing.T) {
+	r := &recRunner{}
+	c := New(Binary{Path: "/host/docker-compose", Source: SourceHost}, r)
+	if err := c.Pull(context.Background(), proj()); err != nil {
+		t.Fatal(err)
+	}
+	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env pull --policy always web"
+	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want || r.cmds[0].Dir != "/" {
+		t.Fatalf("%v", r.cmds)
+	}
+	for _, bad := range []string{"down", "rm", "build", "up", "--include-deps", "--ignore-pull-failures"} {
+		if slices.Contains(r.cmds[0].Args, bad) {
+			t.Errorf("pull contains %q", bad)
+		}
+	}
+}
+
+func TestRollbackCommandsAreExactAndQuoted(t *testing.T) {
+	tag, up := RollbackCommands(proj(), "localhost:5000/app:latest", "sha256:"+strings.Repeat("a", 64))
+	if want := "docker image tag sha256:" + strings.Repeat("a", 64) + " localhost:5000/app:latest"; tag != want {
+		t.Errorf("tag = %q", tag)
+	}
+	if want := "docker compose -p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env up -d --no-deps --pull never web"; up != want {
+		t.Errorf("up = %q", up)
+	}
+	// A path with a space or a quote is one shell word.
+	p := Project{Name: "p", WorkingDir: "/opt/my stacks/it's", ConfigFiles: []string{"/opt/my stacks/it's/compose.yaml"}, Service: "web"}
+	_, up = RollbackCommands(p, "web:1", "sha256:x")
+	if !strings.Contains(up, `--project-directory '/opt/my stacks/it'\''s'`) {
+		t.Errorf("%s", up)
+	}
+}
+
 func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
 	env := ChildEnv([]string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "COMPOSE_PROJECT_NAME=evil", "COMPOSE_FILE=/x", "COMPOSE_PROFILES=a",
 		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "WHALENURSE_NOTIFY_URLS=secret://", "NO_COLOR=0"})
@@ -214,7 +250,7 @@ func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
 func TestDryRunActorRunsNothing(t *testing.T) {
 	var verbs []string
 	d := DryRun{Would: func(v string, _ Project) { verbs = append(verbs, v) }}
-	if d.Recreate(context.Background(), proj()) != nil || d.Up(context.Background(), proj()) != nil || fmt.Sprint(verbs) != "[recreate up]" {
+	if d.Recreate(context.Background(), proj()) != nil || d.Up(context.Background(), proj()) != nil || d.Pull(context.Background(), proj()) != nil || fmt.Sprint(verbs) != "[recreate up pull]" {
 		t.Fatal(verbs)
 	}
 }
@@ -366,5 +402,52 @@ func TestResolveOrder(t *testing.T) {
 	versions[BundledPath] = "garbage"
 	if b, _, err := Resolve(ctx, mk("")); err != nil || !b.Version.IsZero() || b.Raw != "garbage" {
 		t.Fatalf("%+v %v", b, err)
+	}
+}
+
+func TestPullPolicyCommandLineAndParsing(t *testing.T) {
+	r := &recRunner{out: func(Command) (Result, error) {
+		return Result{Stdout: []byte(`{"name":"x","services":{"web":{"image":"web:1","pull_policy":"never","environment":{"SECRET":"s3cret"}}}}`)}, nil
+	}}
+	c := New(Binary{Path: "/host/docker-compose", Source: SourceHost}, r)
+	got, err := c.PullPolicy(context.Background(), proj())
+	if err != nil || got != "never" {
+		t.Fatalf("%q %v", got, err)
+	}
+	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution web"
+	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want {
+		t.Fatalf("%v", r.cmds)
+	}
+	for in, want := range map[string]string{
+		`{"services":{"web":{"image":"a"}}}`:                   "",
+		`{"services":{"web":{"pull_policy":"missing"}}}`:       "missing",
+		`{"services":{"web":{"pull_policy":" Build "}}}`:       "Build",
+		`{"services":{"web":{"pull_policy":"daily"},"db":{}}}`: "daily",
+		`{"services":{"web":{"pull_policy":"every_12h"}}}`:     "every_12h",
+	} {
+		if got, err := ParsePullPolicy([]byte(in), "web"); err != nil || got != want {
+			t.Errorf("%s: %q %v", in, got, err)
+		}
+	}
+	for _, in := range []string{"", "null", "not json", `{"services":{}}`, `{"services":{"db":{}}}`} {
+		if _, err := ParsePullPolicy([]byte(in), "web"); !errors.Is(err, ErrUnparseable) {
+			t.Errorf("%q: %v", in, err)
+		}
+	}
+	// A parse error never quotes the output (it can hold interpolated secrets).
+	if _, err := ParsePullPolicy([]byte(`{"services": s3cret`), "web"); err == nil || strings.Contains(err.Error(), "s3cret") {
+		t.Errorf("%v", err)
+	}
+	for policy, blocks := range map[string]bool{"never": true, "build": true, "Never": true, " BUILD ": true, "": false, "always": false, "missing": false, "if_not_present": false, "daily": false, "refresh": false} {
+		if PullPolicyBlocksPull(policy) != blocks {
+			t.Errorf("PullPolicyBlocksPull(%q) = %v", policy, !blocks)
+		}
+	}
+}
+
+func TestRollbackCommandsNameTheSidecarsInOneUp(t *testing.T) {
+	_, up := RollbackCommands(proj(), "app:1", "sha256:x", "side", "side2")
+	if !strings.HasSuffix(up, "up -d --no-deps --pull never web side side2") {
+		t.Fatalf("%s", up)
 	}
 }

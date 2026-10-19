@@ -138,9 +138,10 @@ func (d *Daemon) recreateBlocker(c docker.Container) string {
 }
 
 // unavailable builds Obs.Unavailable for a container.
+// Rungs 2 and 3 share the version gate and the compose inputs, so they are unavailable together.
 func (d *Daemon) unavailable(c docker.Container) map[string]string {
 	if why := d.recreateBlocker(c); why != "" {
-		return map[string]string{config.RungRecreate: why}
+		return map[string]string{config.RungRecreate: why, config.RungPull: why}
 	}
 	return nil
 }
@@ -214,12 +215,13 @@ func dependsOn(label string) []string {
 
 // driftFindings runs the drift guard (plan §3.6) for the container about to be recreated and returns what it found as
 // text, one entry per finding. It reads only: the dry-run oracle, `config --hash` and an image inspect.
-func (d *Daemon) driftFindings(ctx context.Context, c docker.Container, p compose.Project) []compose.Finding {
+// With pull set an image-only move is allowed: checks 1 and 3 only (compose.GuardInput.AllowImageMove).
+func (d *Daemon) driftFindings(ctx context.Context, c docker.Container, p compose.Project, pull bool) []compose.Finding {
 	cs := d.cs()
 	gctx, cancel := context.WithTimeout(ctx, guardTimeout)
 	defer cancel()
 	in := compose.GuardInput{
-		Project: p, ContainerName: c.Name, Labels: c.Labels, ImageRef: c.Image, Arch: cs.server.Arch, RefHolder: holdsReference(c),
+		Project: p, ContainerName: c.Name, Labels: c.Labels, ImageRef: c.Image, Arch: cs.server.Arch, RefHolder: holdsReference(c), AllowImageMove: pull,
 	}
 	return (compose.Guard{Compose: d.o.Compose, Images: d.rd}).Check(gctx, in)
 }
@@ -299,29 +301,21 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 	}
 
 	// The drift guard, before the recreate (plan §3.6). It runs in dry-run too: it only reads.
-	if fs := d.driftFindings(ctx, c, p); len(fs) > 0 {
-		var findings []string
-		verifiedOnly := true
-		for _, f := range fs {
-			findings = append(findings, f.String())
-			verifiedOnly = verifiedOnly && f.Verified()
-		}
-		switch {
-		case d.cfg.DriftGuard == config.DriftWarn && verifiedOnly:
-			d.eng.Warned(t, findings) // warn overrides verified drift only
-		default:
-			if d.cfg.DriftGuard == config.DriftWarn {
-				findings = append(findings, "WHALENURSE_DRIFT_GUARD=warn does not override a check that could not be made")
-			}
-			d.eng.Blocked(t, dec, findings)
-			return
-		}
+	// An image-only move is let through for a container that opted in to the pull rung (the heal may take the newer
+	// image: config drift still blocks) and for a sidecar taking the tag its parent's own pull just moved (plan v3.8).
+	allow := cfg.HasRung(config.RungPull)
+	if stale {
+		allow = d.dependentMayTakeMove(ctx, c)
+	}
+	if !d.guardVerdict(ctx, t, c, dec, p, allow) {
+		return
 	}
 
 	d.eng.Begin(t, plan, dec)
 	actx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()
 	var runErr error
+	d.markActing()
 	if stale {
 		runErr = d.o.ComposeActor.Up(actx, p)
 		if runErr == nil && !d.cfg.DryRun {
@@ -329,6 +323,9 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 		}
 	} else {
 		runErr = d.o.ComposeActor.Recreate(actx, p)
+		if allow && !d.cfg.DryRun {
+			d.noteUpgrade(actx, t, c, p, runErr)
+		}
 	}
 	recheck := d.eng.End(t, plan, engine.Result{Err: runErr, DryRun: d.cfg.DryRun}, cfg)
 	d.afterAction(t, c, recheck)

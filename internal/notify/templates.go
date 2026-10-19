@@ -28,6 +28,12 @@ const (
 	MaxTitle  = 72  // runes
 	MaxBody   = 360 // runes, the key line included
 	maxDetail = 140 // runes, one detail line
+
+	// MaxBodyPinned is the body limit of a message that carries commands to copy (the rollback of an upgrade): the
+	// commands are never cut, because a command with an ellipsis in it is not the exact command, so the other lines give
+	// way to them, and the limit is larger. The longest the commands can reasonably be (a 80-rune image reference, a
+	// 40-rune project, 60- and 70-rune paths) leaves a message under it; the worst-case test pins that.
+	MaxBodyPinned = 720
 )
 
 // RateLimitedEvery is the minimum spacing of the "action rate limit reached" message per URL.
@@ -50,6 +56,7 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 	var (
 		headline string
 		detail   []string
+		pinned   []string // lines that are never cut: commands to copy
 		discr    string
 		critical bool
 		once     = true // false: deliberate commands (pause, resume) are never deduplicated
@@ -62,6 +69,14 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 
 	switch e.Type {
 	case engine.ActionResult:
+		if attr("dry_run") != "true" {
+			switch attr("outcome") {
+			case "unchanged", "upgraded", "upgrade-failed":
+				// The pull rung's own words are the giving-up message (nothing newer) and the "upgraded during heal"
+				// message (TagMoved), each of which says all of this: one message, not two.
+				return Message{}, "", false
+			}
+		}
 		verb, failed := verbOf(attr("action"))
 		discr = attr("action") + "/" + attr("rung") + "/" + attr("ok")
 		switch {
@@ -79,6 +94,13 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		if r := attr("rung"); r != "" && attr("dry_run") != "true" {
 			detail = append(detail, "rung: "+r)
 		}
+
+	case engine.TagMoved, engine.Upgraded:
+		// TagMoved: the pull rung brought a newer image. Upgraded: rung 2 recreated a pull-enabled container onto an image
+		// that someone else had moved the tag to. Both are "upgraded during heal", with the rollback.
+		pinned = tagMovedMessage(e, &headline, &detail)
+		discr = attr("new")
+		critical = true // it changed what is running; the rollback must get through
 
 	case engine.Recovered:
 		headline = "recovered"
@@ -121,10 +143,14 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		discr = findings
 		critical = true
 		detail = append(detail, "reason: "+shortFindings(findings))
+		if by := attr("moved_by"); by != "" {
+			detail = append(detail, "tag moved by whalenurse's pull rung: "+scopeOf(by)+" at "+movedAt(attr("moved_at")))
+		}
+		// The next step comes before the hint: when the body is full it is the hint that gives way, never the command.
+		detail = append(detail, "then: "+unsuspendCmd(scope))
 		if hint := driftHint(findings, scope); hint != "" {
 			detail = append(detail, hint)
 		}
-		detail = append(detail, "then: "+unsuspendCmd(scope))
 
 	case engine.DriftWarned:
 		headline = "recreating despite drift (WHALENURSE_DRIFT_GUARD=warn)"
@@ -169,14 +195,14 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 	if once {
 		dedupe = strings.Join([]string{string(e.Type), e.Key, discr, attr(engine.AttrIncident)}, "|")
 	}
-	m = compose(c, e, subject, headline, detail, critical)
+	m = compose(c, e, subject, headline, detail, pinned, critical)
 	m.Class, m.MinSpacing = class, spacing
 	return m, dedupe, true
 }
 
 // compose lays the message out: the title names the host and the container, the body starts with the key (host and
 // container, always) and then the details, cut to fit.
-func compose(c rctx, e engine.Event, subject, headline string, detail []string, critical bool) Message {
+func compose(c rctx, e engine.Event, subject, headline string, detail, pinned []string, critical bool) Message {
 	host := e.Host
 	if host == "" {
 		host = c.host
@@ -207,7 +233,61 @@ func compose(c rctx, e engine.Event, subject, headline string, detail []string, 
 			lines = append(lines, cut(d, maxDetail))
 		}
 	}
-	return Message{Title: cut(title, MaxTitle), Body: fit(lines, MaxBody), Critical: critical}
+	if len(pinned) == 0 {
+		return Message{Title: cut(title, MaxTitle), Body: fit(lines, MaxBody), Critical: critical}
+	}
+	// The pinned lines go last and whole; the other lines are cut to the room that is left.
+	tail := "\n" + strings.Join(pinned, "\n")
+	room := MaxBodyPinned - utf8.RuneCountInString(tail)
+	return Message{Title: cut(title, MaxTitle), Body: fit(lines, room) + tail, Critical: critical}
+}
+
+// tagMovedMessage fills in the "upgraded during heal" message (plan §3.7): the old and the new digest, and the exact
+// rollback commands, which are returned as the lines that must not be cut.
+func tagMovedMessage(e engine.Event, headline *string, detail *[]string) (pinned []string) {
+	a := e.Attrs
+	short := func(id string) string {
+		id = strings.TrimPrefix(id, "sha256:")
+		if len(id) > 12 {
+			id = id[:12]
+		}
+		return id
+	}
+	switch {
+	case a["ok"] != "true":
+		*headline = "pulled a newer image, but the recreate failed"
+	default:
+		*headline = "upgraded during heal"
+	}
+	if a["old"] == "" {
+		*detail = append(*detail, fmt.Sprintf("image: %s pulled %s (there was no local copy before)", a["ref"], short(a["new"])))
+	} else {
+		*detail = append(*detail, fmt.Sprintf("image: %s %s -> %s", a["ref"], short(a["old"]), short(a["new"])))
+	}
+	if a["ok"] != "true" {
+		*detail = append(*detail, "error: "+a["error"])
+	}
+	if sc := a["sidecars"]; sc != "" {
+		*detail = append(*detail, "sidecars on the same image, recreated with it: "+strings.ReplaceAll(sc, ",", ", "))
+	}
+	if e.Type == engine.Upgraded {
+		*detail = append(*detail, "the tag had been moved by someone else; this heal took the newer image")
+	} else {
+		*detail = append(*detail, "every stack that shares this tag now sees it as moved")
+	}
+	if a["rollback_tag"] != "" && a["rollback_up"] != "" {
+		return []string{"roll back:", oneLine(a["rollback_tag"]), oneLine(a["rollback_up"])}
+	}
+	*detail = append(*detail, "no rollback: the previous image was not present locally")
+	return nil
+}
+
+// movedAt prints the time of a move for a phone: minutes, UTC.
+func movedAt(rfc string) string {
+	if t, err := time.Parse(time.RFC3339, rfc); err == nil {
+		return t.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	return rfc
 }
 
 // fit joins the lines and cuts the result to max runes. The first line (the key) is never what gets cut.
@@ -281,6 +361,8 @@ func verbOf(action string) (done, failed string) {
 		return "recreated", "recreate failed"
 	case "recreate-stale":
 		return "recreated (its parent was recreated)", "recreate failed"
+	case "pull":
+		return "pulled", "pull failed"
 	}
 	return action + " done", action + " failed"
 }
@@ -304,12 +386,14 @@ func causeOf(msg string) string {
 var (
 	reDryRunSays = regexp.MustCompile(`\s*\(its dry-run says:[^)]*\)`)
 	reUpgraded   = regexp.MustCompile(`\s*\(compose upgraded from ([^ ]+) to ([^ ]+) since[^)]*\)`)
+	reMovedBy    = regexp.MustCompile(`\s*\(whalenurse moved this tag:[^)]*\)`)
 )
 
 // shortFindings drops from the guard's text what a phone has no room for: compose's own dry-run wording, and the
 // upgrade note (the hint says it again, shorter, with the versions).
 func shortFindings(f string) string {
 	f = reDryRunSays.ReplaceAllString(f, "")
+	f = reMovedBy.ReplaceAllString(f, "") // said on a line of its own, from the event's attributes
 	return reUpgraded.ReplaceAllString(f, "")
 }
 

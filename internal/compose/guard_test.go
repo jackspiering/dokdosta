@@ -239,3 +239,78 @@ func TestGuardNotesAnUpgradedHostPlugin(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// ---- the check before the pull (rung 3, plan §3.7) -------------------------------------------------------------------
+
+func pullIn(refHolder bool) GuardInput {
+	in := guardIn(refHolder)
+	in.AllowImageMove = true
+	return in
+}
+
+func TestGuardBeforePull(t *testing.T) {
+	ctx := context.Background()
+	hashOK := func(Project) (string, error) { return "h1", nil }
+
+	// Nothing changed: no findings, and no image comparison was made.
+	f := NewFake()
+	if got := (Guard{Compose: f, Images: fakeImages{}}).Check(ctx, pullIn(false)); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+
+	// The compose file was edited: a config finding, as for rung 2. The pull would deploy the edit.
+	f = NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	f.HashFn = func(Project) (string, error) { return "h2", nil }
+	got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgOld}}).Check(ctx, pullIn(false))
+	if causes(got) != CheckConfig {
+		t.Fatalf("%v", got)
+	}
+
+	// Only the tag moved (another stack pulled it): the oracle says Recreate, the hash still matches the label, and the
+	// image differs. That is what a pull is for, so it is not a finding.
+	f = NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	f.HashFn = hashOK
+	if got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgNew}}).Check(ctx, pullIn(false)); len(got) != 0 {
+		t.Fatalf("an image-only move must not block the pull: %v", got)
+	}
+	// ... but the same move with the hash unreadable cannot be told from an edit: it blocks.
+	f.HashFn = func(Project) (string, error) { return "", ErrUnparseable }
+	if got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgNew}}).Check(ctx, pullIn(false)); causes(got) != CheckConfig {
+		t.Fatalf("%v", got)
+	}
+	// ... and so does a Recreate that is neither an edit nor a moved tag (a network or a volume changed).
+	f.HashFn = hashOK
+	if got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgOld}}).Check(ctx, pullIn(false)); causes(got) != CheckConfig {
+		t.Fatalf("%v", got)
+	}
+
+	// The hash fallback (no oracle output) does not run the explicit image comparison in pull mode: a moved tag is allowed.
+	f = NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Oracle{}, ErrUnparseable }
+	f.HashFn = hashOK
+	if got := (Guard{Compose: f, Images: fakeImages{}}).Check(ctx, pullIn(false)); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+	// A reference holder has no check 1 and no check 2: nothing to find, and the oracle is not asked.
+	f = NewFake()
+	if got := (Guard{Compose: f, Images: fakeImages{}}).Check(ctx, pullIn(true)); len(got) != 0 || f.Count("dry-run") != 0 {
+		t.Fatalf("%v", got)
+	}
+}
+
+// Check 3 still applies before a pull: with the bundled compose and a different release than the one that made the
+// container, a change compose sees cannot be told from a hash layout that moved.
+func TestGuardBeforePullKeepsTheSkewCheck(t *testing.T) {
+	f := NewFake()
+	f.Bin.Source, f.Bin.Version = SourceBundled, Version{5, 6, 0}
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	f.HashFn = func(Project) (string, error) { return "h2", nil }
+	in := pullIn(false)
+	in.Labels[LabelVersion] = "5.2.0"
+	got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgOld}}).Check(context.Background(), in)
+	if causes(got) != CheckSkew {
+		t.Fatalf("%v", got)
+	}
+}
