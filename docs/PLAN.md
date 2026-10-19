@@ -574,7 +574,7 @@ internal/config/     env + label parsing
 - **M2b:** the config-drift guard blocks a recreate after a compose edit;
 - **M2b:** the image-drift guard blocks a recreate after a re-tag, and does not block an unchanged container, on both image stores (the comparator of §3.6);
 - **M2b:** a ref-holding dependent skips the hash check and is recreated after its parent is;
-- **M3 (built; CI result in m3-notes):** notifications reach a local webhook receiver through Shoutrrr's generic service: the ladder ends in SUSPENDED (restart, recreate and one "giving up" with the cause, a dead URL beside the working one changing nothing), a recovery, and a dry run (marked, changes nothing);
+- **M3 (done; CI run 39121767631, all six legs):** notifications reach a local webhook receiver through Shoutrrr's generic service: the ladder ends in SUSPENDED (restart, recreate and one "giving up" with the cause, a dead URL beside the working one changing nothing), a recovery, and a dry run (marked, changes nothing);
 - **M4:** the pull rung, against a local `registry:2`.
 
 **CI matrix (built in M2b: 2 stores × 3 compose releases = 6 integration jobs):** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`test/m0/m0b/image-drift.sh`) runs on both stores today.
@@ -668,7 +668,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 - CI: the full compose matrix of §6 (v5.2.0, v5.6.0, latest) on both stores.
 - **Done when:** the M2b integration tests in §6 pass.
 
-### M3 — Notifications (built; v3.7)
+### M3 — Notifications (done; v3.7 proposed)
 - Vet the Shoutrrr fork at the source: latest release, maintenance, licence. Done: §5.
 - `internal/notify` as a subscriber of the event stream (§3.12): templates for action taken, recovered, giving up (with the cause), flapping, drift blocked (with the reason and the compose-upgrade hint), `NotifyOnly` (including a `restart: "no"` parent left down with its dependents), the version-gate warning, paused and resumed. Dedupe per incident, a per-URL rate limit, the optional uptime ping, `whalenurse notify test`, secrets never shown.
 - Moved to M4: "upgraded during heal (with rollback command)" (§3.7), with `TagMoved`.
