@@ -1,0 +1,106 @@
+{
+  "host": "nas",
+  "events": [
+    {
+      "id": 1,
+      "time": "2026-10-19T12:20:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "IncidentOpened",
+      "message": "unhealthy",
+      "attrs": {
+        "action": "restart",
+        "class": "unhealthy",
+        "incident": "2026-10-19T12:20:00Z"
+      }
+    },
+    {
+      "id": 2,
+      "time": "2026-10-19T12:21:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "ActionResult",
+      "message": "restarted",
+      "attrs": {
+        "action": "restart",
+        "ok": "true",
+        "rung": "restart"
+      }
+    },
+    {
+      "id": 3,
+      "time": "2026-10-19T12:22:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "TagMoved",
+      "message": "qmcgaw/gluetun:latest: aaa moved to bbb; recreated",
+      "attrs": {
+        "new": "sha256:bbbbbbbbbbbbbbbb",
+        "ok": "true",
+        "old": "sha256:aaaaaaaaaaaaaaaa",
+        "old_image": "sha256:aaaaaaaaaaaaaaaa",
+        "ref": "qmcgaw/gluetun:latest",
+        "rollback_tag": "docker image tag sha256:aaaaaaaaaaaaaaaa qmcgaw/gluetun:latest",
+        "rollback_up": "docker compose -p media --project-directory /opt/stacks/media -f compose.yaml up -d --no-deps --pull never vpn",
+        "sidecars": "qbittorrent"
+      }
+    },
+    {
+      "id": 4,
+      "time": "2026-10-19T12:23:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "DriftBlocked",
+      "message": "recreate skipped by the drift guard: image moved",
+      "attrs": {
+        "class": "unhealthy",
+        "findings": "image moved",
+        "moved_at": "2026-10-19T12:05:00Z",
+        "moved_by": "nas/media/other/1",
+        "moved_ref": "qmcgaw/gluetun:latest"
+      }
+    },
+    {
+      "id": 5,
+      "time": "2026-10-19T12:24:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "Suspended",
+      "message": "giving up: recreate skipped by the drift guard (image moved)",
+      "attrs": {
+        "reason": "drift"
+      }
+    },
+    {
+      "id": 6,
+      "time": "2026-10-19T12:30:00Z",
+      "host": "nas",
+      "key": "nas/web/proxy/1",
+      "container": "web-proxy-1",
+      "type": "ActionResult",
+      "message": "restarted",
+      "attrs": {
+        "action": "restart",
+        "ok": "true"
+      }
+    },
+    {
+      "id": 7,
+      "time": "2026-10-19T12:31:00Z",
+      "host": "nas",
+      "key": "nas/web/Proxy 2",
+      "type": "Paused",
+      "message": "paused web/proxy",
+      "attrs": {
+        "scope": "web/proxy"
+      }
+    }
+  ],
+  "next": 7,
+  "last_id": 7
+}

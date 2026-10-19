@@ -81,7 +81,7 @@ func serve(t *testing.T, h http.Handler) (sock string, stop func()) {
 
 func TestHealthOverUnixSocket(t *testing.T) {
 	chk := &fakeChecker{ok: true, msg: "ok"}
-	sock, stop := serve(t, api.Handler(chk))
+	sock, stop := serve(t, healthOnly(chk))
 	defer stop()
 	ctx := context.Background()
 
@@ -102,7 +102,7 @@ func TestHealthOverUnixSocket(t *testing.T) {
 
 func TestCommandsOverTheSocket(t *testing.T) {
 	be := &fakeBackend{}
-	sock, stop := serve(t, Mux(api.Handler(&fakeChecker{ok: true, msg: "ok"}), be, parseFor))
+	sock, stop := serve(t, Mux(api.HealthHandler(&fakeChecker{ok: true, msg: "ok"}), be, parseFor))
 	defer stop()
 	ctx := context.Background()
 
@@ -146,7 +146,7 @@ func TestCommandsOverTheSocket(t *testing.T) {
 // The status reply is far larger than the 512 bytes the M1 client read.
 func TestStatusIsNotTruncated(t *testing.T) {
 	be := &fakeBackend{big: 200 << 10}
-	sock, stop := serve(t, Mux(api.Handler(&fakeChecker{ok: true}), be, parseFor))
+	sock, stop := serve(t, Mux(api.HealthHandler(&fakeChecker{ok: true}), be, parseFor))
 	defer stop()
 	code, body, err := Do(context.Background(), sock, http.MethodGet, "/v1/status", nil)
 	if err != nil || code != 200 || len(body) < 200<<10 {
@@ -159,4 +159,11 @@ func TestCommandWithoutADaemonSaysSo(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cannot reach the whalenurse daemon") {
 		t.Fatalf("%v", err)
 	}
+}
+
+// healthOnly is a mux with /healthz and nothing else, like the TCP handler without a service (404 for the rest).
+func healthOnly(c api.Checker) http.Handler {
+	m := http.NewServeMux()
+	m.Handle("/healthz", api.HealthHandler(c))
+	return m
 }

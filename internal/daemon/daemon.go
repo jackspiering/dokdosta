@@ -81,6 +81,9 @@ type Options struct {
 	// NotifyStatus reports the notifications for `status`; nil when there is no notifier (tests).
 	NotifyStatus func() notify.Status
 
+	// Version is the build version, shown by the API.
+	Version string
+
 	// ReconnectBackoff is the first wait before resubscribing to events (doubles up to 30s).
 	ReconnectBackoff time.Duration
 }
@@ -114,6 +117,7 @@ type Daemon struct {
 	compState   atomic.Pointer[composeState] // the startup version gate, readable from the control socket
 	depGate     map[string]depGate           // one dependent at a time per parent, keyed by the raw container: reference
 	beatEvery   time.Duration                // how often last_seen is written during an action (heartbeatEvery; tests shorten it)
+	view        *view                        // what the API reads
 	moves       map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
 
 	eventsUp   atomic.Bool
@@ -142,6 +146,7 @@ func New(o Options) *Daemon {
 		pend:      map[string]pending{},
 		warned:    map[string]bool{},
 		depGate:   map[string]depGate{},
+		view:      newView(),
 	}
 	d.eng.Restore(o.Snapshot)
 	d.started = o.Clock.Now()
@@ -613,11 +618,13 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	t := engine.Target{Key: key}
 	if !ok {
 		d.eng.Forget(t)
+		d.view.forget(key)
 		return
 	}
 	c, err := d.rd.Inspect(ctx, sum.ID)
 	if errors.Is(err, docker.ErrNotFound) {
 		d.eng.Forget(t)
+		d.view.forget(key)
 		return
 	}
 	if err != nil {
@@ -648,6 +655,7 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	}
 	dec := rules.Classify(in)
 	if dec.Class == rules.ClassSkip {
+		d.view.observe(key, c, dec, now)
 		d.log.Debug("classified", "key", key, "container", c.Name, "class", dec.Class, "skip", dec.Skip)
 		return
 	}
@@ -657,6 +665,7 @@ func (d *Daemon) process(ctx context.Context, key string) {
 		dec = rules.Classify(in)
 	}
 	dec = d.adjust(c, cfg, dec, obs)
+	d.view.observe(key, c, dec, now)
 	d.log.Debug("classified", "key", key, "container", c.Name, "class", dec.Class, "action", dec.Action, "reason", dec.Reason)
 
 	// A parent that is in a good state but still has an incident open: its dependents have been waiting for it.
@@ -793,6 +802,7 @@ func (d *Daemon) refresh(ctx context.Context) error {
 		}
 	}
 	d.idx = idx
+	d.view.setList(list)
 	return nil
 }
 

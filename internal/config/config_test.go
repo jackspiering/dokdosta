@@ -223,3 +223,32 @@ func TestHealPullNeedsRecreateInTheLadder(t *testing.T) {
 		})
 	}
 }
+
+func TestHTTPTokenAndMetrics(t *testing.T) {
+	g, warns, err := FromEnv([]string{"WHALENURSE_HTTP_TOKEN=tok-secret-value", "WHALENURSE_METRICS=true", "WHALENURSE_HTTP_ADDR=127.0.0.1:8484"})
+	if err != nil || g.HTTPToken != "tok-secret-value" || !g.Metrics || g.HTTPAddr != "127.0.0.1:8484" {
+		t.Fatalf("%+v %v", g, err)
+	}
+	for _, w := range warns {
+		t.Errorf("warning: %s", w)
+	}
+	g, _, _ = FromEnv(nil)
+	if g.HTTPToken != "" || g.Metrics || g.HTTPAddr != "" {
+		t.Fatalf("off by default: %+v", g)
+	}
+	// An invalid value is an error that does not quote a token; the token itself is never in an error.
+	_, _, err = FromEnv([]string{"WHALENURSE_HTTP_TOKEN=tok-secret-value", "WHALENURSE_METRICS=maybe"})
+	if err == nil || strings.Contains(err.Error(), "tok-secret-value") {
+		t.Fatalf("%v", err)
+	}
+}
+
+func TestHTTPAllowedHosts(t *testing.T) {
+	g, warns, err := FromEnv([]string{"WHALENURSE_HTTP_ALLOWED_HOSTS=nas.example.org, 192.168.1.5\tmedia.lan"})
+	if err != nil || len(warns) != 0 || strings.Join(g.HTTPAllowedHosts, "|") != "nas.example.org|192.168.1.5|media.lan" {
+		t.Fatalf("%v %v %v", g.HTTPAllowedHosts, warns, err)
+	}
+	if g, _, _ = FromEnv(nil); len(g.HTTPAllowedHosts) != 0 {
+		t.Fatal("empty by default")
+	}
+}

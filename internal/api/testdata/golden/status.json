@@ -1,0 +1,67 @@
+{
+  "host": "nas",
+  "api": "v1",
+  "version": "v-test",
+  "time": "2026-10-19T13:00:00Z",
+  "started_at": "2026-10-19T12:00:00Z",
+  "mode": "label",
+  "dry_run": false,
+  "persistent": true,
+  "healthy": true,
+  "health_detail": "ok",
+  "events_up": true,
+  "settled": true,
+  "compose": {
+    "binary": "/host/docker-compose",
+    "source": "host-plugin",
+    "version": "v5.6.0",
+    "engine": "29.9.1",
+    "engine_arch": "amd64"
+  },
+  "version_gate": {
+    "recreate_enabled": true,
+    "disabled_rungs": [],
+    "min_engine": "28.1.0",
+    "min_compose": "5.2.0"
+  },
+  "drift_guard": "strict",
+  "rate_limit": {
+    "limit_per_hour": 10,
+    "used_last_hour": 3,
+    "remaining": 7
+  },
+  "counts": {
+    "containers": 4,
+    "watched": 3,
+    "ok": 1,
+    "incident": 0,
+    "recovering": 0,
+    "suspended": 1,
+    "paused": 1
+  },
+  "pauses": [
+    {
+      "host": "nas",
+      "scope": "web/proxy",
+      "created": "2026-10-19T12:10:00Z",
+      "until": "2026-10-19T14:10:00Z"
+    }
+  ],
+  "last_event_id": 7,
+  "history_retention_seconds": 2592000,
+  "notifications": {
+    "enabled": true,
+    "urls": 2,
+    "invalid": 0,
+    "sent": 5,
+    "failed": 1,
+    "rate_limited": 0,
+    "dropped": 0,
+    "uptime_ping": {
+      "sent": 12,
+      "failed": 0,
+      "skipped_unhealthy": 0,
+      "interval_seconds": 300
+    }
+  }
+}

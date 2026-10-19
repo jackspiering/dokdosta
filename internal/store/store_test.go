@@ -242,6 +242,7 @@ func TestSchemaOneDatabaseIsMigrated(t *testing.T) {
 	s := open(t, dir)
 	s.SaveKey(sampleKey())
 	s.db.Exec(`DROP TABLE notified`)
+	s.db.Exec(`DROP TABLE events`)
 	s.db.Exec("PRAGMA user_version = 1")
 	s.Close()
 
@@ -255,4 +256,139 @@ func TestSchemaOneDatabaseIsMigrated(t *testing.T) {
 	if got, err := s.LoadNotified(t0, time.Hour); err != nil || len(got) != 1 {
 		t.Fatalf("%v %v", got, err)
 	}
+}
+
+// A schema-2 database (M3/M4) gets the events table and keeps its rows.
+func TestSchemaTwoDatabaseIsMigratedToEvents(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	s.SaveKey(sampleKey())
+	s.SaveNotified("x", "T", "k", t0)
+	s.db.Exec(`DROP TABLE events`)
+	s.db.Exec("PRAGMA user_version = 2")
+	s.Close()
+
+	s = open(t, dir)
+	defer s.Close()
+	if got, err := s.LoadNotified(t0, time.Hour); err != nil || len(got) != 1 {
+		t.Fatalf("%v %v", got, err)
+	}
+	s.RecordEvent(engine.Event{ID: 1, Time: t0, Host: "h", Key: "h/p/web/1", Type: engine.IncidentOpened, Message: "m"})
+	if got, err := s.Query(engine.EventQuery{}); err != nil || len(got) != 1 || s.LastID() != 1 {
+		t.Fatalf("%v %v %d", got, err, s.LastID())
+	}
+}
+
+func ev(id uint64, at time.Time, key string, typ engine.EventType, attrs map[string]string) engine.Event {
+	return engine.Event{ID: id, Time: at, Host: "h", Key: key, Container: "c", Type: typ, Message: "m" + string(typ), Attrs: attrs}
+}
+
+func TestEventsRoundTripAndFilter(t *testing.T) {
+	s := open(t, t.TempDir())
+	defer s.Close()
+	s.RecordEvent(ev(1, t0, "h/p/web/1", engine.IncidentOpened, map[string]string{"class": "unhealthy"}))
+	s.RecordEvent(ev(2, t0.Add(time.Second), "h/p/db/1", engine.ActionResult, nil))
+	s.RecordEvent(ev(3, t0.Add(2*time.Second), "h/p/web/1", engine.Suspended, map[string]string{"reason": "ladder"}))
+	s.RecordEvent(ev(3, t0, "h/p/web/1", engine.Suspended, nil)) // the same ID twice: the first one stays
+
+	all, err := s.Query(engine.EventQuery{})
+	if err != nil || len(all) != 3 || all[0].ID != 1 || all[2].Attrs["reason"] != "ladder" || !all[0].Time.Equal(t0) || all[0].Time.Location() != time.UTC {
+		t.Fatalf("%+v %v", all, err)
+	}
+	if got, _ := s.Query(engine.EventQuery{After: 1}); len(got) != 2 || got[0].ID != 2 {
+		t.Fatalf("after: %+v", got)
+	}
+	if got, _ := s.Query(engine.EventQuery{Key: "h/p/web/1", Newest: true}); len(got) != 2 || got[0].ID != 3 {
+		t.Fatalf("key, newest: %+v", got)
+	}
+	if got, _ := s.Query(engine.EventQuery{Types: []engine.EventType{engine.ActionResult, engine.Suspended}, Limit: 1}); len(got) != 1 || got[0].ID != 2 {
+		t.Fatalf("types, limit: %+v", got)
+	}
+	if got, _ := s.Query(engine.EventQuery{Before: 3}); len(got) != 2 {
+		t.Fatalf("before: %+v", got)
+	}
+	if got, _ := s.Query(engine.EventQuery{ExcludeTypes: []engine.EventType{engine.ActionResult, engine.Suspended}}); len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("exclude: %+v", got)
+	}
+}
+
+// Monotonic IDs: the counter survives a reopen and retention deleting every row.
+func TestEventIDsStayMonotonicAcrossRestartAndRetention(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	for i := uint64(1); i <= 5; i++ {
+		s.RecordEvent(ev(i, t0.Add(-48*time.Hour), "h/p/web/1", engine.IncidentOpened, nil))
+	}
+	if s.LastID() != 5 {
+		t.Fatal(s.LastID())
+	}
+	if _, err := s.Prune(t0, 24*time.Hour, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Query(engine.EventQuery{}); len(got) != 0 {
+		t.Fatalf("retention kept %d old events", len(got))
+	}
+	s.Close()
+
+	s = open(t, dir)
+	defer s.Close()
+	if s.LastID() != 5 {
+		t.Fatalf("the counter went back to %d after everything was pruned", s.LastID())
+	}
+	var bus engine.Bus
+	bus.Seed(s.LastID())
+	if e := bus.Publish(engine.Event{Time: t0}); e.ID != 6 {
+		t.Fatalf("the next ID is %d", e.ID)
+	}
+}
+
+func TestEventRowsAreCapped(t *testing.T) {
+	s := open(t, t.TempDir())
+	defer s.Close()
+	tx, _ := s.db.Begin()
+	for i := 1; i <= MaxEvents+50; i++ {
+		tx.Exec(`INSERT INTO events (id, at, host, key, container, type, message, attrs) VALUES (?, ?, 'h', 'k', '', 'T', '', '{}')`, i, tn(t0))
+	}
+	tx.Commit()
+	if err := s.pruneEvents(t0, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	var first uint64
+	s.db.QueryRow(`SELECT COUNT(*), MIN(id) FROM events`).Scan(&n, &first)
+	if n != MaxEvents || first != 51 {
+		t.Fatalf("%d rows, first %d", n, first)
+	}
+}
+
+// The API reads through its own connection: it sees what the writer committed, and it cannot write.
+func TestReadsUseASeparateReadOnlyConnection(t *testing.T) {
+	s := open(t, t.TempDir())
+	defer s.Close()
+	if s.rdb == s.db {
+		t.Fatal("no separate read connection")
+	}
+	s.RecordEvent(ev(1, t0, "h/p/web/1", engine.IncidentOpened, nil))
+	s.SaveKey(sampleKey())
+	if got, err := s.Query(engine.EventQuery{}); err != nil || len(got) != 1 || s.LastID() != 1 {
+		t.Fatalf("%v %v", got, err)
+	}
+	s.CloseIncident(engine.ClosedIncident{Key: "h/p/web/1", Opened: t0, Closed: t0.Add(time.Minute), Class: "c", Outcome: "recovered"})
+	if h, err := s.History(""); err != nil || len(h) != 1 {
+		t.Fatalf("%v %v", h, err)
+	}
+	if _, err := s.rdb.Exec(`DELETE FROM events`); err == nil {
+		t.Fatal("the read connection can write")
+	}
+	// A busy writer does not stop a read.
+	tx, _ := s.db.Begin()
+	tx.Exec(`INSERT INTO events (id, at, host, key, container, type, message, attrs) VALUES (9, 0, 'h', 'k', '', 'T', '', '{}')`)
+	done := make(chan struct{})
+	go func() { s.Query(engine.EventQuery{}); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a read waited for the writer's open transaction")
+	}
+	tx.Rollback()
 }

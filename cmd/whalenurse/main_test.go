@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackspiering/whalenurse/internal/api"
 	"github.com/jackspiering/whalenurse/internal/clock"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/daemon"
@@ -40,7 +42,7 @@ func (f *fakeDaemon) Status() any { f.calls = append(f.calls, "status"); return 
 // resume or unsuspend anything. Only the unix socket handler can.
 func TestTCPHandlerHasNoWriteEndpoints(t *testing.T) {
 	d := &fakeDaemon{}
-	tcp, sock := handlers(d)
+	tcp, sock := handlers(d, api.Options{})
 
 	for _, tc := range []struct{ method, path string }{
 		{"POST", "/v1/pause"}, {"POST", "/v1/resume"}, {"POST", "/v1/unsuspend"}, {"GET", "/v1/status"},
@@ -100,7 +102,7 @@ func TestSplitArgsAcceptsFlagsAfterThePositional(t *testing.T) {
 // ---- notifications: the URLs are secrets (plan v3.7) ----------------------------------------------------------
 
 // The tokens sit where real ones do: in the user info, in the path and in a query value, and in the host of a Discord URL.
-var leakTokens = []string{"tok-USERINFO-81237", "tok-PATH-55120", "tok-QUERY-90421", "tok-DOWN-31337", "tok-PINGUUID-77777"}
+var leakTokens = []string{"tok-USERINFO-81237", "tok-PATH-55120", "tok-QUERY-90421", "tok-DOWN-31337", "tok-PINGUUID-77777", "tok-HTTPTOKEN-66666"}
 
 func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	var statuses = map[string]int{"401": 401, "500": 500}
@@ -128,7 +130,7 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	ping := "http://" + deadHost + "/ping/tok-PINGUUID-77777"
 
 	env := []string{"WHALENURSE_NOTIFY_URLS=" + strings.Join(urls, " "), "WHALENURSE_HEARTBEAT_URL=" + ping,
-		"WHALENURSE_NOTIFY_TIMEOUT=2s", "WHALENURSE_HOST_ID=nas"}
+		"WHALENURSE_NOTIFY_TIMEOUT=2s", "WHALENURSE_HOST_ID=nas", "WHALENURSE_HTTP_TOKEN=tok-HTTPTOKEN-66666", "WHALENURSE_HTTP_ADDR=0.0.0.0:8484"}
 	cfg, warns, err := config.FromEnv(env)
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +165,17 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	var text bytes.Buffer
 	printStatus(&text, d.Status().(daemon.Status))
 	js, _ := json.Marshal(d.Status())
-	tcp, sock := handlers(d)
+	for _, w := range httpWarnings(cfg) {
+		log.Warn("dashboard", "detail", w)
+	}
+	tcp, sock := handlers(d, api.Options{Token: cfg.HTTPToken})
+	denied := httptest.NewRecorder()
+	deniedReq := httptest.NewRequest("GET", "/api/v1/status", nil)
+	deniedReq.Header.Set("Authorization", "Bearer wrong-"+cfg.HTTPToken)
+	tcp.ServeHTTP(denied, deniedReq)
+	if denied.Code != 401 {
+		t.Errorf("a wrong token: %d", denied.Code)
+	}
 	healthz := httptest.NewRecorder()
 	tcp.ServeHTTP(healthz, httptest.NewRequest("GET", "/healthz", nil))
 	sockStatus := httptest.NewRecorder()
@@ -172,6 +184,7 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	outputs := map[string]string{
 		"logs": logs.String(), "notify test": test.String(), "status text": text.String(), "status json": string(js),
 		"healthz": healthz.Body.String(), "socket status": sockStatus.Body.String(),
+		"401 body": denied.Body.String() + fmt.Sprint(denied.Header()),
 	}
 	for name, out := range outputs {
 		if out == "" {
@@ -205,5 +218,35 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 func TestNotifyTestNeedsURLs(t *testing.T) {
 	if err := runNotifyTest(t.Context(), &bytes.Buffer{}, config.Defaults()); err == nil {
 		t.Fatal("no URLs: an error, not a silent success")
+	}
+}
+
+func TestAllowedHostsAreIgnoredWithAToken(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.HTTPAddr, cfg.HTTPToken, cfg.HTTPAllowedHosts = "127.0.0.1:8484", "a-long-random-token-0123456789", []string{"nas.example.org"}
+	if got := httpWarnings(cfg); len(got) != 1 || !strings.Contains(got[0], "ALLOWED_HOSTS is ignored") {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestHTTPWarnings(t *testing.T) {
+	for _, c := range []struct {
+		addr, token string
+		want        int
+	}{
+		{"127.0.0.1:8484", "", 0}, {"[::1]:8484", "", 0}, {"localhost:8484", "", 0},
+		{":8484", "", 1}, {"0.0.0.0:8484", "", 1}, {"192.168.1.5:8484", "", 1},
+		{":8484", "a-long-random-token-0123456789", 0}, {"127.0.0.1:8484", "xq7z", 1},
+	} {
+		cfg := config.Defaults()
+		cfg.HTTPAddr, cfg.HTTPToken = c.addr, c.token
+		if got := httpWarnings(cfg); len(got) != c.want {
+			t.Errorf("%q token %q: %v", c.addr, c.token, got)
+		}
+		for _, w := range httpWarnings(cfg) {
+			if c.token != "" && strings.Contains(w, c.token) {
+				t.Errorf("the warning quotes the token: %s", w)
+			}
+		}
 	}
 }

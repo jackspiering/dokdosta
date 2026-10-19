@@ -66,6 +66,7 @@ type Summary struct {
 	State       string // same values as Container.Status
 	Health      string // "" when there is no healthcheck
 	NetworkMode string
+	Image       string // the reference the container was created from
 	Created     time.Time
 }
 

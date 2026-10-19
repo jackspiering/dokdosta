@@ -50,6 +50,7 @@ func (m *Moby) List(ctx context.Context) ([]Summary, error) {
 			Labels:      it.Labels,
 			State:       string(it.State),
 			NetworkMode: it.HostConfig.NetworkMode,
+			Image:       it.Image,
 			Created:     time.Unix(it.Created, 0),
 		}
 		if len(it.Names) > 0 {

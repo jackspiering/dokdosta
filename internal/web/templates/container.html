@@ -1,0 +1,95 @@
+{{define "body"}}
+{{with .Detail}}
+<p class="crumbs"><a href="/containers">Containers</a> › {{.Name}}</p>
+<h1>{{.Name}} {{template "healerbadges" .ContainerDoc}}</h1>
+<p class="muted key">{{.Key}}</p>
+
+{{with .Healer.Suspended}}
+<div class="banner banner-bad" role="status">
+  <strong>SUSPENDED ({{.Reason}}){{if not .Since.IsZero}} since {{timeTag .Since}}{{end}}.</strong>
+  {{if $.Banner}}{{$.Banner}}{{else if .Cause}}{{message .Cause}}{{end}}
+  <br>Nothing more is tried until it recovers, is recreated or started by hand, or you run <code>docker exec whalenurse /whalenurse unsuspend {{$.Scope}}</code>.
+</div>
+{{end}}
+{{with .Healer.Paused}}
+<div class="banner banner-info" role="status"><strong>PAUSED</strong> by <code>{{.Scope}}</code>{{if .Until.IsZero}} until resumed{{else}}: {{expiry .Until}}{{end}}. Events are recorded, no action is taken.</div>
+{{end}}
+
+<section class="cards">
+  <article class="card">
+    <h2>Inspect summary</h2>
+    <dl>
+      <dt>State</dt><dd>{{.State}}</dd>
+      <dt>Health</dt><dd>{{if .Health}}{{.Health}}{{else}}no healthcheck{{end}}</dd>
+      <dt>Restarts</dt><dd>{{.RestartCount}}</dd>
+      <dt>Exit code</dt><dd>{{.ExitCode}}{{if .OOMKilled}} (OOM killed){{end}}</dd>
+      <dt>Restart policy</dt><dd>{{if eq .Policy "no"}}no <span class="muted">(compose default)</span>{{else if .Policy}}{{.Policy}}{{else}}<span class="muted">unknown</span>{{end}}</dd>
+      <dt>Started</dt><dd>{{if .StartedAt.IsZero}}<span class="muted">unknown</span>{{else}}{{timeTag .StartedAt}}{{end}}</dd>
+      {{if ne .State "running"}}<dt>Finished</dt><dd>{{if .FinishedAt.IsZero}}<span class="muted">unknown</span>{{else}}{{timeTag .FinishedAt}}{{end}}</dd>{{end}}
+      <dt>Image</dt><dd><code>{{.Image}}</code></dd>
+      <dt>Container</dt><dd><code>{{.ID}}</code></dd>
+    </dl>
+    {{if .StartError}}<p><strong>Failed start:</strong> <code>{{.StartError}}</code></p>{{end}}
+  </article>
+  <article class="card">
+    <h2>Healer</h2>
+    {{if .Watched}}
+    <dl>
+      <dt>Ladder</dt><dd>{{ladderPath .ContainerDoc}}</dd>
+      <dt>Heal exited</dt><dd>{{.HealExited}}</dd>
+      <dt>Incident</dt><dd>{{if .Healer.IncidentOpened.IsZero}}none{{else}}{{.Healer.Class}}, opened {{timeTag .Healer.IncidentOpened}}{{end}}</dd>
+      {{range .Healer.SkippedRungs}}<dt>Skipped</dt><dd><strong>{{.Rung}}</strong>: {{.Reason}}</dd>{{end}}
+      {{if cooling .Healer.CooldownUntil}}<dt>Cooldown</dt><dd>{{expiry .Healer.CooldownUntil}}</dd>{{end}}
+      {{if not .Healer.RecoverySince.IsZero}}<dt>Recovering since</dt><dd>{{timeTag .Healer.RecoverySince}}</dd>{{end}}
+      <dt>Flap count</dt><dd>{{.Healer.Flaps}} of {{.Healer.FlapLimit}} allowed in the flap window</dd>
+      {{if .Healer.LoopIncreases}}<dt>Restart increases</dt><dd>{{.Healer.LoopIncreases}} counted for the crash-loop rule</dd>{{end}}
+    </dl>
+    {{with .Decision}}<p class="muted">Last look ({{timeTag .At}}): {{.Class}}{{if .Skip}} ({{.Skip}}){{end}}{{if .Reason}}: {{.Reason}}{{end}}</p>{{end}}
+    {{else}}
+    <p class="muted">whalenurse does not watch this container.{{with .Decision}} {{.Reason}}{{end}}</p>
+    {{end}}
+  </article>
+  <article class="card">
+    <h2>Drift guard</h2>
+    <p>{{if eq .Drift.Status "blocked"}}{{badge "bad" "recreate blocked"}}{{else if eq .Drift.Status "was-blocked"}}{{badge "warn" "was blocked"}}{{else if eq .Drift.Status "warned"}}{{badge "warn" "recreated despite drift"}}{{else}}{{badge "ok" "nothing recorded"}}{{end}}
+      {{if not .Drift.At.IsZero}}{{timeTag .Drift.At}}{{end}}</p>
+    {{if .Drift.Findings}}<p>{{message .Drift.Findings}}</p>{{end}}
+    {{if .Drift.MovedBy}}<p>The tag was moved by the pull rung of <code>{{.Drift.MovedBy}}</code>{{if not .Drift.MovedAt.IsZero}} at {{timeTag .Drift.MovedAt}}{{end}}.</p>{{end}}
+    <p class="muted">{{.Drift.Note}}</p>
+  </article>
+  <article class="card">
+    <h2>Related</h2>
+    {{if or .Parent .Dependents}}
+    <dl>
+      {{with .Parent}}<dt>Parent</dt><dd>{{template "relation" .}} <span class="muted">via network_mode</span></dd>{{end}}
+      {{if .Dependents}}<dt>Dependents</dt><dd>{{range .Dependents}}<div>{{template "relation" .}}</div>{{end}}</dd>{{end}}
+    </dl>
+    {{else}}<p class="muted">No <code>network_mode: container:</code> link.</p>{{end}}
+  </article>
+</section>
+
+{{with .LastUpgrade}}
+<h2>Last upgrade during heal</h2>
+<p>{{badge (ifelse .OK "info" "bad") .Kind}} {{timeTag .At}} · <code>{{.Ref}}</code>: <code>{{short .OldImage}}</code> → <code>{{short .NewImage}}</code>{{if not .OK}} · failed{{end}}</p>
+{{if .Sidecars}}<p>Sidecars recreated with it: {{range .Sidecars}}<code>{{.}}</code> {{end}}</p>{{end}}
+{{if .RollbackTag}}
+<p>To roll back, run these two commands on the host, one after the other:</p>
+<div class="cmd"><pre class="rollback"><code>{{.RollbackTag}}</code></pre><button type="button" class="copy" data-copy aria-label="Copy the first command">Copy</button></div>
+<div class="cmd"><pre class="rollback"><code>{{.RollbackUp}}</code></pre><button type="button" class="copy" data-copy aria-label="Copy the second command">Copy</button></div>
+{{end}}
+{{end}}
+
+<h2>Incidents</h2>
+{{template "incidenttable" $.Incidents}}
+
+<h2>Timeline</h2>
+<p class="muted">{{if $.Debug}}Including the <code>EventAttributed</code> debug events. <a href="{{containerPath .Key}}">Hide them</a>.{{else}}The <code>EventAttributed</code> events (a Docker event during a whalenurse action) are hidden. <a href="{{containerPath .Key}}?debug=1">Show them (debug)</a>.{{end}}</p>
+{{template "eventtable" $.Timeline}}
+
+{{if .Labels}}
+<h2>Labels</h2>
+<p class="muted">Only <code>com.docker.compose.*</code> and <code>whalenurse.*</code> labels are shown.</p>
+<div class="tablewrap"><table class="grid labels"><tbody>{{range $k, $v := .Labels}}{{if $v}}<tr><td data-label="Label"><code>{{$k}}</code></td><td data-label="Value"><code>{{$v}}</code></td></tr>{{end}}{{end}}</tbody></table></div>
+{{end}}
+{{end}}
+{{end}}

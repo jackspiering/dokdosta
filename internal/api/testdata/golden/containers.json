@@ -1,0 +1,153 @@
+{
+  "host": "nas",
+  "containers": [
+    {
+      "host": "nas",
+      "key": "nas/media/jellyfin/1",
+      "name": "media-jellyfin-1",
+      "id": "aaaaaaaaaaaa",
+      "project": "media",
+      "service": "jellyfin",
+      "number": "1",
+      "image": "jellyfin/jellyfin:10",
+      "state": "running",
+      "health": "healthy",
+      "restart_count": 0,
+      "exit_code": 0,
+      "started_at": "2026-10-19T12:00:00Z",
+      "restart_policy": "unless-stopped",
+      "watched": true,
+      "opted_in": true,
+      "ladder": [
+        "restart",
+        "recreate"
+      ],
+      "heal_exited": "crashed",
+      "healer": {
+        "state": "ok",
+        "flaps": 0,
+        "flap_limit": 3
+      },
+      "decision": {
+        "class": "ok",
+        "reason": "healthy",
+        "at": "2026-10-19T12:30:00Z"
+      }
+    },
+    {
+      "host": "nas",
+      "key": "nas/media/qbittorrent/1",
+      "name": "media-qbittorrent-1",
+      "id": "cccccccccccc",
+      "project": "media",
+      "service": "qbittorrent",
+      "number": "1",
+      "image": "lscr.io/linuxserver/qbittorrent",
+      "state": "running",
+      "restart_count": 0,
+      "exit_code": 0,
+      "watched": true,
+      "opted_in": false,
+      "ladder": [
+        "restart",
+        "recreate"
+      ],
+      "heal_exited": "crashed",
+      "healer": {
+        "state": "ok",
+        "flaps": 0,
+        "flap_limit": 3
+      },
+      "parent": {
+        "host": "nas",
+        "key": "nas/media/vpn/1",
+        "name": "media-vpn-1"
+      }
+    },
+    {
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "name": "media-vpn-1",
+      "id": "bbbbbbbbbbbb",
+      "project": "media",
+      "service": "vpn",
+      "number": "1",
+      "image": "qmcgaw/gluetun:latest",
+      "state": "running",
+      "health": "unhealthy",
+      "restart_count": 2,
+      "exit_code": 1,
+      "started_at": "2026-10-19T12:00:00Z",
+      "restart_policy": "always",
+      "watched": true,
+      "opted_in": true,
+      "ladder": [
+        "restart",
+        "recreate",
+        "pull"
+      ],
+      "heal_exited": "crashed",
+      "healer": {
+        "state": "SUSPENDED",
+        "class": "unhealthy",
+        "incident_opened": "2026-10-19T12:20:00Z",
+        "rungs_run": 2,
+        "cooldown_until": "2026-10-19T12:25:00Z",
+        "flaps": 1,
+        "flap_limit": 3,
+        "suspended": {
+          "reason": "drift",
+          "since": "2026-10-19T12:24:00Z"
+        }
+      },
+      "decision": {
+        "class": "unhealthy",
+        "action": "restart",
+        "reason": "healthcheck failing",
+        "at": "2026-10-19T12:30:00Z"
+      },
+      "dependents": [
+        {
+          "host": "nas",
+          "key": "nas/media/qbittorrent/1",
+          "name": "media-qbittorrent-1"
+        }
+      ],
+      "labels": {
+        "com.docker.compose.project": "media",
+        "com.docker.compose.service": "vpn",
+        "whalenurse.enable": "true"
+      }
+    },
+    {
+      "host": "nas",
+      "key": "nas/web/proxy/1",
+      "name": "web-proxy-1",
+      "id": "dddddddddddd",
+      "project": "web",
+      "service": "proxy",
+      "number": "1",
+      "image": "caddy:2",
+      "state": "running",
+      "restart_count": 0,
+      "exit_code": 0,
+      "watched": true,
+      "opted_in": true,
+      "ladder": [
+        "restart",
+        "recreate"
+      ],
+      "heal_exited": "crashed",
+      "healer": {
+        "state": "PAUSED",
+        "flaps": 0,
+        "flap_limit": 3,
+        "paused": {
+          "scope": "web/proxy",
+          "since": "2026-10-19T12:10:00Z",
+          "until": "2026-10-19T14:10:00Z"
+        }
+      }
+    }
+  ]
+}

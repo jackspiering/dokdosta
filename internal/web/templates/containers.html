@@ -1,0 +1,6 @@
+{{define "body"}}
+<h1>Containers</h1>
+<p class="muted">{{if .All}}Every container on the host. <a href="/containers">Only the watched ones</a>.{{else}}The containers whalenurse watches: opted in, or a <code>network_mode</code> sidecar of an opted-in one. <a href="/containers?all=1">Show every container</a>.{{end}}</p>
+{{if .ScopeFilter}}<p>Only the containers under the pause scope <code>{{.ScopeFilter}}</code>. <a href="/containers">Show all</a>.</p>{{end}}
+{{if .Containers}}{{template "containertable" .Containers}}{{else}}<p>No containers.</p>{{end}}
+{{end}}

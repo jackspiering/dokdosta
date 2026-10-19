@@ -1,4 +1,4 @@
-# Running whalenurse (M4)
+# Running whalenurse (M5)
 
 whalenurse watches Docker, and for opted-in containers that go unhealthy, crash-loop, or stop unexpectedly it runs rung 1 (a Docker API `restart` or `start`), then rung 2 (recreate from the stack's own compose files, behind a drift guard), and repairs `network_mode` sidecars that depend on a container it restarted or recreated. M2a added the persisted state, the full ladder (cooldown, recovery period, flap limit, SUSPENDED, PAUSED), the CLI and shutdown handling; M2b adds compose. M3 added notifications and M4 adds the opt-in pull rung (rung 3). Nothing is published yet; build the image yourself.
 
@@ -94,7 +94,7 @@ docker exec whalenurse /whalenurse notify test   # one test message to every not
 - **unsuspend** lifts SUSPENDED so the ladder may run again. For a container suspended for *flapping* it also forgets its flap history; otherwise its next incident would suspend it again at once.
 - **status** lists every container that has an incident, a pause, flap history, a manual-stop marker or a crash-loop count, the pauses, and the rate-limit budget.
 
-There are no write endpoints on the TCP listener (`WHALENURSE_HTTP_ADDR` serves `/healthz` only): the commands exist only on the unix socket.
+There are no write endpoints on the TCP listener (`WHALENURSE_HTTP_ADDR`): it serves GET and HEAD only, and the commands exist only on the unix socket.
 
 ## Notifications
 
@@ -117,6 +117,41 @@ What is sent: an action taken (`restarted`, `recreated`, or the failure), recove
 
 Decisions and open points: [m3-notes.md](m3-notes.md).
 
+## The dashboard and the read-only API (M5)
+
+Off unless `WHALENURSE_HTTP_ADDR` is set. It shows what whalenurse knows and can change nothing: GET and HEAD only, no write endpoint, not even through the API. `pause`, `resume` and `unsuspend` stay CLI-only (`docker exec whalenurse /whalenurse ...`).
+
+```yaml
+services:
+  whalenurse:
+    ports: ["127.0.0.1:8484:8484"]      # loopback only; a reverse proxy or Tailscale in front of it
+    environment:
+      WHALENURSE_HTTP_ADDR: ":8484"      # inside the container; the port mapping above decides who can reach it
+      WHALENURSE_HTTP_TOKEN: ${WHALENURSE_HTTP_TOKEN} # from an env file, not a committed file
+      # WHALENURSE_METRICS: "true"
+```
+
+**Exposure.** The page lists container names, states, image names and the event history, so keep it off the open network. In order of preference: publish on `127.0.0.1` and put a reverse proxy in front, or run a Tailscale container on a **shared bridge network** with whalenurse and forward with `tailscale serve`. **Never `network_mode: service:<tailscale>`**: whalenurse would become a dependent of a container it may heal (plan §3.8). Whalenurse warns at startup when the listener is not loopback and no token is set, and when the token is shorter than 16 characters. Use a long random token (`openssl rand -hex 24`): there is no limit on attempts.
+
+**The token.** With `WHALENURSE_HTTP_TOKEN` set, every request but `/healthz` needs it: `Authorization: Bearer <token>`, or HTTP Basic with the token as the password and any user name (a browser asks for it once; that is how the dashboard works, because a browser cannot send a bearer header on a page load or an `EventSource`). It is never read from the URL. The comparison is constant time. **Both forms send the token in clear on every request: use them only over TLS** (a reverse proxy that terminates TLS, or Tailscale Serve), or on loopback.
+
+**Wrong tokens.** Ten wrong tokens within a minute from one client address block it: 429 with `Retry-After`, for 1 minute, then 2, 4 ... up to 15 minutes for each further block (forgotten after an hour without a failure). While blocked, even the right token gets 429. The address is the connection's peer, and `X-Forwarded-For` is ignored because a client can forge it, so **behind a reverse proxy all users share the proxy's budget** (someone who guesses wrongly through the proxy locks everybody out for a minute): keep the token long and, if you can, let the proxy rate-limit and authenticate too. Whalenurse logs each block once.
+
+**Without a token** only the Host names `localhost`, `127.0.0.1` and `[::1]` are served (any port), and the names in `WHALENURSE_HTTP_ALLOWED_HOSTS` (comma or space separated, for example `nas.lan,192.168.1.5`); anything else gets 403. That stops a web page from reading the dashboard through DNS rebinding in a browser on the same network; it does not stop a program that sets any Host it likes, so a listener that is reachable from the network still needs a token. With a token the Host is not checked, and the variable is ignored. `/healthz` is exempt and answers only `ok` or `not ok`.
+
+| Path | What |
+|---|---|
+| `/` | overview: healer status, compose binary and version, version gate, dry-run banner, action budget, counts, pauses, notifications, what needs attention |
+| `/containers`, `/containers?all=1` | the watched containers (opted in, or sidecars of an opted-in one), or every container |
+| `/containers/<key>` | inspect summary, ladder and incident, SUSPENDED/PAUSED with reason and expiry, the drift guard's last verdict, parent and dependents, last upgrade with the rollback commands, timeline |
+| `/history` | incidents and events, filterable. The noisy `EventAttributed` events (a Docker event during a whalenurse action) are hidden; "Debug (everything)" or `?debug=1` shows them, and so does `?debug=1` on a container page |
+| `/api/v1/status`, `/containers`, `/containers/<key>`, `/events?since=<id>&limit=&key=&type=`, `/incidents` | JSON. Every record has `host`, times are UTC, `events` ids are monotonic per host and survive restarts; `next` is the cursor to ask for next, `reset: true` means the cursor was ahead of this host (start over) |
+| `/api/v1/stream` | server-sent events; resume with `Last-Event-ID` or `?since=` |
+| `/metrics` | Prometheus text, only with `WHALENURSE_METRICS=true` |
+| `/healthz` | `ok` or `not ok` (503), never a reason; no token and no Host check. The reason is in `/api/v1/status` and `whalenurse status` |
+
+What is never shown: environment variables, commands, mounts, labels outside `com.docker.compose.*` and `whalenurse.*`, notification and uptime-ping URLs, the token. Event text and error text are passed through the same redactor as the notifications. A **dry run** serves the last 5,000 events from memory and its history is lost on a restart; with the store, events are kept for `WHALENURSE_HISTORY_RETENTION` (at most 100,000).
+
 ## Settings
 
 | Variable | Default |
@@ -136,7 +171,10 @@ Decisions and open points: [m3-notes.md](m3-notes.md).
 | `WHALENURSE_HISTORY_RETENTION` | `30d` (closed incidents older than this are pruned hourly) |
 | `WHALENURSE_HOST_ID` | hostname |
 | `WHALENURSE_LOG_LEVEL` | `info` |
-| `WHALENURSE_HTTP_ADDR` | empty (serves `/healthz` only when set) |
+| `WHALENURSE_HTTP_ADDR` | empty (off). When set: the dashboard, the read-only API and `/healthz`. Use `127.0.0.1:8484`, or `:8484` with a token |
+| `WHALENURSE_HTTP_TOKEN` | empty. A secret: bearer token (or the password of HTTP Basic) for the dashboard and the API; `/healthz` stays open |
+| `WHALENURSE_METRICS` | `false`. `true` serves Prometheus `/metrics` (behind the token) |
+| `WHALENURSE_HTTP_ALLOWED_HOSTS` | empty. Extra Host names served when there is no token (see above) |
 | `WHALENURSE_CONTROL_SOCKET` | `/run/whalenurse.sock` (`/healthz` and the CLI commands) |
 | `WHALENURSE_DRIFT_GUARD` | `strict` (or `warn`) |
 | `WHALENURSE_COMPOSE_BIN` | empty (see the lookup order above) |
@@ -146,7 +184,7 @@ Decisions and open points: [m3-notes.md](m3-notes.md).
 | `WHALENURSE_HEARTBEAT_URL` | empty (none). Uptime ping URL; **secret** |
 | `WHALENURSE_HEARTBEAT_INTERVAL` | `5m` |
 
-Durations take `s`, `m`, `h` and also `d` (`30d`). `WHALENURSE_HTTP_TOKEN` from the plan is accepted with a warning and ignored until M5. An unknown `WHALENURSE_*` name logs a warning.
+Durations take `s`, `m`, `h` and also `d` (`30d`). An unknown `WHALENURSE_*` name logs a warning.
 
 ## What it does
 
