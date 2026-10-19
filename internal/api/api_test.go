@@ -19,7 +19,12 @@ import (
 func get(t *testing.T, h http.Handler, path string, hdr ...string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest("GET", path, nil)
+	req.Host = "127.0.0.1:8484" // httptest's default, example.com, is not a name a tokenless listener serves
 	for i := 0; i+1 < len(hdr); i += 2 {
+		if hdr[i] == "Host" {
+			req.Host = hdr[i+1]
+			continue
+		}
 		req.Header.Set(hdr[i], hdr[i+1])
 	}
 	rec := httptest.NewRecorder()

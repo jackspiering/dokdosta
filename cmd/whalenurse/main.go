@@ -213,7 +213,12 @@ func runCmd(args []string) error {
 	}
 
 	svc := daemon.NewAPI(d, evlog, history, hub, red.Redact)
-	tcpHandler, sockHandler := handlers(d, api.Options{Service: svc, Token: cfg.HTTPToken, Web: web.Handler(svc)})
+	tcpHandler, sockHandler := handlers(d, api.Options{
+		Service: svc, Token: cfg.HTTPToken, AllowedHosts: cfg.HTTPAllowedHosts, Web: web.Handler(svc),
+		OnBlock: func(client string, d time.Duration) {
+			log.Warn("dashboard: too many wrong tokens; the client is blocked", "client", client, "for", d.String())
+		},
+	})
 	if cfg.ControlSocket != "" {
 		go func() {
 			if err := control.Serve(ctx, cfg.ControlSocket, sockHandler); err != nil {
@@ -229,7 +234,7 @@ func runCmd(args []string) error {
 		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute}
 		srv.RegisterOnShutdown(hub.Close)
 		go func() {
-			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics)
+			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics, "extra_hosts_without_token", len(cfg.HTTPAllowedHosts))
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Error("http listener failed", "addr", cfg.HTTPAddr, "error", err.Error())
 			}
@@ -601,6 +606,9 @@ func httpWarnings(cfg config.Global) []string {
 	loopback := err == nil && (host == "localhost" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()))
 	if cfg.HTTPToken == "" && !loopback {
 		w = append(w, "the dashboard listens on "+cfg.HTTPAddr+" without WHALENURSE_HTTP_TOKEN: anyone who can reach the port can read container names, states and the event history. Set a token, or publish the port on 127.0.0.1 or behind a reverse proxy or Tailscale (never network_mode)")
+	}
+	if cfg.HTTPToken != "" && len(cfg.HTTPAllowedHosts) > 0 {
+		w = append(w, "WHALENURSE_HTTP_ALLOWED_HOSTS is ignored while WHALENURSE_HTTP_TOKEN is set")
 	}
 	if cfg.HTTPToken != "" && len(cfg.HTTPToken) < 16 {
 		w = append(w, "WHALENURSE_HTTP_TOKEN is shorter than 16 characters; use a long random token")

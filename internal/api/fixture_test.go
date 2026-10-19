@@ -136,3 +136,9 @@ func golden(t *testing.T, name string, got []byte) {
 		t.Errorf("%s differs from the golden file (run go test ./internal/api -update to accept):\n--- got ---\n%s\n--- want ---\n%s", name, got, want)
 	}
 }
+
+func engineRing() *engine.Ring { return engine.NewRing(100) }
+
+func engineEvent(id uint64, typ, msg string, attrs map[string]string) engine.Event {
+	return engine.Event{ID: id, Time: t0.Add(time.Duration(id) * time.Minute), Host: "nas", Key: "nas/media/vpn/1", Container: "media-vpn-1", Type: engine.EventType(typ), Message: msg, Attrs: attrs}
+}

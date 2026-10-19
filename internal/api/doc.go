@@ -131,19 +131,27 @@ type ContainerDoc struct {
 
 // HealerDoc is whalenurse's state for the container.
 type HealerDoc struct {
-	State          string      `json:"state"` // ok, incident, recovering, SUSPENDED, PAUSED
-	Class          string      `json:"class,omitempty"`
-	IncidentOpened time.Time   `json:"incident_opened,omitzero"`
-	RungsRun       int         `json:"rungs_run,omitempty"`
-	NextRung       string      `json:"next_rung,omitempty"` // empty when the ladder is spent
-	CooldownUntil  time.Time   `json:"cooldown_until,omitzero"`
-	RecoverySince  time.Time   `json:"recovery_since,omitzero"`
-	Flaps          int         `json:"flaps"`
-	FlapLimit      int         `json:"flap_limit"`
-	ManualStop     bool        `json:"manual_stop,omitempty"`
-	LoopIncreases  int         `json:"loop_increases,omitempty"`
-	Suspended      *SuspendDoc `json:"suspended,omitempty"`
-	Paused         *PausedDoc  `json:"paused,omitempty"`
+	State          string       `json:"state"` // ok, incident, recovering, SUSPENDED, PAUSED
+	Class          string       `json:"class,omitempty"`
+	IncidentOpened time.Time    `json:"incident_opened,omitzero"`
+	RungsRun       int          `json:"rungs_run,omitempty"`
+	NextRung       string       `json:"next_rung,omitempty"`     // empty when the ladder is spent
+	SkippedRungs   []SkippedDoc `json:"skipped_rungs,omitempty"` // rungs of this incident that were not available, and so did not run
+	CooldownUntil  time.Time    `json:"cooldown_until,omitzero"`
+	RecoverySince  time.Time    `json:"recovery_since,omitzero"`
+	Flaps          int          `json:"flaps"`
+	FlapLimit      int          `json:"flap_limit"`
+	ManualStop     bool         `json:"manual_stop,omitempty"`
+	LoopIncreases  int          `json:"loop_increases,omitempty"`
+	Suspended      *SuspendDoc  `json:"suspended,omitempty"`
+	Paused         *PausedDoc   `json:"paused,omitempty"`
+}
+
+// SkippedDoc is a rung of the open incident that could not run: the version gate, no usable compose inputs, a
+// pull_policy that forbids the pull. It counts toward RungsRun (the ladder moved past it) but nothing was done.
+type SkippedDoc struct {
+	Rung   string `json:"rung"`
+	Reason string `json:"reason"`
 }
 
 // SuspendDoc says why a container is SUSPENDED. Cause is the sentence of the "giving up" message (detail only).

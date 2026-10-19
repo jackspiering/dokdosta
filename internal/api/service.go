@@ -139,12 +139,50 @@ func (s *Service) Status() StatusDoc {
 // Containers lists the watched containers, or every container with all set, sorted by key.
 func (s *Service) Containers(all bool) []ContainerDoc {
 	out := []ContainerDoc{}
+	skipped := s.skippedRungs()
 	for _, c := range s.Source.Containers() {
 		if all || c.Watched {
-			out = append(out, s.clean(c))
+			c = s.clean(c)
+			c.Healer.SkippedRungs = skipped.of(c)
+			out = append(out, c)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
+// skipped maps a key and an incident (its opening time, as the engine writes it in the incident attribute) to the
+// rungs that were skipped in it.
+type skipped map[string][]SkippedDoc
+
+func (k skipped) of(c ContainerDoc) []SkippedDoc {
+	if c.Healer.IncidentOpened.IsZero() {
+		return nil
+	}
+	return k[c.Key+"|"+c.Healer.IncidentOpened.UTC().Format(time.RFC3339Nano)]
+}
+
+// skippedRungs reads the RungUnavailable events of the log, which say which rung of which incident did not run. The
+// engine counts a skipped rung as passed, so without this the page would show it as done.
+func (s *Service) skippedRungs() skipped {
+	out := skipped{}
+	if s.Events == nil {
+		return out
+	}
+	evs, err := s.Events.Query(engine.EventQuery{Types: []engine.EventType{engine.RungUnavailable}, Newest: true, Limit: 500})
+	if err != nil {
+		return out
+	}
+	seen := map[string]bool{}
+	for i := len(evs) - 1; i >= 0; i-- { // oldest first
+		e := s.EventDoc(evs[i])
+		rung, inc := e.Attrs["rung"], e.Attrs["incident"]
+		if rung == "" || inc == "" || seen[e.Key+"|"+inc+"|"+rung] {
+			continue
+		}
+		seen[e.Key+"|"+inc+"|"+rung] = true
+		out[e.Key+"|"+inc] = append(out[e.Key+"|"+inc], SkippedDoc{Rung: rung, Reason: e.Message})
+	}
 	return out
 }
 
@@ -163,6 +201,7 @@ func (s *Service) Container(key string) (ContainerDetailDoc, bool) {
 	if !found {
 		return d, false
 	}
+	d.Healer.SkippedRungs = s.skippedRungs().of(d.ContainerDoc)
 	d.Timeline, d.Incidents = []EventDoc{}, []IncidentDoc{}
 	if s.Events != nil {
 		if evs, err := s.Events.Query(engine.EventQuery{Key: key, Newest: true, Limit: timelineLimit}); err == nil {

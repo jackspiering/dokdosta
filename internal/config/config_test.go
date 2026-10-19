@@ -242,3 +242,13 @@ func TestHTTPTokenAndMetrics(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestHTTPAllowedHosts(t *testing.T) {
+	g, warns, err := FromEnv([]string{"WHALENURSE_HTTP_ALLOWED_HOSTS=nas.example.org, 192.168.1.5\tmedia.lan"})
+	if err != nil || len(warns) != 0 || strings.Join(g.HTTPAllowedHosts, "|") != "nas.example.org|192.168.1.5|media.lan" {
+		t.Fatalf("%v %v %v", g.HTTPAllowedHosts, warns, err)
+	}
+	if g, _, _ = FromEnv(nil); len(g.HTTPAllowedHosts) != 0 {
+		t.Fatal("empty by default")
+	}
+}

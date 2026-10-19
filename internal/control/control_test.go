@@ -81,7 +81,7 @@ func serve(t *testing.T, h http.Handler) (sock string, stop func()) {
 
 func TestHealthOverUnixSocket(t *testing.T) {
 	chk := &fakeChecker{ok: true, msg: "ok"}
-	sock, stop := serve(t, api.Handler(api.Options{Health: chk}))
+	sock, stop := serve(t, healthOnly(chk))
 	defer stop()
 	ctx := context.Background()
 
@@ -159,4 +159,11 @@ func TestCommandWithoutADaemonSaysSo(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "cannot reach the whalenurse daemon") {
 		t.Fatalf("%v", err)
 	}
+}
+
+// healthOnly is a mux with /healthz and nothing else, like the TCP handler without a service (404 for the rest).
+func healthOnly(c api.Checker) http.Handler {
+	m := http.NewServeMux()
+	m.Handle("/healthz", api.HealthHandler(c))
+	return m
 }

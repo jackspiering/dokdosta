@@ -301,6 +301,13 @@ func TestPagesRenderAndAreCleanHTML(t *testing.T) {
 			t.Errorf("detail lacks %q", want)
 		}
 	}
+	// The recreate rung could not run (no compose here): the page says so instead of drawing a tick.
+	if !strings.Contains(detail, "recreate skipped – not available") || strings.Contains(detail, "recreate ✓") || !strings.Contains(detail, "Skipped") {
+		t.Errorf("a skipped rung must not look done:\n%s", regexp.MustCompile(`(?s).*(<dt>Ladder.*?</dd>).*`).ReplaceAllString(detail, "$1"))
+	}
+	if !strings.Contains(list, "1 skipped (not available)") {
+		t.Errorf("the list lacks the skipped note: %s", regexp.MustCompile(`(?s).*(<td data-label="Incident">.*?</td>).*`).ReplaceAllString(list, "$1"))
+	}
 	_, side := r.fetch(t, "/containers/nas/p/side/1", "")
 	if !strings.Contains(side, "Parent") || !strings.Contains(side, "p-web-1") {
 		t.Errorf("sidecar page lacks its parent")

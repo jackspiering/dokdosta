@@ -41,6 +41,8 @@ services:
       # WHALENURSE_HTTP_ADDR: ":8484"
       # WHALENURSE_HTTP_TOKEN: ${WHALENURSE_HTTP_TOKEN}
       # WHALENURSE_METRICS: "true"
+      # Without a token only localhost, 127.0.0.1 and [::1] are served; add the names you reach it by, or set a token (and use TLS):
+      # WHALENURSE_HTTP_ALLOWED_HOSTS: "nas.lan"
 
   # An opted-in container: whalenurse restarts it when it turns unhealthy, recreates it from its compose files if that does
   # not help, and suspends it if nothing does. network_mode: service:<parent> sidecars follow their parent.

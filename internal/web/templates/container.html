@@ -38,6 +38,7 @@
       <dt>Ladder</dt><dd>{{ladderPath .ContainerDoc}}</dd>
       <dt>Heal exited</dt><dd>{{.HealExited}}</dd>
       <dt>Incident</dt><dd>{{if .Healer.IncidentOpened.IsZero}}none{{else}}{{.Healer.Class}}, opened {{timeTag .Healer.IncidentOpened}}{{end}}</dd>
+      {{range .Healer.SkippedRungs}}<dt>Skipped</dt><dd><strong>{{.Rung}}</strong>: {{.Reason}}</dd>{{end}}
       {{if cooling .Healer.CooldownUntil}}<dt>Cooldown</dt><dd>until {{timeTag .Healer.CooldownUntil}}</dd>{{end}}
       {{if not .Healer.RecoverySince.IsZero}}<dt>Recovering since</dt><dd>{{timeTag .Healer.RecoverySince}}</dd>{{end}}
       <dt>Flap count</dt><dd>{{.Healer.Flaps}} of {{.Healer.FlapLimit}} allowed in the flap window</dd>

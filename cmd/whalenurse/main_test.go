@@ -221,6 +221,14 @@ func TestNotifyTestNeedsURLs(t *testing.T) {
 	}
 }
 
+func TestAllowedHostsAreIgnoredWithAToken(t *testing.T) {
+	cfg := config.Defaults()
+	cfg.HTTPAddr, cfg.HTTPToken, cfg.HTTPAllowedHosts = "127.0.0.1:8484", "a-long-random-token-0123456789", []string{"nas.example.org"}
+	if got := httpWarnings(cfg); len(got) != 1 || !strings.Contains(got[0], "ALLOWED_HOSTS is ignored") {
+		t.Fatalf("%v", got)
+	}
+}
+
 func TestHTTPWarnings(t *testing.T) {
 	for _, c := range []struct {
 		addr, token string

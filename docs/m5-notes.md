@@ -1,6 +1,6 @@
 # M5 notes
 
-Decisions, deviations and open questions for milestone M5 (the read-only dashboard and API) of [PLAN.md](PLAN.md). The rules that changed are in the plan as **v3.9** (proposed, awaiting the maintainer's review). Where the plan was ambiguous this file says what was chosen and why, so the maintainer can overrule it.
+Decisions, deviations and open questions for milestone M5 (the read-only dashboard and API) of [PLAN.md](PLAN.md). The rules that changed are in the plan as **v3.9** (approved 19 Oct 2026; the maintainer's answers to the six open questions of the first M5 build are *Review follow-ups* below). Where the plan was ambiguous this file says what was chosen and why, so the maintainer can overrule it.
 
 ## Upstream check (19 Oct 2026)
 
@@ -10,8 +10,8 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 
 1. **Events had no store.** The plan said the events table's ID "doubles as the `since` cursor" (§3.10), but M2 to M4 never built it: the bus counter lived in memory and restarted at 1. M5 adds the table (schema 3), seeds the bus from it, and makes retention apply to it (v3.9 item 1). `AUTOINCREMENT` (not plain `INTEGER PRIMARY KEY`, which can reuse the ID of a deleted newest row) keeps `sqlite_sequence` as the high-water mark, so retention cannot make an ID come back. A cap of 100,000 rows bounds a flapping container.
 2. **A cursor ahead of the host is a reset**, not an empty page: a hub holding cursor 500 for a host whose store was wiped would otherwise wait forever. The reply carries `reset: true` and starts over; the SSE stream sends a `reset` event. A dry run restarts at 1 every time, so it resets by design.
-3. **Token: bearer and Basic.** The brief said bearer. A browser cannot set `Authorization` on a navigation or an `EventSource`, and a login form would need a POST (refused by the read-only rule) and a cookie. HTTP Basic with the token as the password is native to browsers, needs no write endpoint and no state. The token is still never taken from the URL. **Maintainer: say if you want bearer only** (then the dashboard behind a token needs a proxy that injects the header).
-4. **`/healthz` stays open** on the TCP listener, as since M1, even with a token. It reveals only the health text. A reverse proxy or an uptime monitor can use it.
+3. **Token: bearer and Basic.** The brief said bearer. A browser cannot set `Authorization` on a navigation or an `EventSource`, and a login form would need a POST (refused by the read-only rule) and a cookie. HTTP Basic with the token as the password is native to browsers, needs no write endpoint and no state. The token is still never taken from the URL. **Approved** (follow-up 1), with the rule that both forms are for TLS only.
+4. **`/healthz` stays open** on the TCP listener, as since M1, even with a token. It says only ok or not ok (follow-up 2). A reverse proxy or an uptime monitor can use it.
 5. **`/metrics` behind `WHALENURSE_METRICS`** (default off), not always on: "optional" read as opt-in, consistent with the dashboard being off by default. Cardinality: two per-container families (`suspended`, `flaps`) for the watched containers only.
 6. **Containers page lists the watched containers** (opted in, or a sidecar of an opted-in parent: what the last classification did not skip), with `?all=1` for the rest. The API does the same (`?all=1`). Counts on the overview say how many are not watched. Unwatched containers are shown with their labels filtered like the others.
 7. **The drift status is the guard's last verdict** (from the event log), not a live check (v3.9 item 8). If the container was never recreated, the page says "nothing recorded". A live "would a recreate be blocked now" would need a compose dry-run per page view.
@@ -32,6 +32,7 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 - Every non-GET method (POST, PUT, PATCH, DELETE, OPTIONS, TRACE, CONNECT, PROPFIND) is 405 on every route including the control socket's paths, with and without the token, and none answers with CORS headers.
 - Pages: the inline `<script>`, `on*=`, `style=` and `javascript:` greps, and "no third-party origin" on every page; the import rule of `internal/web`.
 - `node --check` on `app.js`.
+- Follow-ups: the Host check (table of allowed and refused names, `/healthz` exempt, ignored with a token, the refusal does not echo the host), the limiter (the tenth wrong token, `Retry-After` 60 then 120, 240, 480, 900, 900; a right token refused while blocked; another client, `/healthz` and a browser's credential-less requests unaffected; a spoofed `X-Forwarded-For` does not escape; IPv6 /64; the bounded table; strikes forgotten after an hour; failures spaced over a minute never block), `/healthz` saying only ok or not ok, and the skipped marker (a golden, the page text and the function text; the full daemon test shows it for a real run with no compose). The CI integration test gained the Host and 429 cases.
 - A stream survives a server `ReadTimeout` shorter than the stream (a regression test with a 300 ms timeout and an event after 1.2 s): `net/http` does not cancel a body-less GET's request at that deadline, so no extra code was needed.
 - The attribute allow-list is complete for everything the daemon tests emit: the daemon test harness fails any event whose attribute key `api.AttrAllowed` would drop (the dashboard test's planted keys excepted), across all the M1 to M5 scenarios.
 
@@ -40,15 +41,19 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 - **The pages were not looked at in a browser.** The preview tool was off for this thread, and the headless Chromium on the box lacks `libasound`/`libgbm`. The templates, the CSS (light/dark by `prefers-color-scheme`; a 40rem breakpoint that turns the tables into stacked cards) and `app.js` were reviewed by reading and tested by fetching the HTML, not by rendering. **[maintainer]** please open the dashboard once on a desktop and a phone, in both colour schemes, and tell me what looks wrong.
 - `app.js` live refresh (EventSource plus the 15 s refetch) was not exercised in a browser; the server side of the stream is covered by Go tests.
 
-## Open questions for the maintainer
+## Review follow-ups (the maintainer's answers, 19 Oct 2026; plan v3.9 items 11 to 16)
 
-1. Basic auth in addition to bearer (decision 3): keep?
-2. **DNS rebinding.** A tokenless listener on `127.0.0.1` can be read by a web page in a browser on the same machine through DNS rebinding (a Host header check would stop it, but breaks reverse proxies with other host names unless an allow-list variable is added). The docs say to set a token. Add `WHALENURSE_HTTP_ALLOWED_HOSTS`? Not done.
-3. **No attempt limit** on the token. A long random token makes it moot; a per-IP throttle is a candidate for M6.
-4. `/healthz` open with a token (decision 4): keep?
-5. `/metrics` default off (decision 5): keep?
-6. The ladder on the detail page draws `restart ✓ → recreate ✓` for a rung that was skipped as unavailable (the engine counts it as run). The incident events say which. A separate "skipped" marker would need the engine to record it; not done.
+1. **Basic next to bearer: approved.** Password = the token, user name ignored, the same constant-time compare. Documented as TLS only (a proxy that terminates TLS, or Tailscale Serve), or loopback; the startup text and `docs/running.md` say so.
+2. **`/healthz` open with a token, and only ok or not ok.** `PublicHealthHandler` writes `ok` or `not ok` (503). The old detail handler stays on the unix socket (`HealthHandler`), where the image HEALTHCHECK and `whalenurse healthcheck` use it. The reason is in the token-protected status.
+3. **`/metrics` off by default; on, behind the token.** Unchanged.
+4. **DNS rebinding fixed.** Without a token: Host `localhost`, `127.0.0.1`, `[::1]` and `WHALENURSE_HTTP_ALLOWED_HOSTS`, else 403. Choices made: the port is ignored; names compare lowercase with a trailing dot stripped; list entries may carry a port or brackets (dropped); `/healthz` is exempt; with a token the Host is not checked (a proxy forwards its own name) and the variable is ignored with a startup warning; a request with no Host header (HTTP/1.0) is served. It defends against browsers only: `curl -H 'Host: localhost'` still works, which is why a network-reachable listener still wants a token.
+5. **Wrong-token limit.** 10 per minute per client IP, then 429 with `Retry-After`, with a doubling block (1, 2, 4 ... 15 minutes, strikes forgotten after an hour). Choices made: the client is the peer address (IPv6 reduced to its /64, which a client controls entirely); **`X-Forwarded-For` is ignored** (forgeable, and honouring it would let an attacker rotate addresses), so behind a reverse proxy all users share the proxy's budget and one guesser can lock everybody out; a request with no credentials is not a guess (a browser sends one before its prompt); a right token does not reset the count; **while blocked the right token also gets 429** (otherwise the block only slows guessing); `/healthz` is exempt; the block is logged once; 4,096 tracked clients. **Open for M6: a trusted-proxy option** (honour `X-Forwarded-For` from a listed proxy address) so that the budget is per real client.
+6. **Skipped rungs have their own marker.** From the open incident's `RungUnavailable` events (one read of the log per page, matched on the `incident` attribute), exposed as `healer.skipped_rungs`. The detail page says "recreate skipped – not available" and lists the reason; the list says "1 of 3 rungs run, 1 skipped (not available)". If the events were pruned by retention the marker disappears and the rung looks run again (retention is 30 days by default, longer than any open incident).
+
+## Open questions
+
+None open from M5. Candidates for M6 below.
 
 ## Candidates for M6
 
-A per-IP throttle on a wrong token; `WHALENURSE_HTTP_ALLOWED_HOSTS`; a "skipped" mark on the ladder; a README screenshot once the pages have been seen.
+A trusted-proxy option for the wrong-token limiter; a README screenshot once the pages have been seen.

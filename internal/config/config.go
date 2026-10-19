@@ -36,7 +36,10 @@ type Global struct {
 	HTTPAddr       string // empty: no TCP listener
 	HTTPToken      string // WHALENURSE_HTTP_TOKEN: when set, the dashboard and the API need it. A secret: never logged or shown.
 	Metrics        bool   // WHALENURSE_METRICS: serve /metrics on the HTTP listener
-	ControlSocket  string // unix socket for /healthz and the CLI (pause, resume, unsuspend, status)
+	// HTTPAllowedHosts are the Host names served besides localhost, 127.0.0.1 and [::1] when there is no token
+	// (WHALENURSE_HTTP_ALLOWED_HOSTS: a DNS rebinding defence). Ignored when a token is set.
+	HTTPAllowedHosts []string
+	ControlSocket    string // unix socket for /healthz and the CLI (pause, resume, unsuspend, status)
 
 	RecoveryPeriod   time.Duration // an incident closes after this long recovered; a crash loop clears after it
 	FlapLimit        int           // more than this many incidents within FlapWindow suspends the container
@@ -189,6 +192,9 @@ func FromEnv(environ []string) (Global, []string, error) {
 	// The token is a secret: an error about it never quotes the value.
 	if v, ok := take("WHALENURSE_HTTP_TOKEN"); ok {
 		g.HTTPToken = v
+	}
+	if v, ok := take("WHALENURSE_HTTP_ALLOWED_HOSTS"); ok {
+		g.HTTPAllowedHosts = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
 	}
 	if v, ok := take("WHALENURSE_METRICS"); ok {
 		b, err := strconv.ParseBool(v)

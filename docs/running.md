@@ -133,7 +133,11 @@ services:
 
 **Exposure.** The page lists container names, states, image names and the event history, so keep it off the open network. In order of preference: publish on `127.0.0.1` and put a reverse proxy in front, or run a Tailscale container on a **shared bridge network** with whalenurse and forward with `tailscale serve`. **Never `network_mode: service:<tailscale>`**: whalenurse would become a dependent of a container it may heal (plan §3.8). Whalenurse warns at startup when the listener is not loopback and no token is set, and when the token is shorter than 16 characters. Use a long random token (`openssl rand -hex 24`): there is no limit on attempts.
 
-**The token.** With `WHALENURSE_HTTP_TOKEN` set, every request but `/healthz` needs it: `Authorization: Bearer <token>`, or HTTP Basic with the token as the password and any user name (a browser asks for it once; that is how the dashboard works, because a browser cannot send a bearer header on a page load or an `EventSource`). It is never read from the URL. The comparison is constant time.
+**The token.** With `WHALENURSE_HTTP_TOKEN` set, every request but `/healthz` needs it: `Authorization: Bearer <token>`, or HTTP Basic with the token as the password and any user name (a browser asks for it once; that is how the dashboard works, because a browser cannot send a bearer header on a page load or an `EventSource`). It is never read from the URL. The comparison is constant time. **Both forms send the token in clear on every request: use them only over TLS** (a reverse proxy that terminates TLS, or Tailscale Serve), or on loopback.
+
+**Wrong tokens.** Ten wrong tokens within a minute from one client address block it: 429 with `Retry-After`, for 1 minute, then 2, 4 ... up to 15 minutes for each further block (forgotten after an hour without a failure). While blocked, even the right token gets 429. The address is the connection's peer, and `X-Forwarded-For` is ignored because a client can forge it, so **behind a reverse proxy all users share the proxy's budget** (someone who guesses wrongly through the proxy locks everybody out for a minute): keep the token long and, if you can, let the proxy rate-limit and authenticate too. Whalenurse logs each block once.
+
+**Without a token** only the Host names `localhost`, `127.0.0.1` and `[::1]` are served (any port), and the names in `WHALENURSE_HTTP_ALLOWED_HOSTS` (comma or space separated, for example `nas.lan,192.168.1.5`); anything else gets 403. That stops a web page from reading the dashboard through DNS rebinding in a browser on the same network; it does not stop a program that sets any Host it likes, so a listener that is reachable from the network still needs a token. With a token the Host is not checked, and the variable is ignored. `/healthz` is exempt and answers only `ok` or `not ok`.
 
 | Path | What |
 |---|---|
@@ -144,7 +148,7 @@ services:
 | `/api/v1/status`, `/containers`, `/containers/<key>`, `/events?since=<id>&limit=&key=&type=`, `/incidents` | JSON. Every record has `host`, times are UTC, `events` ids are monotonic per host and survive restarts; `next` is the cursor to ask for next, `reset: true` means the cursor was ahead of this host (start over) |
 | `/api/v1/stream` | server-sent events; resume with `Last-Event-ID` or `?since=` |
 | `/metrics` | Prometheus text, only with `WHALENURSE_METRICS=true` |
-| `/healthz` | `ok` or the reason; no token needed |
+| `/healthz` | `ok` or `not ok` (503), never a reason; no token and no Host check. The reason is in `/api/v1/status` and `whalenurse status` |
 
 What is never shown: environment variables, commands, mounts, labels outside `com.docker.compose.*` and `whalenurse.*`, notification and uptime-ping URLs, the token. Event text and error text are passed through the same redactor as the notifications. A **dry run** serves the last 5,000 events from memory and its history is lost on a restart; with the store, events are kept for `WHALENURSE_HISTORY_RETENTION` (at most 100,000).
 
@@ -170,6 +174,7 @@ What is never shown: environment variables, commands, mounts, labels outside `co
 | `WHALENURSE_HTTP_ADDR` | empty (off). When set: the dashboard, the read-only API and `/healthz`. Use `127.0.0.1:8484`, or `:8484` with a token |
 | `WHALENURSE_HTTP_TOKEN` | empty. A secret: bearer token (or the password of HTTP Basic) for the dashboard and the API; `/healthz` stays open |
 | `WHALENURSE_METRICS` | `false`. `true` serves Prometheus `/metrics` (behind the token) |
+| `WHALENURSE_HTTP_ALLOWED_HOSTS` | empty. Extra Host names served when there is no token (see above) |
 | `WHALENURSE_CONTROL_SOCKET` | `/run/whalenurse.sock` (`/healthz` and the CLI commands) |
 | `WHALENURSE_DRIFT_GUARD` | `strict` (or `warn`) |
 | `WHALENURSE_COMPOSE_BIN` | empty (see the lookup order above) |

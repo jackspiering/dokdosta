@@ -81,29 +81,56 @@ func containerPath(key string) string {
 	return "/containers/" + strings.Join(parts, "/")
 }
 
-// ladder says how far the incident has got: "restart done, next: recreate".
+// skippedSet is the rungs of the open incident that were skipped.
+func skippedSet(c api.ContainerDoc) map[string]bool {
+	m := map[string]bool{}
+	for _, k := range c.Healer.SkippedRungs {
+		m[k.Rung] = true
+	}
+	return m
+}
+
+// ladder says how far the incident has got: "1 of 2 rungs run, 1 skipped (not available), next: recreate".
 func ladder(c api.ContainerDoc) string {
 	if c.Healer.IncidentOpened.IsZero() {
 		return ""
 	}
 	n := len(c.Ladder)
-	switch {
-	case n == 0:
+	if n == 0 {
 		return ""
-	case c.Healer.NextRung == "":
-		return fmt.Sprintf("all %d rungs run", n)
-	default:
-		return fmt.Sprintf("%d of %d rungs run, next: %s", c.Healer.RungsRun, n, c.Healer.NextRung)
 	}
+	skip := skippedSet(c)
+	passed, skipped := 0, 0
+	for i, r := range c.Ladder {
+		if i >= c.Healer.RungsRun {
+			break
+		}
+		if skip[r] {
+			skipped++
+		} else {
+			passed++
+		}
+	}
+	s := fmt.Sprintf("%d of %d rungs run", passed, n)
+	if skipped > 0 {
+		s += fmt.Sprintf(", %d skipped (not available)", skipped)
+	}
+	if c.Healer.NextRung != "" {
+		s += ", next: " + c.Healer.NextRung
+	}
+	return s
 }
 
-// ladderPath draws the ladder with the rungs that ran: "restart ✓ → recreate (next) → pull".
+// ladderPath draws the ladder with what happened to each rung: "restart ✓ → recreate skipped – not available → pull".
 func ladderPath(c api.ContainerDoc) string {
+	skip := skippedSet(c)
 	var parts []string
 	for i, r := range c.Ladder {
 		switch {
 		case c.Healer.IncidentOpened.IsZero():
 			parts = append(parts, r)
+		case i < c.Healer.RungsRun && skip[r]:
+			parts = append(parts, r+" skipped – not available")
 		case i < c.Healer.RungsRun:
 			parts = append(parts, r+" ✓")
 		case i == c.Healer.RungsRun && c.Healer.NextRung != "":

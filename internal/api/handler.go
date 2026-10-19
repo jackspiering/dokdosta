@@ -16,8 +16,12 @@ import (
 type Options struct {
 	Health  Checker
 	Service *Service     // nil: only /healthz is served
-	Token   string       // empty: no authentication (the listener should then be loopback or behind a proxy)
+	Token   string       // empty: no authentication, and only loopback Host names (and AllowedHosts) are served
 	Web     http.Handler // the dashboard: serves "/" and "/static/"; nil for the API alone
+	// AllowedHosts, Now and OnBlock: see SecureOptions.
+	AllowedHosts []string
+	Now          func() time.Time
+	OnBlock      func(client string, d time.Duration)
 }
 
 // Handler is the handler of the TCP listener (WHALENURSE_HTTP_ADDR). It is read-only: it answers GET and HEAD and
@@ -26,7 +30,7 @@ type Options struct {
 func Handler(o Options) http.Handler {
 	mux := http.NewServeMux()
 	if o.Health != nil {
-		mux.Handle("GET /healthz", HealthHandler(o.Health))
+		mux.Handle("GET /healthz", PublicHealthHandler(o.Health))
 	}
 	if s := o.Service; s != nil {
 		mux.HandleFunc("GET /api/v1/status", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, s.Status()) })
@@ -62,7 +66,7 @@ func Handler(o Options) http.Handler {
 	if o.Web != nil {
 		mux.Handle("/", o.Web)
 	}
-	return Secure(o.Token, mux)
+	return Secure(SecureOptions{Token: o.Token, AllowedHosts: o.AllowedHosts, Now: o.Now, OnBlock: o.OnBlock}, mux)
 }
 
 // ParseEventsQuery reads ?since=, ?limit=, ?key= and ?type= (repeatable or comma-separated).
@@ -114,10 +118,27 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
 	"base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 
-// Secure wraps the handler with the headers on every response, the method filter and the token check. /healthz is
-// the one path that needs no token.
-func Secure(token string, next http.Handler) http.Handler {
-	want := sha256.Sum256([]byte(token))
+// SecureOptions configures Secure.
+type SecureOptions struct {
+	Token string
+	// AllowedHosts are extra Host names served when there is no token (loopback names always are); see HostAllowed.
+	AllowedHosts []string
+	// Now is the clock of the wrong-token limiter; nil is time.Now.
+	Now func() time.Time
+	// OnBlock is called when a client IP has been blocked for presenting too many wrong tokens (it logs, once per block).
+	OnBlock func(client string, d time.Duration)
+}
+
+// Secure wraps the handler with the headers on every response, the method filter, the Host check (without a token), the
+// wrong-token limiter and the token check. /healthz is the one path that is exempt from the last three.
+func Secure(o SecureOptions, next http.Handler) http.Handler {
+	want := sha256.Sum256([]byte(o.Token))
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
+	lim := newAttemptLimiter(now)
+	allowed := NormalizeHosts(o.AllowedHosts)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("Content-Security-Policy", CSP)
@@ -133,7 +154,35 @@ func Secure(token string, next http.Handler) http.Handler {
 			writeError(w, http.StatusMethodNotAllowed, "read-only: only GET and HEAD are served")
 			return
 		}
-		if token != "" && r.URL.Path != "/healthz" && !authorized(r, want) {
+		if r.URL.Path == "/healthz" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if o.Token == "" {
+			// No token: the only defence against a web page reading this through DNS rebinding is the Host header.
+			if !HostAllowed(r.Host, allowed) {
+				writeError(w, http.StatusForbidden, "this Host name is not allowed; set WHALENURSE_HTTP_ALLOWED_HOSTS or WHALENURSE_HTTP_TOKEN")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		client := clientKey(r)
+		if d, blocked := lim.blocked(client); blocked {
+			tooMany(w, d)
+			return
+		}
+		if !authorized(r, want) {
+			// A request that sent no credentials at all (a browser before its prompt) is not a wrong guess.
+			if r.Header.Get("Authorization") != "" {
+				if d, blocked := lim.fail(client); blocked {
+					if o.OnBlock != nil {
+						o.OnBlock(client, d)
+					}
+					tooMany(w, d)
+					return
+				}
+			}
 			h.Add("WWW-Authenticate", `Bearer realm="whalenurse"`)
 			h.Add("WWW-Authenticate", `Basic realm="whalenurse", charset="UTF-8"`)
 			writeError(w, http.StatusUnauthorized, "a token is required")
@@ -141,6 +190,11 @@ func Secure(token string, next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func tooMany(w http.ResponseWriter, d time.Duration) {
+	w.Header().Set("Retry-After", retryAfter(d))
+	writeError(w, http.StatusTooManyRequests, "too many wrong tokens from this address; try again later")
 }
 
 // authorized accepts the token as a bearer token, or as the password of HTTP Basic (any user name): a browser cannot

@@ -87,6 +87,10 @@ func httpDo(t *testing.T, method, url string, hdr ...string) (int, http.Header, 
 		t.Fatal(err)
 	}
 	for i := 0; i+1 < len(hdr); i += 2 {
+		if hdr[i] == "Host" {
+			req.Host = hdr[i+1]
+			continue
+		}
 		req.Header.Set(hdr[i], hdr[i+1])
 	}
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
@@ -136,8 +140,8 @@ func TestImageServesTheDashboardBehindTheToken(t *testing.T) {
 	if code, _, _ := httpDo(t, "GET", base+"/"); code != 401 {
 		t.Fatalf("the dashboard without a token: %d", code)
 	}
-	if code, _, _ := httpDo(t, "GET", base+"/healthz"); code != 200 {
-		t.Fatalf("/healthz needs no token: %d", code)
+	if code, _, body := httpDo(t, "GET", base+"/healthz"); code != 200 || strings.TrimSpace(body) != "ok" {
+		t.Fatalf("/healthz needs no token and says only ok: %d %q", code, body)
 	}
 	if code, _, body := httpDo(t, "GET", base+"/metrics", "Authorization", "Bearer "+token); code != 200 || !strings.Contains(body, "whalenurse_healthy 1") {
 		t.Fatalf("/metrics: %d", code)
@@ -175,6 +179,25 @@ func TestImageServesTheDashboardBehindTheToken(t *testing.T) {
 	if _, _, body := httpDo(t, "GET", base+"/api/v1/events?limit=1000", "Authorization", "Bearer "+token); strings.Contains(body, token) {
 		t.Fatal("the token is in the event history")
 	}
+
+	// Last, because it blocks this client: 10 wrong tokens within a minute earn a 429 with a Retry-After, and while the
+	// block lasts the right token is refused too. /healthz is exempt.
+	var last int
+	var retry string
+	for i := 0; i < 10; i++ {
+		var hdr http.Header
+		last, hdr, _ = httpDo(t, "GET", base+"/api/v1/status", "Authorization", fmt.Sprintf("Bearer wrong-%d", i))
+		retry = hdr.Get("Retry-After")
+	}
+	if last != 429 || retry == "" {
+		t.Fatalf("the tenth wrong token: %d retry %q", last, retry)
+	}
+	if code, _, _ := httpDo(t, "GET", base+"/api/v1/status", "Authorization", "Bearer "+token); code != 429 {
+		t.Fatalf("the right token while blocked: %d", code)
+	}
+	if code, _, _ := httpDo(t, "GET", base+"/healthz"); code != 200 {
+		t.Fatalf("/healthz while blocked: %d", code)
+	}
 }
 
 // Without a token the API and the dashboard answer anyone who can reach the port, and are still read-only. The
@@ -193,5 +216,15 @@ func TestImageServesTheDashboardWithoutATokenOnLoopback(t *testing.T) {
 	}
 	if code, _, _ := httpDo(t, "POST", base+"/api/v1/status"); code != 405 {
 		t.Fatalf("POST: %d", code)
+	}
+	// DNS rebinding: a browser sends the name it was given, and without a token only loopback names are served.
+	if code, _, _ := httpDo(t, "GET", base+"/api/v1/status", "Host", "localhost:8484"); code != 200 {
+		t.Fatalf("Host localhost: %d", code)
+	}
+	if code, _, body := httpDo(t, "GET", base+"/api/v1/status", "Host", "rebind.attacker.example:8484"); code != 403 || strings.Contains(body, "attacker") {
+		t.Fatalf("Host rebind.attacker.example: %d %s", code, body)
+	}
+	if code, _, _ := httpDo(t, "GET", base+"/healthz", "Host", "rebind.attacker.example"); code != 200 {
+		t.Fatalf("/healthz by any name: %d", code)
 	}
 }

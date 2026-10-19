@@ -1,0 +1,108 @@
+{
+  "host": "nas",
+  "key": "nas/media/vpn/1",
+  "name": "media-vpn-1",
+  "id": "",
+  "state": "running",
+  "health": "unhealthy",
+  "restart_count": 0,
+  "exit_code": 0,
+  "watched": true,
+  "opted_in": true,
+  "ladder": [
+    "restart",
+    "recreate",
+    "pull"
+  ],
+  "healer": {
+    "state": "SUSPENDED",
+    "class": "unhealthy",
+    "incident_opened": "2026-10-19T12:20:00Z",
+    "rungs_run": 3,
+    "skipped_rungs": [
+      {
+        "rung": "recreate",
+        "reason": "rung \"recreate\": the compose rungs are disabled: Docker Engine 27.5 is older than 28.1.0; skipped"
+      },
+      {
+        "rung": "pull",
+        "reason": "rung \"pull\": the compose rungs are disabled: Docker Engine 27.5 is older than 28.1.0; skipped"
+      }
+    ],
+    "flaps": 0,
+    "flap_limit": 3,
+    "suspended": {
+      "reason": "ladder",
+      "since": "2026-10-19T12:21:00Z"
+    }
+  },
+  "timeline": [
+    {
+      "id": 4,
+      "time": "2026-10-19T12:04:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "RungUnavailable",
+      "message": "duplicate",
+      "attrs": {
+        "incident": "2026-10-19T12:20:00Z",
+        "rung": "pull"
+      }
+    },
+    {
+      "id": 3,
+      "time": "2026-10-19T12:03:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "RungUnavailable",
+      "message": "rung \"pull\": the compose rungs are disabled: Docker Engine 27.5 is older than 28.1.0; skipped",
+      "attrs": {
+        "incident": "2026-10-19T12:20:00Z",
+        "rung": "pull"
+      }
+    },
+    {
+      "id": 2,
+      "time": "2026-10-19T12:02:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "RungUnavailable",
+      "message": "rung \"recreate\": the compose rungs are disabled: Docker Engine 27.5 is older than 28.1.0; skipped",
+      "attrs": {
+        "incident": "2026-10-19T12:20:00Z",
+        "rung": "recreate"
+      }
+    },
+    {
+      "id": 1,
+      "time": "2026-10-19T12:01:00Z",
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "container": "media-vpn-1",
+      "type": "RungUnavailable",
+      "message": "rung \"recreate\": the compose rungs are disabled: Docker Engine 27.5 is older than 28.1.0; skipped",
+      "attrs": {
+        "incident": "2026-10-19T11:00:00Z",
+        "rung": "recreate"
+      }
+    }
+  ],
+  "drift": {
+    "status": "none-recorded",
+    "blocking": false,
+    "note": "The drift guard runs right before a recreate, not on a timer: this is what it found the last time."
+  },
+  "incidents": [
+    {
+      "host": "nas",
+      "key": "nas/media/vpn/1",
+      "opened": "2026-10-19T12:20:00Z",
+      "open": true,
+      "class": "unhealthy",
+      "state": "SUSPENDED"
+    }
+  ]
+}
