@@ -83,8 +83,15 @@ func utc(t time.Time) time.Time {
 	return t.UTC()
 }
 
-func relation(d *Daemon, s docker.Summary) api.RelationDoc {
-	return api.RelationDoc{Host: d.cfg.HostID, Key: d.keyOf(s), Name: s.Name}
+// relation describes the other end of a network_mode link, with its state, so a page can show whether the parent is
+// the reason a sidecar is down.
+func relation(d *Daemon, s docker.Summary, ev engine.View) api.RelationDoc {
+	key := d.keyOf(s)
+	r := api.RelationDoc{Host: d.cfg.HostID, Key: key, Name: s.Name, State: s.State, Health: s.Health, HealerState: "ok"}
+	if k, ok := ev.Keys[key]; ok {
+		r.HealerState = k.State
+	}
+	return r
 }
 
 // Containers implements api.Source: the last container list merged with the engine's state.
@@ -152,7 +159,7 @@ func (d *Daemon) containerDocs() []api.ContainerDoc {
 			c.Parent = &api.RelationDoc{Host: d.cfg.HostID, Name: ref}
 			for _, p := range list {
 				if p.ID != s.ID && docker.MatchesRef(p.ID, p.Name, ref) {
-					r := relation(d, p)
+					r := relation(d, p, ev)
 					c.Parent = &r
 					break
 				}
@@ -160,7 +167,7 @@ func (d *Daemon) containerDocs() []api.ContainerDoc {
 		}
 		for _, o := range list {
 			if o.ID != s.ID && docker.MatchesRef(s.ID, s.Name, docker.ContainerRef(o.NetworkMode)) {
-				c.Dependents = append(c.Dependents, relation(d, o))
+				c.Dependents = append(c.Dependents, relation(d, o, ev))
 			}
 		}
 		sort.Slice(c.Dependents, func(i, j int) bool { return c.Dependents[i].Key < c.Dependents[j].Key })

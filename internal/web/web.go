@@ -67,18 +67,21 @@ type page struct {
 
 	// overview
 	Attention []api.ContainerDoc
-	Events    []api.EventDoc
+	Events    eventTable
 
 	// containers
-	All        bool
-	Containers []api.ContainerDoc
+	All         bool
+	ScopeFilter string // ?scope=: only the containers under a pause scope
+	Containers  []api.ContainerDoc
 
 	// container
-	Detail *api.ContainerDetailDoc
-	Scope  string // project/service, as `whalenurse unsuspend` takes it
+	Detail   *api.ContainerDetailDoc
+	Scope    string // project/service, as `whalenurse unsuspend` takes it
+	Timeline eventTable
+	Debug    bool // ?debug=1: the events the dashboard hides by default are shown
 
 	// history
-	Incidents  []api.IncidentDoc
+	Incidents  incidentTable
 	Filters    []filter
 	Key        string
 	Retention  string
@@ -116,6 +119,93 @@ func (h *handler) fail(w http.ResponseWriter, code int, heading, msg string) {
 	h.render(w, "error", code, p)
 }
 
+// eventRow is an event with what the page needs to show its container: a link only where the page it points to exists
+// (a container that is gone, or a pause scope, must never lead to a 404).
+type eventRow struct {
+	api.EventDoc
+	Label string // what to show in the Container column
+	Link  string // empty: no link
+	Scope bool   // Label is a pause scope
+}
+
+type eventTable struct {
+	Rows          []eventRow
+	ShowContainer bool
+}
+
+type incidentRow struct {
+	api.IncidentDoc
+	Link string
+}
+
+type incidentTable struct {
+	Rows          []incidentRow
+	ShowContainer bool
+}
+
+// known is the set of container keys the daemon sees now: the only keys with a page.
+func (h *handler) known() map[string]bool {
+	m := map[string]bool{}
+	for _, c := range h.svc.Containers(true) {
+		m[c.Key] = true
+	}
+	return m
+}
+
+func eventRows(evs []api.EventDoc, known map[string]bool) []eventRow {
+	rows := make([]eventRow, 0, len(evs))
+	for _, e := range evs {
+		r := eventRow{EventDoc: e}
+		switch scope := e.Attrs["scope"]; {
+		case scope != "" && (e.Type == "Paused" || e.Type == "Resumed"):
+			// A pause covers a project or a service, so it links to the list of the containers under it.
+			r.Label, r.Scope, r.Link = scope, true, "/containers?scope="+url.QueryEscape(scope)
+		case e.Key == "":
+			r.Label = ""
+		default:
+			r.Label = e.Container
+			if r.Label == "" {
+				r.Label = e.Key
+			}
+			if known[e.Key] {
+				r.Link = containerPath(e.Key)
+			}
+		}
+		rows = append(rows, r)
+	}
+	return rows
+}
+
+func incidentRows(in []api.IncidentDoc, known map[string]bool) []incidentRow {
+	rows := make([]incidentRow, 0, len(in))
+	for _, i := range in {
+		r := incidentRow{IncidentDoc: i}
+		if known[i.Key] {
+			r.Link = containerPath(i.Key)
+		}
+		rows = append(rows, r)
+	}
+	return rows
+}
+
+// inScope mirrors the engine's rule for a pause scope: <project> or <project>/<service> against host/project/service/n.
+func inScope(scope, key string) bool {
+	_, rest, ok := strings.Cut(key, "/")
+	if !ok {
+		return false
+	}
+	have, want := strings.Split(rest, "/"), strings.Split(scope, "/")
+	if len(want) > len(have) {
+		return false
+	}
+	for i := range want {
+		if have[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *handler) overview(w http.ResponseWriter, _ *http.Request) {
 	p := h.base("overview", "Overview")
 	for _, c := range h.svc.Containers(false) {
@@ -123,25 +213,35 @@ func (h *handler) overview(w http.ResponseWriter, _ *http.Request) {
 			p.Attention = append(p.Attention, c)
 		}
 	}
-	p.Events = h.svc.EventsPage(api.EventsQuery{Newest: true, Limit: 10}).Events
+	p.Events = eventTable{ShowContainer: true,
+		Rows: eventRows(h.svc.EventsPage(api.EventsQuery{Newest: true, Limit: 10, HideNoise: true}).Events, h.known())}
 	h.render(w, "overview", http.StatusOK, p)
 }
 
 func (h *handler) containers(w http.ResponseWriter, r *http.Request) {
 	p := h.base("containers", "Containers")
 	p.All = r.URL.Query().Get("all") == "1"
-	p.Containers = h.svc.Containers(p.All)
+	p.ScopeFilter = strings.Trim(r.URL.Query().Get("scope"), "/")
+	for _, c := range h.svc.Containers(p.All) {
+		if p.ScopeFilter == "" || inScope(p.ScopeFilter, c.Key) {
+			p.Containers = append(p.Containers, c)
+		}
+	}
 	h.render(w, "containers", http.StatusOK, p)
 }
 
 func (h *handler) container(w http.ResponseWriter, r *http.Request) {
-	d, ok := h.svc.Container(r.PathValue("key"))
+	debug := r.URL.Query().Get("debug") == "1"
+	d, ok := h.svc.ContainerOpts(r.PathValue("key"), debug)
 	if !ok {
 		h.fail(w, http.StatusNotFound, "No such container", "whalenurse has not seen a container with that key since it started.")
 		return
 	}
 	p := h.base("container", d.Name)
-	p.Detail = &d
+	p.Detail, p.Debug = &d, debug
+	known := h.known()
+	p.Timeline = eventTable{Rows: eventRows(d.Timeline, known)}
+	p.Incidents = incidentTable{Rows: incidentRows(d.Incidents, known)}
 	if d.Project != "" {
 		p.Scope = d.Project + "/" + d.Service
 	} else {
@@ -150,18 +250,21 @@ func (h *handler) container(w http.ResponseWriter, r *http.Request) {
 	h.render(w, "container", http.StatusOK, p)
 }
 
-// eventGroups are the filter chips of the history page.
+// eventGroups are the filter chips of the history page. "All" hides the noise events (api.NoiseTypes); the last chip,
+// "Debug (everything)", shows them.
 var eventGroups = []struct {
 	label string
 	types []string
+	debug bool
 }{
-	{"All", nil},
-	{"Actions", []string{"ActionResult", "ActionStarted"}},
-	{"Giving up", []string{"Suspended", "Unsuspended"}},
-	{"Recoveries", []string{"Recovered", "IncidentClosed"}},
-	{"Drift", []string{"DriftBlocked", "DriftWarned"}},
-	{"Upgrades", []string{"TagMoved", "Upgraded"}},
-	{"Pauses", []string{"Paused", "Resumed"}},
+	{"All", nil, false},
+	{"Actions", []string{"ActionResult", "ActionStarted"}, false},
+	{"Giving up", []string{"Suspended", "Unsuspended"}, false},
+	{"Recoveries", []string{"Recovered", "IncidentClosed"}, false},
+	{"Drift", []string{"DriftBlocked", "DriftWarned"}, false},
+	{"Upgrades", []string{"TagMoved", "Upgraded"}, false},
+	{"Pauses", []string{"Paused", "Resumed"}, false},
+	{"Debug (everything)", nil, true},
 }
 
 func (h *handler) history(w http.ResponseWriter, r *http.Request) {
@@ -171,10 +274,12 @@ func (h *handler) history(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, http.StatusBadRequest, "Bad request", err.Error())
 		return
 	}
-	q.Newest, q.Limit, q.Since = true, 200, 0
-	p.Key = q.Key
-	p.Events = h.svc.EventsPage(q).Events
-	p.Incidents = h.svc.Incidents(q.Key, 100).Incidents
+	debug := r.URL.Query().Get("debug") == "1"
+	q.Newest, q.Limit, q.Since, q.HideNoise = true, 200, 0, !debug
+	p.Key, p.Debug = q.Key, debug
+	known := h.known()
+	p.Events = eventTable{ShowContainer: true, Rows: eventRows(h.svc.EventsPage(q).Events, known)}
+	p.Incidents = incidentTable{ShowContainer: true, Rows: incidentRows(h.svc.Incidents(q.Key, 100).Incidents, known)}
 	p.Persistent = p.Status.Persistent
 	if s := p.Status.HistoryRetention; s > 0 {
 		p.Retention = (time.Duration(s) * time.Second).Round(time.Hour).String()
@@ -191,11 +296,14 @@ func (h *handler) history(w http.ResponseWriter, r *http.Request) {
 		if len(g.types) > 0 {
 			v.Set("type", strings.Join(g.types, ","))
 		}
+		if g.debug {
+			v.Set("debug", "1")
+		}
 		href := "/history"
 		if enc := v.Encode(); enc != "" {
 			href += "?" + enc
 		}
-		p.Filters = append(p.Filters, filter{Label: g.label, Href: href, Active: active == strings.Join(g.types, ",")})
+		p.Filters = append(p.Filters, filter{Label: g.label, Href: href, Active: active == strings.Join(g.types, ",") && g.debug == debug})
 	}
 	h.render(w, "history", http.StatusOK, p)
 }

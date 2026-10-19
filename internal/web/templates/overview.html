@@ -11,7 +11,7 @@
       <dt>Mode</dt><dd>{{.Mode}}{{if .DryRun}}, dry run{{end}}</dd>
       <dt>State kept</dt><dd>{{if .Persistent}}in the store (survives restarts){{else}}in memory only{{end}}</dd>
       <dt>Started</dt><dd>{{timeTag .StartedAt}}</dd>
-      {{if not .RestoreUntil.IsZero}}<dt>Restore window</dt><dd>open until {{timeTag .RestoreUntil}}: starts are restores, not people</dd>{{end}}
+      {{if not .RestoreUntil.IsZero}}<dt>Restore window</dt><dd>open, {{expiry .RestoreUntil}}: starts are restores, not people</dd>{{end}}
     </dl>
   </article>
   <article class="card">
@@ -35,7 +35,7 @@
   <article class="card">
     <h2>Action budget</h2>
     <p class="big">{{.RateLimit.Used}} <span class="muted">of {{.RateLimit.Limit}} per hour</span></p>
-    <p>{{.RateLimit.Remaining}} left.{{if not .RateLimit.NextSlot.IsZero}} Spent: the next action may run {{timeTag .RateLimit.NextSlot}}.{{end}}</p>
+    <p>{{.RateLimit.Remaining}} left.{{if not .RateLimit.NextSlot.IsZero}} Spent: the next action may run {{expiry .RateLimit.NextSlot}}.{{end}}</p>
   </article>
   <article class="card">
     <h2>Containers</h2>
@@ -61,10 +61,10 @@
 
 {{if .Pauses}}
 <h2>Pauses</h2>
-<table class="grid">
+<div class="tablewrap"><table class="grid">
   <thead><tr><th>Scope</th><th>Since</th><th>Ends</th></tr></thead>
-  <tbody>{{range .Pauses}}<tr><td data-label="Scope"><code>{{.Scope}}</code></td><td data-label="Since">{{timeTag .Created}}</td><td data-label="Ends">{{if .Until.IsZero}}when resumed{{else}}{{timeTag .Until}}{{end}}</td></tr>{{end}}</tbody>
-</table>
+  <tbody>{{range .Pauses}}<tr><td data-label="Scope"><a href="/containers?scope={{.Scope}}"><code>{{.Scope}}</code></a></td><td data-label="Since" class="nowrap">{{timeTag .Created}}</td><td data-label="Ends">{{if .Until.IsZero}}when resumed{{else}}{{expiry .Until}}{{end}}</td></tr>{{end}}</tbody>
+</table></div>
 {{end}}
 {{end}}
 

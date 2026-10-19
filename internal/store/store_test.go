@@ -307,6 +307,9 @@ func TestEventsRoundTripAndFilter(t *testing.T) {
 	if got, _ := s.Query(engine.EventQuery{Before: 3}); len(got) != 2 {
 		t.Fatalf("before: %+v", got)
 	}
+	if got, _ := s.Query(engine.EventQuery{ExcludeTypes: []engine.EventType{engine.ActionResult, engine.Suspended}}); len(got) != 1 || got[0].ID != 1 {
+		t.Fatalf("exclude: %+v", got)
+	}
 }
 
 // Monotonic IDs: the counter survives a reopen and retention deleting every row.

@@ -550,6 +550,17 @@ func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
 		}
 		where = append(where, "type IN ("+in+")")
 	}
+	if len(q.ExcludeTypes) > 0 {
+		in := ""
+		for i, t := range q.ExcludeTypes {
+			if i > 0 {
+				in += ","
+			}
+			in += "?"
+			args = append(args, string(t))
+		}
+		where = append(where, "type NOT IN ("+in+")")
+	}
 	order := "ASC"
 	if q.Newest {
 		order = "DESC"

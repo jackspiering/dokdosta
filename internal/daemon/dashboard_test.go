@@ -43,7 +43,17 @@ var allSecrets = []string{secLabelA, secLabelB, secEnv, secUserinfo, secPath, se
 // or a compose child's error text can.
 type leakyActor struct{ docker.Actor }
 
-func (leakyActor) Restart(context.Context, string) error {
+// rigUnderTest lets the actor feed Docker events back while it acts, as a real restart does: those events fall in the
+// action's window and become EventAttributed.
+var rigUnderTest *dashboardRig
+
+func (leakyActor) Restart(_ context.Context, id string) error {
+	if r := rigUnderTest; r != nil && r.h != nil {
+		if c, err := r.h.fake.Inspect(context.Background(), id); err == nil {
+			r.h.event(c, "die", "")
+			r.h.event(c, "start", "")
+		}
+	}
 	return errors.New("restart failed: Post \"generic://u:" + secUserinfo + "@host/hook/" + secPath + "?k=" + secQuery + "\": boom " + secHTTP)
 }
 
@@ -72,6 +82,8 @@ func newRig(t *testing.T, token string) *dashboardRig {
 	t.Cleanup(func() { st.Close() })
 	hub := api.NewHub()
 	rig := &dashboardRig{hub: hub, st: st, urls: []string{notifyURL, ping}}
+	rigUnderTest = rig
+	t.Cleanup(func() { rigUnderTest = nil })
 	rig.h = newHarnessOpts(t, func(c *config.Global) {
 		c.HostID = "nas"
 		c.HTTPToken, c.NotifyURLs, c.PingURL, c.Metrics = token, []string{notifyURL}, ping, true
@@ -103,6 +115,7 @@ func (r *dashboardRig) drive() {
 		c.Labels["com.example.apikey"] = secLabelA
 		c.Labels["traefik.http.routers.x.rule"] = secLabelB
 		c.Error = "failed to fulfil mount request: open /srv/data: no such file or directory"
+		c.Labels["com.docker.compose.depends_on"] = "" // an empty label: the page leaves it out
 	})
 	b := h.running(hexID("b2"), "p", "side")
 	h.set(b.ID, func(c *docker.Container) { c.NetworkMode = docker.Ref(a.ID); c.Image = "busybox" })
@@ -121,6 +134,14 @@ func (r *dashboardRig) drive() {
 		map[string]string{"labels": secLabelA, "env": secEnv, "password": secAttr, "reason": "x " + secPath})
 	h.advance(10 * time.Minute)
 	h.d.Engine().Pause("p/side", time.Hour)
+	// An "upgraded during heal" record with its rollback commands, as the daemon's own Note writes it.
+	h.d.Engine().Note(engine.Target{Key: "nas/p/web/1", Name: "p-web-1"}, engine.Upgraded, "nginx:1: aaaaaaaaaaaa -> bbbbbbbbbbbb; recreated", map[string]string{
+		"ref": "nginx:1", "old": "sha256:" + strings.Repeat("a", 64), "new": "sha256:" + strings.Repeat("b", 64), "old_image": "sha256:" + strings.Repeat("a", 64), "ok": "true",
+		"rollback_tag": "docker image tag sha256:" + strings.Repeat("a", 64) + " nginx:1",
+		"rollback_up":  "docker compose -p p --project-directory /opt/stacks/p -f /opt/stacks/p/compose.yaml up -d --no-deps --pull never web",
+	})
+	// A compose temporary name, as an event of a recreate carries it.
+	h.d.Engine().Note(engine.Target{Key: "nas/p/side/1", Name: "0123456789ab_p-side-1"}, engine.ActionResult, "recreate ok", map[string]string{"ok": "true"})
 }
 
 func (r *dashboardRig) fetch(t *testing.T, path, token string) (int, string) {
@@ -399,5 +420,186 @@ func TestContainerDocsMergeListInspectAndEngine(t *testing.T) {
 	}
 	if got := fmt.Sprint(st.VersionGate.RecreateEnabled); got != "false" || st.VersionGate.Reason == "" {
 		t.Errorf("no compose: the version gate says %+v", st.VersionGate)
+	}
+}
+
+var hrefRE = regexp.MustCompile(`href="(/[^"]*)"`)
+
+// section returns the HTML between a heading and the next one.
+func section(html, heading string) string {
+	i := strings.Index(html, "<h2>"+heading+"</h2>")
+	if i < 0 {
+		return ""
+	}
+	rest := html[i+len(heading)+9:]
+	if j := strings.Index(rest, "<h2>"); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest
+}
+
+// No link of any page leads to a 404: a pause row links to the containers under its scope, a container that is gone is
+// plain text, and every other link points at a page that exists.
+func TestEveryLinkOnEveryPageWorks(t *testing.T) {
+	r := newRig(t, "")
+	r.drive()
+	r.h.fake.Remove(hexID("b2"))  // the sidecar is gone: its events and its incident stay, its page does not
+	r.h.advance(70 * time.Second) // a poll later the list no longer has it
+
+	pages := []string{"/", "/containers", "/containers?all=1", "/containers?scope=p%2Fside", "/history", "/history?debug=1", "/history?type=Paused,Resumed",
+		"/history?key=" + url.QueryEscape("nas/p/web/1")}
+	for _, k := range r.keys() {
+		pages = append(pages, "/containers/"+k, "/containers/"+k+"?debug=1")
+	}
+	seen := map[string]bool{}
+	checked := 0
+	for len(pages) > 0 {
+		p := pages[0]
+		pages = pages[1:]
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		code, body := r.fetch(t, p, "")
+		if code != 200 {
+			t.Errorf("GET %s: %d", p, code)
+			continue
+		}
+		checked++
+		for _, m := range hrefRE.FindAllStringSubmatch(body, -1) {
+			link := strings.ReplaceAll(m[1], "&amp;", "&")
+			if strings.HasPrefix(link, "/static/") || strings.HasPrefix(link, "/api/") {
+				continue
+			}
+			if !seen[link] && len(seen) < 80 {
+				pages = append(pages, link)
+			}
+		}
+	}
+	if checked < 12 {
+		t.Fatalf("the crawl reached only %d pages", checked)
+	}
+	_, hist := r.fetch(t, "/history?type=Paused,Resumed", "")
+	if !strings.Contains(hist, `href="/containers?scope=p%2fside"`) && !strings.Contains(hist, `href="/containers?scope=p%2Fside"`) {
+		t.Errorf("the Paused row should link to the containers under its scope:\n%s", section(hist, "Events"))
+	}
+	if !strings.Contains(hist, `data-label="Pause scope"`) {
+		t.Errorf("the Paused row names a scope, not a container")
+	}
+	_, scoped := r.fetch(t, "/containers?scope=p%2Fside", "")
+	if !strings.Contains(scoped, "p-side-1") && !strings.Contains(scoped, "No containers") {
+		t.Errorf("scope page: %s", scoped)
+	}
+	if code, body := r.fetch(t, "/containers/nas/p/side/1", ""); code != 404 || strings.Contains(body, "page error") {
+		t.Errorf("the gone sidecar's page: %d", code)
+	}
+}
+
+// The EventAttributed events are hidden in "Latest events", the timelines and History, and shown by the debug filter;
+// the JSON API still carries them.
+func TestEventAttributedIsHiddenUnlessDebug(t *testing.T) {
+	r := newRig(t, "")
+	r.drive()
+	row := `<span class="etype">EventAttributed</span>`
+	_, js := r.fetch(t, "/api/v1/events?limit=1000", "")
+	if !strings.Contains(js, `"type": "EventAttributed"`) {
+		t.Fatal("the control: the API has the events")
+	}
+	if _, detailJSON := r.fetch(t, "/api/v1/containers/nas/p/web/1", ""); !strings.Contains(detailJSON, "EventAttributed") {
+		t.Fatal("the control: the JSON timeline keeps them")
+	}
+	for _, p := range []string{"/", "/history", "/containers/nas/p/web/1"} {
+		_, body := r.fetch(t, p, "")
+		if strings.Contains(body, row) {
+			t.Errorf("%s shows EventAttributed rows by default", p)
+		}
+		if !strings.Contains(body, "ActionResult") && p != "/" {
+			t.Errorf("%s lost the other events", p)
+		}
+	}
+	for _, p := range []string{"/history?debug=1", "/containers/nas/p/web/1?debug=1"} {
+		_, body := r.fetch(t, p, "")
+		if !strings.Contains(body, row) {
+			t.Errorf("%s with debug lacks the EventAttributed rows", p)
+		}
+	}
+	_, hist := r.fetch(t, "/history", "")
+	if !strings.Contains(hist, "Debug (everything)") || !strings.Contains(hist, "debug=1") {
+		t.Errorf("the History page has no debug filter")
+	}
+}
+
+func TestDetailPageDetails(t *testing.T) {
+	r := newRig(t, "")
+	r.drive()
+	_, web := r.fetch(t, "/containers/nas/p/web/1", "")
+	// A running container has no "Finished"; the restart policy says where "no" comes from; an empty label is left out.
+	if strings.Contains(web, "<dt>Finished</dt>") {
+		t.Error("Finished is shown for a running container")
+	}
+	if !strings.Contains(web, "unless-stopped") {
+		t.Error("restart policy")
+	}
+	if strings.Contains(web, "com.docker.compose.depends_on") {
+		t.Error("an empty label is shown")
+	}
+	_, side := r.fetch(t, "/containers/nas/p/side/1", "")
+	if !strings.Contains(side, "no <span class=\"muted\">(compose default)</span>") {
+		t.Error("restart policy no is not explained")
+	}
+	// On its own page the timeline and the incidents have no container column.
+	for _, h := range []string{"Timeline", "Incidents"} {
+		if sec := section(web, h); strings.Contains(sec, "<th>Container</th>") || sec == "" {
+			t.Errorf("%s section: %q", h, sec[:min(len(sec), 200)])
+		}
+	}
+	if !strings.Contains(section(web, "Timeline"), "<th>Time</th>") {
+		t.Error("the timeline lost its columns")
+	}
+	// The overview and History keep it.
+	for _, p := range []string{"/", "/history"} {
+		if _, b := r.fetch(t, p, ""); !strings.Contains(b, "<th>Container</th>") {
+			t.Errorf("%s lost the Container column", p)
+		}
+	}
+	// The parent's state is a badge under Related, and it says why the sidecar may be down.
+	if !strings.Contains(side, `badge badge-bad">running, unhealthy · SUSPENDED</span>`) {
+		t.Errorf("the parent's state badge:\n%s", section(side, "Related"))
+	}
+	_, parent := r.fetch(t, "/containers/nas/p/web/1", "")
+	if !strings.Contains(parent, "Dependents") || !strings.Contains(parent, `badge-`) {
+		t.Error("the dependents of the parent")
+	}
+}
+
+func TestRollbackIsOneCommandPerLineWithACopyButton(t *testing.T) {
+	r := newRig(t, "")
+	r.drive()
+	_, body := r.fetch(t, "/containers/nas/p/web/1", "")
+	blocks := regexp.MustCompile(`(?s)<div class="cmd"><pre class="rollback"><code>(.*?)</code></pre><button type="button" class="copy" data-copy[^>]*>Copy</button></div>`).FindAllStringSubmatch(body, -1)
+	if len(blocks) != 2 {
+		t.Fatalf("want two command blocks with a copy button each, got %d:\n%s", len(blocks), section(body, "Last upgrade during heal"))
+	}
+	if !strings.HasPrefix(blocks[0][1], "docker image tag sha256:") || !strings.Contains(blocks[1][1], "up -d --no-deps --pull never web") || strings.Contains(blocks[0][1]+blocks[1][1], "\n") {
+		t.Errorf("each block is exactly one command: %q", blocks)
+	}
+	_, js := r.fetch(t, "/static/app.js", "")
+	if !strings.Contains(js, "button[data-copy]") || !strings.Contains(js, "execCommand") {
+		t.Error("app.js does not wire the copy buttons")
+	}
+	_, css := r.fetch(t, "/static/app.css", "")
+	if !strings.Contains(css, "white-space: pre") || !strings.Contains(css, ".js .copy") {
+		t.Error("the rollback block must not wrap, and the buttons only exist with JavaScript")
+	}
+}
+
+func TestCompanionNamesAreFinal(t *testing.T) {
+	r := newRig(t, "")
+	r.drive()
+	for _, p := range []string{"/api/v1/events?limit=1000", "/history?debug=1", "/"} {
+		_, body := r.fetch(t, p, "")
+		if strings.Contains(body, "0123456789ab_") {
+			t.Errorf("%s shows compose's temporary name", p)
+		}
 	}
 }

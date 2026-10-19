@@ -68,3 +68,19 @@ func TestPauseForPicksTheMostSpecificScopeInEffect(t *testing.T) {
 		t.Fatal("another project")
 	}
 }
+
+func TestExcludeTypesAreNeverReturned(t *testing.T) {
+	r := NewRing(10)
+	r.Record(Event{ID: 1, Time: t0, Key: "h/p/a/1", Type: EventAttributed})
+	r.Record(Event{ID: 2, Time: t0, Key: "h/p/a/1", Type: ActionResult})
+	r.Record(Event{ID: 3, Time: t0, Key: "h/p/a/1", Type: EventAttributed})
+	got, _ := r.Query(EventQuery{ExcludeTypes: []EventType{EventAttributed}, Newest: true})
+	if len(got) != 1 || got[0].ID != 2 {
+		t.Fatalf("%+v", got)
+	}
+	// Types and ExcludeTypes together: the exclusion wins.
+	got, _ = r.Query(EventQuery{Types: []EventType{EventAttributed, ActionResult}, ExcludeTypes: []EventType{EventAttributed}})
+	if len(got) != 1 || got[0].ID != 2 {
+		t.Fatalf("%+v", got)
+	}
+}

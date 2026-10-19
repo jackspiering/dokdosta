@@ -138,14 +138,21 @@ type EventQuery struct {
 	Before uint64      // only IDs less than this; 0 for no bound
 	Key    string      // only this state key; empty for all
 	Types  []EventType // only these types; empty for all
-	Limit  int         // at most this many; 0 means 100
-	Newest bool        // newest first (descending IDs) instead of oldest first
+	// ExcludeTypes are never returned (the dashboard hides the EventAttributed noise by default).
+	ExcludeTypes []EventType
+	Limit        int  // at most this many; 0 means 100
+	Newest       bool // newest first (descending IDs) instead of oldest first
 }
 
 // Matches reports whether the event satisfies the query's filters (not its limit or order).
 func (q EventQuery) Matches(e Event) bool {
 	if e.ID <= q.After || (q.Before != 0 && e.ID >= q.Before) || (q.Key != "" && e.Key != q.Key) {
 		return false
+	}
+	for _, t := range q.ExcludeTypes {
+		if t == e.Type {
+			return false
+		}
 	}
 	if len(q.Types) == 0 {
 		return true

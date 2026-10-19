@@ -179,9 +179,12 @@ type DecisionDoc struct {
 
 // RelationDoc names the other end of a network_mode: container:<parent> link.
 type RelationDoc struct {
-	Host string `json:"host"`
-	Key  string `json:"key"`
-	Name string `json:"name"`
+	Host        string `json:"host"`
+	Key         string `json:"key"`
+	Name        string `json:"name"`
+	State       string `json:"state,omitempty"`        // Docker's status of the other container
+	Health      string `json:"health,omitempty"`       // empty: no healthcheck
+	HealerState string `json:"healer_state,omitempty"` // ok, incident, recovering, SUSPENDED, PAUSED
 }
 
 // ContainerDetailDoc is GET /api/v1/containers/{key}.

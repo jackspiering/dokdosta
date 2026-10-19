@@ -1,6 +1,7 @@
 package api
 
 import (
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -76,9 +77,24 @@ func (s *Service) text(v string, max int) string {
 	return v
 }
 
+// tempName matches the name compose gives the old container while it recreates it: <12 hex digits>_<name>. The
+// container that matters is the final one, so the prefix is dropped wherever a name is shown.
+var tempName = regexp.MustCompile(`^[0-9a-f]{12}_(.+)$`)
+
+func finalName(n string) string {
+	if m := tempName.FindStringSubmatch(n); m != nil {
+		return m[1]
+	}
+	return n
+}
+
+// NoiseTypes are the events the dashboard hides unless asked for them: one per Docker event that falls inside a
+// whalenurse action, which says nothing a person needs. The JSON API still returns them.
+var NoiseTypes = []engine.EventType{engine.EventAttributed}
+
 // EventDoc converts and cleans an engine event.
 func (s *Service) EventDoc(e engine.Event) EventDoc {
-	d := EventDoc{ID: e.ID, Time: e.Time.UTC(), Host: e.Host, Key: e.Key, Container: e.Container, Type: string(e.Type), Message: s.text(e.Message, maxText)}
+	d := EventDoc{ID: e.ID, Time: e.Time.UTC(), Host: e.Host, Key: e.Key, Container: finalName(e.Container), Type: string(e.Type), Message: s.text(e.Message, maxText)}
 	if d.Host == "" {
 		d.Host = s.Host
 	}
@@ -104,6 +120,7 @@ func (s *Service) eventDocs(evs []engine.Event) []EventDoc {
 
 // clean applies the output rules to a container document the Source built.
 func (s *Service) clean(c ContainerDoc) ContainerDoc {
+	c.Name = finalName(c.Name)
 	c.StartError = s.text(c.StartError, maxErrorText)
 	if c.Host == "" {
 		c.Host = s.Host
@@ -188,8 +205,11 @@ func (s *Service) skippedRungs() skipped {
 
 const timelineLimit = 100
 
-// Container returns the detail document of a key.
-func (s *Service) Container(key string) (ContainerDetailDoc, bool) {
+// Container returns the detail document of a key, with the whole timeline (the JSON API).
+func (s *Service) Container(key string) (ContainerDetailDoc, bool) { return s.ContainerOpts(key, true) }
+
+// ContainerOpts is Container; without debug the timeline leaves out the NoiseTypes.
+func (s *Service) ContainerOpts(key string, debug bool) (ContainerDetailDoc, bool) {
 	var d ContainerDetailDoc
 	found := false
 	for _, c := range s.Source.Containers() {
@@ -204,7 +224,11 @@ func (s *Service) Container(key string) (ContainerDetailDoc, bool) {
 	d.Healer.SkippedRungs = s.skippedRungs().of(d.ContainerDoc)
 	d.Timeline, d.Incidents = []EventDoc{}, []IncidentDoc{}
 	if s.Events != nil {
-		if evs, err := s.Events.Query(engine.EventQuery{Key: key, Newest: true, Limit: timelineLimit}); err == nil {
+		q := engine.EventQuery{Key: key, Newest: true, Limit: timelineLimit}
+		if !debug {
+			q.ExcludeTypes = NoiseTypes
+		}
+		if evs, err := s.Events.Query(q); err == nil {
 			d.Timeline = s.eventDocs(evs)
 		}
 	}
@@ -320,6 +344,8 @@ type EventsQuery struct {
 	Key    string
 	Types  []string
 	Newest bool // for the history page: the newest events, not the ones after a cursor
+	// HideNoise leaves out the NoiseTypes (the dashboard's default). The JSON API never sets it.
+	HideNoise bool
 }
 
 // EventsPage returns events after a cursor (oldest first), or the newest ones.
@@ -334,6 +360,9 @@ func (s *Service) EventsPage(q EventsQuery) EventsDoc {
 	q.Limit = min(q.Limit, 1000)
 	doc.LastID = s.Events.LastID()
 	eq := engine.EventQuery{After: q.Since, Key: q.Key, Limit: q.Limit, Newest: q.Newest}
+	if q.HideNoise {
+		eq.ExcludeTypes = NoiseTypes
+	}
 	for _, t := range q.Types {
 		eq.Types = append(eq.Types, engine.EventType(t))
 	}

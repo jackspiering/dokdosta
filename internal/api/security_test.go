@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jackspiering/whalenurse/internal/engine"
 )
 
 // ---- /healthz says ok or not ok ---------------------------------------------------------------------------
@@ -296,4 +298,76 @@ func TestSkippedRungsComeFromTheOpenIncidentsEventsOnly(t *testing.T) {
 	}
 	body := get(t, Handler(Options{Service: s}), "/api/v1/containers/nas/media/vpn/1").Body.Bytes()
 	golden(t, "container-skipped.json", body)
+}
+
+// ---- names and noise ---------------------------------------------------------------------------------------
+
+func TestFinalNameDropsComposesTemporaryPrefix(t *testing.T) {
+	for in, want := range map[string]string{
+		"9d766305bcec_whalenurse-test-demo-worker-1": "whalenurse-test-demo-worker-1",
+		"media-vpn-1": "media-vpn-1", "abc_def": "abc_def", "9D766305BCEC_x": "9D766305BCEC_x", "0123456789ab_": "0123456789ab_", "": "",
+	} {
+		if got := finalName(in); got != want {
+			t.Errorf("finalName(%q) = %q, want %q", in, got, want)
+		}
+	}
+	s := skippedFixture()
+	if e := s.EventDoc(engineEvent(1, "ActionResult", "m", nil)); e.Container != "media-vpn-1" {
+		t.Fatal(e.Container)
+	}
+	e := engineEvent(2, "ActionResult", "m", nil)
+	e.Container = "0123456789ab_media-vpn-1"
+	if got := s.EventDoc(e).Container; got != "media-vpn-1" {
+		t.Errorf("event: %q", got)
+	}
+	if got := s.clean(ContainerDoc{Name: "0123456789ab_media-vpn-1"}).Name; got != "media-vpn-1" {
+		t.Errorf("container: %q", got)
+	}
+}
+
+func TestNoiseIsHiddenOnRequestAndTheJSONAPIKeepsIt(t *testing.T) {
+	s := skippedFixture()
+	r := s.Events.(*engine.Ring)
+	r.Record(engineEvent(10, "EventAttributed", "docker event during a whalenurse action", map[string]string{"action": "die"}))
+	r.Record(engineEvent(11, "ActionResult", "restart ok", nil))
+	r.Record(engineEvent(12, "EventAttributed", "docker event during a whalenurse action", nil))
+	all := s.EventsPage(EventsQuery{Newest: true, Limit: 100})
+	hidden := s.EventsPage(EventsQuery{Newest: true, Limit: 100, HideNoise: true})
+	count := func(d EventsDoc, typ string) (n int) {
+		for _, e := range d.Events {
+			if e.Type == typ {
+				n++
+			}
+		}
+		return
+	}
+	if count(all, "EventAttributed") != 2 || count(hidden, "EventAttributed") != 0 || count(hidden, "ActionResult") != 1 {
+		t.Fatalf("all %d hidden %d", count(all, "EventAttributed"), count(hidden, "EventAttributed"))
+	}
+	// The timeline: the JSON detail keeps everything, the dashboard's variant leaves the noise out, and the 100 slots
+	// are not spent on it.
+	full, _ := s.Container("nas/media/vpn/1")
+	quiet, _ := s.ContainerOpts("nas/media/vpn/1", false)
+	has := func(tl []EventDoc) bool {
+		for _, e := range tl {
+			if e.Type == "EventAttributed" {
+				return true
+			}
+		}
+		return false
+	}
+	if !has(full.Timeline) || has(quiet.Timeline) {
+		t.Fatalf("timelines: full %v quiet %v", has(full.Timeline), has(quiet.Timeline))
+	}
+	if body := get(t, Handler(Options{Service: s}), "/api/v1/events").Body.String(); !strings.Contains(body, "EventAttributed") {
+		t.Error("the JSON events endpoint must stay complete (a hub follows the cursor)")
+	}
+}
+
+func TestRelationDocCarriesTheOtherEndsState(t *testing.T) {
+	c := ContainerDoc{Parent: &RelationDoc{Host: "nas", Key: "k", Name: "n", State: "running", Health: "unhealthy", HealerState: "SUSPENDED"}}
+	b, _ := jsonMarshal(c.Parent)
+	if !strings.Contains(string(b), `"healer_state":"SUSPENDED"`) || !strings.Contains(string(b), `"state":"running"`) {
+		t.Fatalf("%s", b)
+	}
 }

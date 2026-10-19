@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -18,6 +19,9 @@ var funcs = template.FuncMap{
 	"ladderPath":    ladderPath,
 	"cooling":       func(t time.Time) bool { return !t.IsZero() && t.After(time.Now()) },
 	"short":         short,
+	"expiry":        expiry,
+	"message":       message,
+	"relBadge":      relBadge,
 	"ifelse": func(c bool, a, b string) string {
 		if c {
 			return a
@@ -149,4 +153,87 @@ func short(id string) string {
 		return id[:12]
 	}
 	return id
+}
+
+// humanDur writes a duration the way the pages do: 45s, 12m, 1h 57m, 3d 4h.
+func humanDur(d time.Duration) string {
+	switch {
+	case d < time.Minute:
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	default:
+		return fmt.Sprintf("%dd %dh", int(d.Hours())/24, int(d.Hours())%24)
+	}
+}
+
+// expiry writes the end of a cooldown or a pause as "2m left (until 14:32)". The clock time is UTC, like every time on
+// the pages; a time on another day carries its date. A time that has passed says so.
+func expiry(t time.Time) template.HTML {
+	if t.IsZero() {
+		return ""
+	}
+	t = t.UTC()
+	now := time.Now().UTC()
+	var text string
+	if d := t.Sub(now); d <= 0 {
+		text = "ended " + humanDur(-d) + " ago"
+	} else {
+		clock := t.Format("15:04")
+		if t.YearDay() != now.YearDay() || t.Year() != now.Year() {
+			clock = t.Format("2 Jan 15:04")
+		}
+		text = fmt.Sprintf("%s left (until %s)", humanDur(d), clock)
+	}
+	return template.HTML(fmt.Sprintf(`<time datetime="%s" title="%s">%s</time>`, t.Format(time.RFC3339), t.Format("2006-01-02 15:04:05 UTC"), template.HTMLEscapeString(text)))
+}
+
+// dryRunSays matches the part of the drift guard's config finding that quotes compose's dry-run output.
+var dryRunSays = regexp.MustCompile(` \(its dry-run says: [^)]*\): the compose file, an env file or the image changed since it was created`)
+
+// message writes a message of the event log for people: compose's raw dry-run words ("Recreate, Recreated, Starting,
+// Started") become a plain sentence, and the original text stays one click away under "details".
+func message(s string) template.HTML {
+	plain := dryRunSays.ReplaceAllString(s, ": the configuration or the image changed since it was created")
+	if plain == s {
+		return template.HTML(template.HTMLEscapeString(s))
+	}
+	return template.HTML(template.HTMLEscapeString(plain) +
+		` <details class="raw"><summary>details</summary><code>` + template.HTMLEscapeString(s) + `</code></details>`)
+}
+
+// relBadge says in one badge what the other end of a network_mode link is doing: "running, healthy", "exited",
+// "running, unhealthy · SUSPENDED".
+func relBadge(r api.RelationDoc) template.HTML {
+	if r.State == "" {
+		return ""
+	}
+	text, kind := r.State, "ok"
+	if r.State != "running" {
+		kind = "bad"
+	}
+	if r.Health != "" {
+		text += ", " + r.Health
+		if r.Health == "unhealthy" && kind == "ok" {
+			kind = "warn"
+		}
+	}
+	switch r.HealerState {
+	case "", "ok":
+	case "SUSPENDED":
+		text, kind = text+" · SUSPENDED", "bad"
+	case "incident":
+		text += " · incident"
+		if kind == "ok" {
+			kind = "warn"
+		}
+	default:
+		text += " · " + r.HealerState
+		if kind == "ok" {
+			kind = "info"
+		}
+	}
+	return badge(kind, text)
 }

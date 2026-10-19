@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"flag"
 	"os"
 	"path/filepath"
@@ -142,3 +143,5 @@ func engineRing() *engine.Ring { return engine.NewRing(100) }
 func engineEvent(id uint64, typ, msg string, attrs map[string]string) engine.Event {
 	return engine.Event{ID: id, Time: t0.Add(time.Duration(id) * time.Minute), Host: "nas", Key: "nas/media/vpn/1", Container: "media-vpn-1", Type: engine.EventType(typ), Message: msg, Attrs: attrs}
 }
+
+func jsonMarshal(v any) ([]byte, error) { return json.Marshal(v) }
