@@ -61,6 +61,16 @@ type Bus struct {
 	subs []func(Event)
 }
 
+// Seed makes the next event's ID n+1: the daemon seeds the bus with the highest ID the store ever stored, so that IDs
+// stay monotonic per host across restarts (the API's `since` cursor). Call it before the first Publish.
+func (b *Bus) Seed(n uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if n > b.next {
+		b.next = n
+	}
+}
+
 // Subscribe registers a subscriber for all later events.
 func (b *Bus) Subscribe(fn func(Event)) {
 	b.mu.Lock()
@@ -120,4 +130,100 @@ func (r *Recorder) Count(t EventType) int {
 		}
 	}
 	return n
+}
+
+// EventQuery selects events from an EventLog.
+type EventQuery struct {
+	After  uint64      // only IDs greater than this
+	Before uint64      // only IDs less than this; 0 for no bound
+	Key    string      // only this state key; empty for all
+	Types  []EventType // only these types; empty for all
+	Limit  int         // at most this many; 0 means 100
+	Newest bool        // newest first (descending IDs) instead of oldest first
+}
+
+// Matches reports whether the event satisfies the query's filters (not its limit or order).
+func (q EventQuery) Matches(e Event) bool {
+	if e.ID <= q.After || (q.Before != 0 && e.ID >= q.Before) || (q.Key != "" && e.Key != q.Key) {
+		return false
+	}
+	if len(q.Types) == 0 {
+		return true
+	}
+	for _, t := range q.Types {
+		if t == e.Type {
+			return true
+		}
+	}
+	return false
+}
+
+// EventLog is where the API reads events from: the store, or the in-memory Ring in a dry run.
+type EventLog interface {
+	Query(EventQuery) ([]Event, error)
+	// LastID is the highest ID ever assigned, which stays valid after retention deleted the newest rows.
+	LastID() uint64
+}
+
+// Ring keeps the last events in memory. A dry run stores nothing, so the dashboard reads this instead of the store;
+// its IDs restart with the process, which the API reports as a reset.
+type Ring struct {
+	mu     sync.Mutex
+	max    int
+	events []Event
+	last   uint64
+}
+
+// NewRing keeps up to max events (5000 when max is 0).
+func NewRing(max int) *Ring {
+	if max <= 0 {
+		max = 5000
+	}
+	return &Ring{max: max}
+}
+
+// Record is the bus subscriber.
+func (r *Ring) Record(e Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.last = e.ID
+	r.events = append(r.events, e)
+	if over := len(r.events) - r.max; over > 0 {
+		r.events = append(r.events[:0], r.events[over:]...)
+	}
+}
+
+// LastID implements EventLog.
+func (r *Ring) LastID() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.last
+}
+
+// Query implements EventLog.
+func (r *Ring) Query(q EventQuery) ([]Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	var out []Event
+	if q.Newest {
+		for i := len(r.events) - 1; i >= 0 && len(out) < limit; i-- {
+			if q.Matches(r.events[i]) {
+				out = append(out, r.events[i])
+			}
+		}
+		return out, nil
+	}
+	for _, e := range r.events {
+		if len(out) >= limit {
+			break
+		}
+		if q.Matches(e) {
+			out = append(out, e)
+		}
+	}
+	return out, nil
 }

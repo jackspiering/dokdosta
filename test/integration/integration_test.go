@@ -590,7 +590,7 @@ func TestPauseResumeAndUnsuspendOverTheControlSocket(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
-		_ = control.Serve(ctx, sock, control.Mux(api.Handler(d), d, func(v string) (time.Duration, error) { return daemon.ParseFor(v, config.ParseDuration) }))
+		_ = control.Serve(ctx, sock, control.Mux(api.HealthHandler(d), d, func(v string) (time.Duration, error) { return daemon.ParseFor(v, config.ParseDuration) }))
 	}()
 	waitFor(t, "the control socket", 10*time.Second, func() bool { return control.Health(ctx, sock) == nil })
 	cmd := func(name, scope, forDur string) (string, error) {

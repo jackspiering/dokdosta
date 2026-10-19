@@ -153,7 +153,7 @@ func (f *Fake) List(context.Context) ([]Summary, error) {
 	}
 	out := make([]Summary, 0, len(f.containers))
 	for _, c := range f.containers {
-		out = append(out, Summary{ID: c.ID, Name: c.Name, Labels: c.Labels, State: c.Status, Health: c.Health, NetworkMode: c.NetworkMode, Created: c.Created})
+		out = append(out, Summary{ID: c.ID, Name: c.Name, Labels: c.Labels, State: c.Status, Health: c.Health, NetworkMode: c.NetworkMode, Image: c.Image, Created: c.Created})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil

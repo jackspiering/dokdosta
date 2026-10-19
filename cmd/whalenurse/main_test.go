@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackspiering/whalenurse/internal/api"
 	"github.com/jackspiering/whalenurse/internal/clock"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/daemon"
@@ -40,7 +41,7 @@ func (f *fakeDaemon) Status() any { f.calls = append(f.calls, "status"); return 
 // resume or unsuspend anything. Only the unix socket handler can.
 func TestTCPHandlerHasNoWriteEndpoints(t *testing.T) {
 	d := &fakeDaemon{}
-	tcp, sock := handlers(d)
+	tcp, sock := handlers(d, api.Options{})
 
 	for _, tc := range []struct{ method, path string }{
 		{"POST", "/v1/pause"}, {"POST", "/v1/resume"}, {"POST", "/v1/unsuspend"}, {"GET", "/v1/status"},
@@ -163,7 +164,7 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	var text bytes.Buffer
 	printStatus(&text, d.Status().(daemon.Status))
 	js, _ := json.Marshal(d.Status())
-	tcp, sock := handlers(d)
+	tcp, sock := handlers(d, api.Options{})
 	healthz := httptest.NewRecorder()
 	tcp.ServeHTTP(healthz, httptest.NewRequest("GET", "/healthz", nil))
 	sockStatus := httptest.NewRecorder()

@@ -1,0 +1,12 @@
+{{define "body"}}
+<h1>History</h1>
+<h2>Incidents</h2>
+{{template "incidenttable" .Incidents}}
+<h2>Events</h2>
+<p class="chips">Show:
+  {{range .Filters}}<a class="chip{{if .Active}} chip-on{{end}}" href="{{.Href}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}
+</p>
+{{if .Key}}<p>Only <code>{{.Key}}</code>. <a href="/history">Clear</a></p>{{end}}
+{{template "eventtable" .Events}}
+{{if .Retention}}<p class="muted">Kept for {{.Retention}} (WHALENURSE_HISTORY_RETENTION){{if not .Persistent}}, but this is a dry run: it is kept in memory only and lost on a restart{{end}}.</p>{{end}}
+{{end}}

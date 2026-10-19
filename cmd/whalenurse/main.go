@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,6 +33,7 @@ import (
 	"github.com/jackspiering/whalenurse/internal/engine"
 	"github.com/jackspiering/whalenurse/internal/notify"
 	"github.com/jackspiering/whalenurse/internal/store"
+	"github.com/jackspiering/whalenurse/internal/web"
 )
 
 // version is set with -ldflags "-X main.version=...".
@@ -150,10 +152,16 @@ func runCmd(args []string) error {
 	// State lives in SQLite under WHALENURSE_DATA_DIR. A dry run stores nothing: its
 	// incidents and SUSPENDED states are not real, and must not be there for the next
 	// real run to find.
-	opts := daemon.Options{Config: cfg, Reader: cli, Clock: clock.Real{}, Bus: bus, Log: log, SelfID: selfID}
-	var ledger notify.Ledger // the notification dedupe is kept in the store too; a dry run has none
+	opts := daemon.Options{Config: cfg, Reader: cli, Clock: clock.Real{}, Bus: bus, Log: log, SelfID: selfID, Version: buildVersion()}
+	var ledger notify.Ledger  // the notification dedupe is kept in the store too; a dry run has none
+	var evlog engine.EventLog // what the API reads events from: the store, or a ring in memory in a dry run
+	var history api.History
+	hub := api.NewHub()
 	if cfg.DryRun {
 		log.Info("dry run: state is kept in memory only and nothing is written under the data directory")
+		ring := engine.NewRing(0)
+		bus.Subscribe(ring.Record)
+		evlog = ring
 	} else {
 		st, err := store.Open(cfg.DataDir, log)
 		if err != nil {
@@ -166,9 +174,14 @@ func runCmd(args []string) error {
 		}
 		log.Info("state store opened", "dir", cfg.DataDir, "keys", len(snap.Keys), "pauses", len(snap.Pauses))
 		opts.Persist, opts.Snapshot, opts.Meta = st, snap, st
-		ledger = st
+		ledger, evlog, history = st, st, st
+		// Event IDs are monotonic per host across restarts: the bus continues after the highest ID ever stored,
+		// and the store records every event under the ID the bus gave it.
+		bus.Seed(st.LastID())
+		bus.Subscribe(st.RecordEvent)
 		go pruneLoop(ctx, st, cfg, log)
 	}
+	bus.Subscribe(hub.Notify) // after the event log's own subscriber: the event is readable when the streams wake
 
 	nt, red := setupNotify(cfg, log, bus, ledger)
 	defer nt.Shutdown(5 * time.Second) // the last message before a stop is often the one that matters
@@ -199,7 +212,8 @@ func runCmd(args []string) error {
 		log.Info("uptime ping on", "interval", cfg.PingInterval.String())
 	}
 
-	tcpHandler, sockHandler := handlers(d)
+	svc := &api.Service{Host: cfg.HostID, Source: d.APISource(), Events: evlog, History: history, Redact: red.Redact, Hub: hub, Metrics: cfg.Metrics}
+	tcpHandler, sockHandler := handlers(d, api.Options{Service: svc, Token: cfg.HTTPToken, Web: web.Handler(svc)})
 	if cfg.ControlSocket != "" {
 		go func() {
 			if err := control.Serve(ctx, cfg.ControlSocket, sockHandler); err != nil {
@@ -208,13 +222,26 @@ func runCmd(args []string) error {
 		}()
 	}
 	if cfg.HTTPAddr != "" {
-		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second}
+		for _, w := range httpWarnings(cfg) {
+			log.Warn("dashboard", "detail", w)
+		}
+		// No WriteTimeout: the event stream is open for as long as a browser tab is.
+		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute}
+		srv.RegisterOnShutdown(hub.Close)
 		go func() {
+			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics)
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Error("http listener failed", "addr", cfg.HTTPAddr, "error", err.Error())
 			}
 		}()
-		go func() { <-ctx.Done(); _ = srv.Close() }()
+		go func() {
+			<-ctx.Done()
+			sctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			if srv.Shutdown(sctx) != nil {
+				_ = srv.Close()
+			}
+		}()
 	}
 
 	if err := d.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
@@ -231,7 +258,8 @@ func runCmd(args []string) error {
 var notifyBackoff []time.Duration
 
 func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus, ledger notify.Ledger) (*notify.Notifier, *notify.Redactor) {
-	red := notify.NewRedactor(append(append([]string{}, cfg.NotifyURLs...), cfg.PingURL)...)
+	// The HTTP token is redacted from everything the API shows as well.
+	red := notify.NewRedactor(append(append([]string{}, cfg.NotifyURLs...), cfg.PingURL, cfg.HTTPToken)...)
 	targets := notify.NewTargets(cfg.NotifyURLs, red, cfg.NotifyTimeout)
 	for _, t := range targets {
 		if t.Sender == nil {
@@ -558,10 +586,26 @@ type daemonLike interface {
 // socket. The TCP one is read-only (/healthz); only the socket can pause,
 // resume or unsuspend, because it is reachable only by someone who can exec
 // into the container (plan §2: no network-exposed write endpoints in v1).
-func handlers(d daemonLike) (tcp, sock http.Handler) {
-	tcp = api.Handler(d)
-	sock = control.Mux(tcp, d, func(v string) (time.Duration, error) { return daemon.ParseFor(v, config.ParseDuration) })
+func handlers(d daemonLike, o api.Options) (tcp, sock http.Handler) {
+	o.Health = d
+	tcp = api.Handler(o)
+	sock = control.Mux(api.HealthHandler(d), d, func(v string) (time.Duration, error) { return daemon.ParseFor(v, config.ParseDuration) })
 	return tcp, sock
+}
+
+// httpWarnings are the startup warnings about the HTTP listener: it is read-only, but it shows container names,
+// states and event history, so a listener on every interface without a token deserves a word.
+func httpWarnings(cfg config.Global) []string {
+	var w []string
+	host, _, err := net.SplitHostPort(cfg.HTTPAddr)
+	loopback := err == nil && (host == "localhost" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()))
+	if cfg.HTTPToken == "" && !loopback {
+		w = append(w, "the dashboard listens on "+cfg.HTTPAddr+" without WHALENURSE_HTTP_TOKEN: anyone who can reach the port can read container names, states and the event history. Set a token, or publish the port on 127.0.0.1 or behind a reverse proxy or Tailscale (never network_mode)")
+	}
+	if cfg.HTTPToken != "" && len(cfg.HTTPToken) < 16 {
+		w = append(w, "WHALENURSE_HTTP_TOKEN is shorter than 16 characters; use a long random token")
+	}
+	return w
 }
 
 func pauseFor(fs *flag.FlagSet) *string {

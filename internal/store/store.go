@@ -10,11 +10,13 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -27,7 +29,7 @@ import (
 const FileName = "whalenurse.db"
 
 // schemaVersion is stored in PRAGMA user_version. Bump it with a migration step in migrate.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // Store is an open database.
 type Store struct {
@@ -104,10 +106,24 @@ func (s *Store) migrate() error {
 	}
 	if v < 2 {
 		// M3 (plan v3.7): the notification dedupe, so a restart does not say the same thing twice.
-		return s.exec([]string{
+		if err := s.exec([]string{
 			`CREATE TABLE notified (id TEXT PRIMARY KEY, type TEXT NOT NULL, key TEXT NOT NULL, at INTEGER NOT NULL)`,
 			`CREATE INDEX notified_key ON notified (type, key)`,
 			"PRAGMA user_version = 2",
+		}); err != nil {
+			return err
+		}
+	}
+	if v < 3 {
+		// M5 (plan v3.9): the domain events, for the API's `since` cursor, the timelines and the history page.
+		// AUTOINCREMENT keeps sqlite_sequence at the highest ID ever stored, so IDs stay monotonic after retention
+		// has deleted the newest rows and the daemon restarts.
+		return s.exec([]string{
+			`CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, host TEXT NOT NULL, key TEXT NOT NULL,
+				container TEXT NOT NULL, type TEXT NOT NULL, message TEXT NOT NULL, attrs TEXT NOT NULL)`,
+			`CREATE INDEX events_key ON events (key, id)`,
+			`CREATE INDEX events_at ON events (at)`,
+			"PRAGMA user_version = 3",
 		})
 	}
 	return nil
@@ -442,8 +458,106 @@ func (s *Store) Prune(now time.Time, retention, flapWindow time.Duration) (int64
 	if _, err := s.db.Exec(`DELETE FROM flaps WHERE at < ?`, tn(now.Add(-flapWindow))); err != nil {
 		return n, err
 	}
-	_, err = s.db.Exec(`DELETE FROM actions WHERE at < ?`, tn(now.Add(-time.Hour)))
-	return n, err
+	if _, err = s.db.Exec(`DELETE FROM actions WHERE at < ?`, tn(now.Add(-time.Hour))); err != nil {
+		return n, err
+	}
+	return n, s.pruneEvents(now, retention)
+}
+
+// MaxEvents caps the events table whatever the retention says: a flapping container can emit a lot.
+const MaxEvents = 100_000
+
+// pruneEvents deletes events older than the retention, and the oldest beyond MaxEvents. AUTOINCREMENT keeps the ID
+// counter, so the deletion never makes an ID come back.
+func (s *Store) pruneEvents(now time.Time, retention time.Duration) error {
+	if _, err := s.db.Exec(`DELETE FROM events WHERE at < ?`, tn(now.Add(-retention))); err != nil {
+		return err
+	}
+	_, err := s.db.Exec(`DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)`, MaxEvents)
+	return err
+}
+
+// ---- events (the API's log) ----------------------------------------------------------------------------
+
+var _ engine.EventLog = (*Store)(nil)
+
+// RecordEvent is the bus subscriber that stores every domain event under the ID the bus gave it.
+func (s *Store) RecordEvent(e engine.Event) {
+	attrs := "{}"
+	if len(e.Attrs) > 0 {
+		if b, err := json.Marshal(e.Attrs); err == nil {
+			attrs = string(b)
+		}
+	}
+	if _, err := s.db.Exec(`INSERT INTO events (id, at, host, key, container, type, message, attrs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO NOTHING`, e.ID, tn(e.Time), e.Host, e.Key, e.Container, string(e.Type), e.Message, attrs); err != nil {
+		s.fail("record event", err)
+	}
+}
+
+// LastID is the highest event ID ever stored (also after retention deleted the newest rows); 0 for none.
+func (s *Store) LastID() uint64 {
+	var n sql.NullInt64
+	if err := s.db.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'events'`).Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.fail("read event sequence", err)
+		return 0
+	}
+	if !n.Valid || n.Int64 < 0 {
+		return 0
+	}
+	return uint64(n.Int64)
+}
+
+// Query implements engine.EventLog.
+func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
+	limit := q.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	where, args := []string{"id > ?"}, []any{q.After}
+	if q.Before != 0 {
+		where, args = append(where, "id < ?"), append(args, q.Before)
+	}
+	if q.Key != "" {
+		where, args = append(where, "key = ?"), append(args, q.Key)
+	}
+	if len(q.Types) > 0 {
+		in := ""
+		for i, t := range q.Types {
+			if i > 0 {
+				in += ","
+			}
+			in += "?"
+			args = append(args, string(t))
+		}
+		where = append(where, "type IN ("+in+")")
+	}
+	order := "ASC"
+	if q.Newest {
+		order = "DESC"
+	}
+	stmt := `SELECT id, at, host, key, container, type, message, attrs FROM events WHERE ` + strings.Join(where, " AND ") +
+		` ORDER BY id ` + order + ` LIMIT ?`
+	rows, err := s.db.Query(stmt, append(args, limit)...)
+	if err != nil {
+		return nil, err
+	}
+	var out []engine.Event
+	for rows.Next() {
+		var e engine.Event
+		var at int64
+		var typ, attrs string
+		if err := rows.Scan(&e.ID, &at, &e.Host, &e.Key, &e.Container, &typ, &e.Message, &attrs); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		e.Time, e.Type = fn(at), engine.EventType(typ)
+		if attrs != "" && attrs != "{}" {
+			_ = json.Unmarshal([]byte(attrs), &e.Attrs)
+		}
+		out = append(out, e)
+	}
+	return out, closeRows(rows)
 }
 
 // History returns the closed incidents of a key, newest first (the dashboard's

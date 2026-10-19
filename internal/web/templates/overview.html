@@ -1,0 +1,79 @@
+{{define "body"}}
+<h1>Overview</h1>
+{{with .Status}}
+<section class="cards">
+  <article class="card">
+    <h2>Healer</h2>
+    <p>{{if .Healthy}}{{badge "ok" "healthy"}}{{else}}{{badge "bad" "unhealthy"}}{{end}} {{.HealthDetail}}</p>
+    <dl>
+      <dt>Docker events</dt><dd>{{if .EventsUp}}connected{{else}}<strong>stream down</strong>{{end}}</dd>
+      <dt>Startup sweep</dt><dd>{{if .Settled}}done{{else}}waiting for the startup settle{{end}}</dd>
+      <dt>Mode</dt><dd>{{.Mode}}{{if .DryRun}}, dry run{{end}}</dd>
+      <dt>State kept</dt><dd>{{if .Persistent}}in the store (survives restarts){{else}}in memory only{{end}}</dd>
+      <dt>Started</dt><dd>{{timeTag .StartedAt}}</dd>
+      {{if not .RestoreUntil.IsZero}}<dt>Restore window</dt><dd>open until {{timeTag .RestoreUntil}}: starts are restores, not people</dd>{{end}}
+    </dl>
+  </article>
+  <article class="card">
+    <h2>Compose</h2>
+    {{if .Compose.Binary}}
+    <dl>
+      <dt>Binary</dt><dd><code>{{.Compose.Binary}}</code></dd>
+      <dt>Source</dt><dd>{{.Compose.Source}}</dd>
+      <dt>Version</dt><dd>{{.Compose.Version}}</dd>
+      <dt>Docker Engine</dt><dd>{{.Compose.Engine}} {{.Compose.Arch}}</dd>
+      <dt>Drift guard</dt><dd>{{.DriftGuard}}</dd>
+    </dl>
+    {{else}}<p>No compose binary was found. {{.VersionGate.Reason}}</p>{{end}}
+  </article>
+  <article class="card">
+    <h2>Version gate</h2>
+    <p>{{if .VersionGate.RecreateEnabled}}{{badge "ok" "recreate and pull rungs on"}}{{else}}{{badge "warn" "rungs 2 and 3 off"}}{{end}}</p>
+    <p class="muted">Rungs 2 and 3 and the drift guard need Docker Engine {{.VersionGate.MinEngine}} or later and Compose v{{.VersionGate.MinCompose}} or later.</p>
+    {{if .VersionGate.Reason}}<p>{{.VersionGate.Reason}}</p>{{end}}
+  </article>
+  <article class="card">
+    <h2>Action budget</h2>
+    <p class="big">{{.RateLimit.Used}} <span class="muted">of {{.RateLimit.Limit}} per hour</span></p>
+    <p>{{.RateLimit.Remaining}} left.{{if not .RateLimit.NextSlot.IsZero}} Spent: the next action may run {{timeTag .RateLimit.NextSlot}}.{{end}}</p>
+  </article>
+  <article class="card">
+    <h2>Containers</h2>
+    <dl class="counts">
+      <dt>Watched</dt><dd>{{.Counts.Watched}} <span class="muted">of {{.Counts.Containers}}</span></dd>
+      <dt>OK</dt><dd>{{.Counts.OK}}</dd>
+      <dt>In an incident</dt><dd>{{.Counts.Incident}}</dd>
+      <dt>Recovering</dt><dd>{{.Counts.Recovering}}</dd>
+      <dt>SUSPENDED</dt><dd>{{if .Counts.Suspended}}<strong>{{.Counts.Suspended}}</strong>{{else}}0{{end}}</dd>
+      <dt>PAUSED</dt><dd>{{.Counts.Paused}}</dd>
+    </dl>
+  </article>
+  <article class="card">
+    <h2>Notifications</h2>
+    {{with .Notifications}}
+    {{if .Enabled}}
+    <p>{{.URLs}} URL{{if ne .URLs 1}}s{{end}}{{if .Invalid}}, <strong>{{.Invalid}} invalid</strong>{{end}}: {{.Sent}} sent, {{.Failed}} failed{{if .RateLimited}}, {{.RateLimited}} held back{{end}}.</p>
+    {{else}}<p class="muted">Off: WHALENURSE_NOTIFY_URLS is not set.</p>{{end}}
+    {{with .UptimePing}}<p>Uptime ping: {{.Sent}} sent, {{.Failed}} failed, {{.SkippedUnhealthy}} skipped while unhealthy.</p>{{end}}
+    {{end}}
+  </article>
+</section>
+
+{{if .Pauses}}
+<h2>Pauses</h2>
+<table class="grid">
+  <thead><tr><th>Scope</th><th>Since</th><th>Ends</th></tr></thead>
+  <tbody>{{range .Pauses}}<tr><td data-label="Scope"><code>{{.Scope}}</code></td><td data-label="Since">{{timeTag .Created}}</td><td data-label="Ends">{{if .Until.IsZero}}when resumed{{else}}{{timeTag .Until}}{{end}}</td></tr>{{end}}</tbody>
+</table>
+{{end}}
+{{end}}
+
+<h2>Needs attention</h2>
+{{if .Attention}}
+{{template "containertable" .Attention}}
+{{else}}<p class="muted">Every watched container is fine.</p>{{end}}
+
+<h2>Latest events</h2>
+{{template "eventtable" .Events}}
+<p><a href="/history">All history</a></p>
+{{end}}

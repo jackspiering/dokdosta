@@ -81,7 +81,7 @@ func serve(t *testing.T, h http.Handler) (sock string, stop func()) {
 
 func TestHealthOverUnixSocket(t *testing.T) {
 	chk := &fakeChecker{ok: true, msg: "ok"}
-	sock, stop := serve(t, api.Handler(chk))
+	sock, stop := serve(t, api.Handler(api.Options{Health: chk}))
 	defer stop()
 	ctx := context.Background()
 
@@ -102,7 +102,7 @@ func TestHealthOverUnixSocket(t *testing.T) {
 
 func TestCommandsOverTheSocket(t *testing.T) {
 	be := &fakeBackend{}
-	sock, stop := serve(t, Mux(api.Handler(&fakeChecker{ok: true, msg: "ok"}), be, parseFor))
+	sock, stop := serve(t, Mux(api.HealthHandler(&fakeChecker{ok: true, msg: "ok"}), be, parseFor))
 	defer stop()
 	ctx := context.Background()
 
@@ -146,7 +146,7 @@ func TestCommandsOverTheSocket(t *testing.T) {
 // The status reply is far larger than the 512 bytes the M1 client read.
 func TestStatusIsNotTruncated(t *testing.T) {
 	be := &fakeBackend{big: 200 << 10}
-	sock, stop := serve(t, Mux(api.Handler(&fakeChecker{ok: true}), be, parseFor))
+	sock, stop := serve(t, Mux(api.HealthHandler(&fakeChecker{ok: true}), be, parseFor))
 	defer stop()
 	code, body, err := Do(context.Background(), sock, http.MethodGet, "/v1/status", nil)
 	if err != nil || code != 200 || len(body) < 200<<10 {

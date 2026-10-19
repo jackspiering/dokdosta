@@ -34,6 +34,8 @@ type Global struct {
 	StartupSettle  time.Duration
 	LogLevel       slog.Level
 	HTTPAddr       string // empty: no TCP listener
+	HTTPToken      string // WHALENURSE_HTTP_TOKEN: when set, the dashboard and the API need it. A secret: never logged or shown.
+	Metrics        bool   // WHALENURSE_METRICS: serve /metrics on the HTTP listener
 	ControlSocket  string // unix socket for /healthz and the CLI (pause, resume, unsuspend, status)
 
 	RecoveryPeriod   time.Duration // an incident closes after this long recovered; a crash loop clears after it
@@ -93,9 +95,7 @@ func Defaults() Global {
 }
 
 // later lists variables defined in the plan that nothing acts on yet.
-var later = map[string]string{
-	"WHALENURSE_HTTP_TOKEN": "M5",
-}
+var later = map[string]string{}
 
 // FromEnv parses environ ("KEY=value" strings, as os.Environ returns). It
 // returns warnings for ignored or unknown WHALENURSE_* variables, and an error
@@ -185,6 +185,17 @@ func FromEnv(environ []string) (Global, []string, error) {
 	}
 	if v, ok := take("WHALENURSE_HTTP_ADDR"); ok {
 		g.HTTPAddr = v
+	}
+	// The token is a secret: an error about it never quotes the value.
+	if v, ok := take("WHALENURSE_HTTP_TOKEN"); ok {
+		g.HTTPToken = v
+	}
+	if v, ok := take("WHALENURSE_METRICS"); ok {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("WHALENURSE_METRICS=%q: %v", v, err))
+		}
+		g.Metrics = b
 	}
 	if v, ok := take("WHALENURSE_CONTROL_SOCKET"); ok {
 		g.ControlSocket = v
