@@ -409,6 +409,21 @@ func (g *Guard) ImagePulls(ctx context.Context, since, until string) (int, error
 	return n, nil
 }
 
+// ImagePullRefs lists the references of the image `pull` events in [since, until] (what was pulled, as docker names it).
+func (g *Guard) ImagePullRefs(ctx context.Context, since, until string) ([]string, error) {
+	out, err := g.R.Run(ctx, "docker", "events", "--since", since, "--until", until, "--filter", "type=image", "--filter", "event=pull", "--format", "{{.Action}} {{.Actor.ID}}")
+	if err != nil {
+		return nil, err
+	}
+	var refs []string
+	for _, l := range strings.Split(out, "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(l), "pull"); ok {
+			refs = append(refs, strings.TrimSpace(rest))
+		}
+	}
+	return refs, nil
+}
+
 // ---- compose, as whalenurse runs it --------------------------------------------------------------------------------
 
 // CheckComposeCommand is the filter in front of whalenurse's compose: it accepts exactly the five shapes the compose

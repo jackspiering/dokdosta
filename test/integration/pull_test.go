@@ -217,11 +217,26 @@ func pullEvents(rec *engine.Recorder, key string) (started []string, results []e
 	return
 }
 
+// imagePulls counts the pulls of the test registry's images since a moment: what whalenurse's pull rung would fetch. Other
+// pull events on the host (the Engine's own, another test's base image) are logged and not counted: the assertions are
+// about the service's image, and an unrelated event inside the margin of a one-second-resolution query must not fail them.
 func imagePulls(t *testing.T, g *Guard, since time.Time) int {
 	t.Helper()
-	n, err := g.ImagePulls(context.Background(), fmt.Sprint(since.Add(-time.Second).Unix()), fmt.Sprint(time.Now().Unix()+2))
+	// docker events takes a fractional unix time: no one-second margin that could include an earlier step of the test.
+	refs, err := g.ImagePullRefs(context.Background(), fmt.Sprintf("%d.%09d", since.Unix(), since.Nanosecond()), fmt.Sprint(time.Now().Unix()+2))
 	if err != nil {
 		t.Fatal(err)
+	}
+	n := 0
+	for _, r := range refs {
+		if strings.HasPrefix(r, "127.0.0.1:") {
+			n++
+		} else {
+			t.Logf("image pull event not about the test registry (not counted): %s", r)
+		}
+	}
+	if n > 0 {
+		t.Logf("image pull events about the test registry since %s: %v", since.Format(time.RFC3339), refs)
 	}
 	return n
 }
