@@ -147,13 +147,11 @@ func runCmd(args []string) error {
 	bus := &engine.Bus{}
 	bus.Subscribe(daemon.LogSink(log))
 
-	nt, red := setupNotify(cfg, log, bus)
-	defer nt.Shutdown(5 * time.Second) // the last message before a stop is often the one that matters
-
 	// State lives in SQLite under WHALENURSE_DATA_DIR. A dry run stores nothing: its
 	// incidents and SUSPENDED states are not real, and must not be there for the next
 	// real run to find.
 	opts := daemon.Options{Config: cfg, Reader: cli, Clock: clock.Real{}, Bus: bus, Log: log, SelfID: selfID}
+	var ledger notify.Ledger // the notification dedupe is kept in the store too; a dry run has none
 	if cfg.DryRun {
 		log.Info("dry run: state is kept in memory only and nothing is written under the data directory")
 	} else {
@@ -168,8 +166,12 @@ func runCmd(args []string) error {
 		}
 		log.Info("state store opened", "dir", cfg.DataDir, "keys", len(snap.Keys), "pauses", len(snap.Pauses))
 		opts.Persist, opts.Snapshot, opts.Meta = st, snap, st
+		ledger = st
 		go pruneLoop(ctx, st, cfg, log)
 	}
+
+	nt, red := setupNotify(cfg, log, bus, ledger)
+	defer nt.Shutdown(5 * time.Second) // the last message before a stop is often the one that matters
 
 	var actor docker.Actor = cli
 	if cfg.DryRun {
@@ -228,7 +230,7 @@ func runCmd(args []string) error {
 // notifyBackoff is the wait before each retry of a failed delivery; nil means the notifier's default. Tests shorten it.
 var notifyBackoff []time.Duration
 
-func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus) (*notify.Notifier, *notify.Redactor) {
+func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus, ledger notify.Ledger) (*notify.Notifier, *notify.Redactor) {
 	red := notify.NewRedactor(append(append([]string{}, cfg.NotifyURLs...), cfg.PingURL)...)
 	targets := notify.NewTargets(cfg.NotifyURLs, red, cfg.NotifyTimeout)
 	for _, t := range targets {
@@ -238,7 +240,7 @@ func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus) (*notify.
 	}
 	nt := notify.New(notify.Options{
 		Host: cfg.HostID, DryRun: cfg.DryRun, Log: log, Redact: red, Targets: targets,
-		Timeout: cfg.NotifyTimeout, RateLimit: cfg.NotifyRateLimit, Backoff: notifyBackoff,
+		Timeout: cfg.NotifyTimeout, RateLimit: cfg.NotifyRateLimit, Backoff: notifyBackoff, Ledger: ledger,
 	})
 	bus.Subscribe(nt.Handle)
 	if len(cfg.NotifyURLs) == 0 {
@@ -300,6 +302,9 @@ func pruneLoop(ctx context.Context, st *store.Store, cfg config.Global, log *slo
 			log.Error("store prune failed", "error", err.Error())
 		} else if n > 0 {
 			log.Info("pruned old incident history", "incidents", n, "retention", cfg.HistoryRetention.String())
+		}
+		if err := st.PruneNotified(time.Now(), notify.DefaultDedupeFor); err != nil {
+			log.Error("notification ledger prune failed", "error", err.Error())
 		}
 	}
 	prune()

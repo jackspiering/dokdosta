@@ -27,7 +27,7 @@ import (
 const FileName = "whalenurse.db"
 
 // schemaVersion is stored in PRAGMA user_version. Bump it with a migration step in migrate.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // Store is an open database.
 type Store struct {
@@ -95,21 +95,37 @@ func (s *Store) migrate() error {
 			`CREATE UNIQUE INDEX incidents_one_open ON incidents (key) WHERE closed_at IS NULL`,
 			`CREATE TABLE pauses (scope TEXT PRIMARY KEY, until INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL)`,
 			`CREATE TABLE actions (at INTEGER NOT NULL)`,
-			fmt.Sprintf("PRAGMA user_version = %d", schemaVersion),
+			"PRAGMA user_version = 1",
 		}
-		tx, err := s.db.Begin()
-		if err != nil {
+		if err := s.exec(stmts); err != nil {
 			return err
 		}
-		for _, q := range stmts {
-			if _, err := tx.Exec(q); err != nil {
-				tx.Rollback()
-				return fmt.Errorf("%s: %w", firstWords(q), err)
-			}
-		}
-		return tx.Commit()
+		v = 1
+	}
+	if v < 2 {
+		// M3 (plan v3.7): the notification dedupe, so a restart does not say the same thing twice.
+		return s.exec([]string{
+			`CREATE TABLE notified (id TEXT PRIMARY KEY, type TEXT NOT NULL, key TEXT NOT NULL, at INTEGER NOT NULL)`,
+			`CREATE INDEX notified_key ON notified (type, key)`,
+			"PRAGMA user_version = 2",
+		})
 	}
 	return nil
+}
+
+// exec runs the statements in one transaction.
+func (s *Store) exec(stmts []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, q := range stmts {
+		if _, err := tx.Exec(q); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("%s: %w", firstWords(q), err)
+		}
+	}
+	return tx.Commit()
 }
 
 func firstWords(q string) string {
@@ -260,6 +276,49 @@ func (s *Store) SaveAction(at time.Time) {
 	if _, err := s.db.Exec(`INSERT INTO actions (at) VALUES (?)`, tn(at)); err != nil {
 		s.fail("save action", err)
 	}
+}
+
+// LoadNotified returns the notification dedupe ledger: the identity of every message sent within ttl, and when. Older
+// rows are deleted. It implements notify.Ledger.
+func (s *Store) LoadNotified(now time.Time, ttl time.Duration) (map[string]time.Time, error) {
+	if _, err := s.db.Exec(`DELETE FROM notified WHERE at < ?`, tn(now.Add(-ttl))); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.Query(`SELECT id, at FROM notified`)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]time.Time{}
+	for rows.Next() {
+		var id string
+		var at int64
+		if err := rows.Scan(&id, &at); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		out[id] = fn(at)
+	}
+	return out, closeRows(rows)
+}
+
+// SaveNotified records that the message with this identity was sent.
+func (s *Store) SaveNotified(id, typ, key string, at time.Time) {
+	if _, err := s.db.Exec(`INSERT INTO notified (id, type, key, at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET at = excluded.at`, id, typ, key, tn(at)); err != nil {
+		s.fail("save notified", err)
+	}
+}
+
+// ForgetNotified deletes the ledger rows of one event type for one key (a recovery makes the next "giving up" news again).
+func (s *Store) ForgetNotified(typ, key string) {
+	if _, err := s.db.Exec(`DELETE FROM notified WHERE type = ? AND key = ?`, typ, key); err != nil {
+		s.fail("forget notified", err)
+	}
+}
+
+// PruneNotified deletes ledger rows older than ttl.
+func (s *Store) PruneNotified(now time.Time, ttl time.Duration) error {
+	_, err := s.db.Exec(`DELETE FROM notified WHERE at < ?`, tn(now.Add(-ttl)))
+	return err
 }
 
 // Load reads everything the engine persisted. It prunes the rate-limit ledger to the last hour first.

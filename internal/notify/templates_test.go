@@ -58,6 +58,12 @@ func TestTemplates(t *testing.T) {
 			rctx{}, []string{"nas: paused stack/web"}, []string{"nas/stack/web", "for 2h0m0s"}, false},
 		{"resumed", engine.Event{Host: testHost, Key: "nas/stack/web", Type: engine.Resumed, Message: "resumed stack/web: the pause expired"},
 			rctx{}, []string{"nas: resumed stack/web"}, []string{"nas/stack/web", "expired"}, false},
+		{"unsuspended by recovery", ev(engine.Unsuspended, webKey, "container returned to healthy", map[string]string{"reason": "healthy"}),
+			rctx{}, []string{"nas: stack-web-1 unsuspended"}, []string{webKey, "returned to healthy"}, false},
+		{"unsuspended by command", ev(engine.Unsuspended, webKey, "unsuspended by whalenurse unsuspend", map[string]string{"reason": "command"}),
+			rctx{}, []string{"unsuspended"}, []string{webKey, "by whalenurse unsuspend"}, false},
+		{"action rate limit", ev(engine.RateLimited, webKey, "rate limit of 10 actions/hour reached; will retry", nil),
+			rctx{}, []string{"nas: action rate limit reached"}, []string{webKey, "10 actions/hour", "WHALENURSE_RATE_LIMIT", "once an hour"}, true},
 		{"non-compose container", ev(engine.Suspended, "nas/plainbox", "every rung ran or was unavailable: container is unhealthy", map[string]string{"reason": "ladder"}),
 			rctx{}, []string{"giving up"}, []string{"nas/plainbox", "whalenurse unsuspend plainbox"}, true},
 	}
@@ -114,8 +120,8 @@ func TestTemplates(t *testing.T) {
 
 func TestEventsThatAreNotListedAreNotNotified(t *testing.T) {
 	for _, typ := range []engine.EventType{
-		engine.IncidentOpened, engine.IncidentClosed, engine.ActionStarted, engine.RungUnavailable, engine.Unsuspended,
-		engine.RateLimited, engine.WaitingForParent, engine.ActionRefused, engine.EventAttributed, engine.ManualStopMarked,
+		engine.IncidentOpened, engine.IncidentClosed, engine.ActionStarted, engine.RungUnavailable,
+		engine.WaitingForParent, engine.ActionRefused, engine.EventAttributed, engine.ManualStopMarked,
 		engine.ManualStopCleared, engine.MarkersQuarantined, engine.RestoreWindowOpened, engine.RestoreEvent, engine.DependentPostCheck,
 	} {
 		if _, _, ok := render(ev(typ, webKey, "x", nil), rctx{}); ok {

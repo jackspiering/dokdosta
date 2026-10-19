@@ -202,3 +202,57 @@ func TestAWriteToAClosedStoreIsCountedNotFatal(t *testing.T) {
 		t.Fatal("a failed write must be counted")
 	}
 }
+
+func TestNotificationLedgerSurvivesReopeningAndExpires(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	s.SaveNotified("Suspended|h/p/web/1|ladder|i1", "Suspended", "h/p/web/1", t0.Add(-time.Hour))
+	s.SaveNotified("NotifyOnly|h/p/db/1|c/|", "NotifyOnly", "h/p/db/1", t0.Add(-30*time.Hour))
+	s.SaveNotified("Suspended|h/p/web/1|ladder|i1", "Suspended", "h/p/web/1", t0) // saving again only moves the time
+	s.Close()
+
+	s = open(t, dir)
+	defer s.Close()
+	got, err := s.LoadNotified(t0, 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || !got["Suspended|h/p/web/1|ladder|i1"].Equal(t0) {
+		t.Fatalf("the 30 h old row must be gone and the other kept: %v", got)
+	}
+	s.ForgetNotified("Suspended", "h/p/web/1")
+	if got, _ := s.LoadNotified(t0, 24*time.Hour); len(got) != 0 {
+		t.Fatalf("forgotten rows came back: %v", got)
+	}
+	s.SaveNotified("a", "T", "k", t0.Add(-2*time.Hour))
+	if err := s.PruneNotified(t0, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.LoadNotified(t0, 24*time.Hour); len(got) != 0 {
+		t.Fatalf("PruneNotified left %v", got)
+	}
+	if s.WriteErrors() != 0 {
+		t.Fatalf("%d write errors", s.WriteErrors())
+	}
+}
+
+// A database written by M2 (schema 1) opens, keeps its rows, and gets the ledger table.
+func TestSchemaOneDatabaseIsMigrated(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	s.SaveKey(sampleKey())
+	s.db.Exec(`DROP TABLE notified`)
+	s.db.Exec("PRAGMA user_version = 1")
+	s.Close()
+
+	s = open(t, dir)
+	defer s.Close()
+	snap, err := s.Load(t0)
+	if err != nil || len(snap.Keys) != 1 {
+		t.Fatalf("%v %v", snap.Keys, err)
+	}
+	s.SaveNotified("x", "T", "k", t0)
+	if got, err := s.LoadNotified(t0, time.Hour); err != nil || len(got) != 1 {
+		t.Fatalf("%v %v", got, err)
+	}
+}

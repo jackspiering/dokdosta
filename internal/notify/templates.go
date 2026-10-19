@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jackspiering/whalenurse/internal/engine"
@@ -16,6 +17,10 @@ type Message struct {
 	// Critical messages (giving up, drift blocked, flapping, a parent left down, rungs disabled) have a reserve in the
 	// per-URL rate limit: a storm of routine messages cannot use up the budget that "giving up" needs.
 	Critical bool
+	// Class and MinSpacing: a message of a class is sent at most once per MinSpacing per URL, whatever the container (the
+	// "action rate limit reached" message names one container, and says the same for all).
+	Class      string
+	MinSpacing time.Duration
 }
 
 // The size limits. A phone shows about 40 characters of a title and a few lines of a body before it cuts them off.
@@ -24,6 +29,9 @@ const (
 	MaxBody   = 360 // runes, the key line included
 	maxDetail = 140 // runes, one detail line
 )
+
+// RateLimitedEvery is the minimum spacing of the "action rate limit reached" message per URL.
+const RateLimitedEvery = time.Hour
 
 // DryRunMarker is put in front of every message a dry run sends, in the title and in the first line of the body (some
 // services drop the title).
@@ -45,6 +53,8 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		discr    string
 		critical bool
 		once     = true // false: deliberate commands (pause, resume) are never deduplicated
+		class    string
+		spacing  time.Duration
 	)
 	subject := subjectOf(e)
 	scope := scopeOf(e.Key)
@@ -73,6 +83,21 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 	case engine.Recovered:
 		headline = "recovered"
 		detail = append(detail, e.Message)
+
+	case engine.Unsuspended:
+		headline = "unsuspended"
+		discr = attr("reason")
+		detail = append(detail, e.Message)
+		if attr("reason") == "command" {
+			once = false // a deliberate command, said every time
+		}
+
+	case engine.RateLimited:
+		subject = "" // host-wide: the key line names the container that hit it first
+		headline = "action rate limit reached, healing waits"
+		critical = true
+		class, spacing = "RateLimited", RateLimitedEvery
+		detail = append(detail, e.Message, "every container waits for a free slot (WHALENURSE_RATE_LIMIT); this is sent at most once an hour")
 
 	case engine.Suspended:
 		switch attr("reason") {
@@ -144,7 +169,9 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 	if once {
 		dedupe = strings.Join([]string{string(e.Type), e.Key, discr, attr(engine.AttrIncident)}, "|")
 	}
-	return compose(c, e, subject, headline, detail, critical), dedupe, true
+	m = compose(c, e, subject, headline, detail, critical)
+	m.Class, m.MinSpacing = class, spacing
+	return m, dedupe, true
 }
 
 // compose lays the message out: the title names the host and the container, the body starts with the key (host and

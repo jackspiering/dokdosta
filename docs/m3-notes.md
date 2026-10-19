@@ -1,6 +1,6 @@
 # M3 notes
 
-Decisions, deviations and open questions for milestone M3 (notifications) of [PLAN.md](PLAN.md). The rules that changed are in the plan as **v3.7** (proposed with this milestone, awaiting review; §3.12 is the new section). Where the plan was ambiguous this file says what was chosen and why, so the maintainer can overrule it.
+Decisions, deviations and open questions for milestone M3 (notifications) of [PLAN.md](PLAN.md). The rules that changed are in the plan as **v3.7** (approved 19 Oct 2026; §3.12 is the new section; the review's four answers are *Review follow-ups* below). Where the plan was ambiguous this file says what was chosen and why, so the maintainer can overrule it.
 
 ## Upstream check (18 Oct 2026): Shoutrrr
 
@@ -19,9 +19,9 @@ How whalenurse uses it: per URL, `router.NewWithOptions(nil, types.SenderOptions
 
 ## Decisions the plan leaves open
 
-1. **What is notified.** The task's list plus three that the engine already emits and a person would want: `DriftWarned` (§3.6 says `warn` "says so"), `NeedsRecreate` (a recreate that cannot run: otherwise the user never learns that healing is not happening), and `RungsDisabled` (that is the version-gate warning). Left in the log and the store: `IncidentOpened`, `ActionStarted`, `Unsuspended` (the `Recovered` that follows is the news), `RateLimited` (whalenurse's own action budget; add it if you want to hear about host-wide storms), `RungUnavailable`, `WaitingForParent`, `ActionRefused`, `DependentPostCheck`, the manual-stop and restore events.
-2. **Dedupe needs an incident id.** Events carried none, and rebuilding incident state inside `notify` breaks after a restart (no `IncidentOpened` arrives for an incident that is still open). So `engine.emit` adds an `incident` attribute (the opening time, RFC 3339 nano) to every event of a key with an open incident. The identity of a message is (event type, key, discriminator, incident). Events with no incident are deduplicated for 24 h (`NotifyOnly`, `NeedsRecreate`, the version-gate warning), so a `restart: "no"` parent that stays down is not announced again by every poll, but is after a day.
-3. **Dedupe is not persisted.** §3.10 lists a "notifications sent" table; I did not build it. Cost: after a restart of whalenurse the engine re-emits `NotifyOnly` once for a parent still down (it also forgets its own advisory state), and so a second message arrives. `Suspended` is not re-emitted for a persisted SUSPENDED, so the case that matters most is fine. Open question 1.
+1. **What is notified.** The task's list plus three that the engine already emits and a person would want: `DriftWarned` (§3.6 says `warn` "says so"), `NeedsRecreate` (a recreate that cannot run: otherwise the user never learns that healing is not happening), and `RungsDisabled` (that is the version-gate warning). Left in the log and the store: `IncidentOpened`, `ActionStarted`, `RungUnavailable`, `WaitingForParent`, `ActionRefused`, `DependentPostCheck`, the manual-stop and restore events.
+2. **Dedupe needs an incident id.** Events carried none, and rebuilding incident state inside `notify` breaks after a restart (no `IncidentOpened` arrives for an incident that is still open). So `engine.emit` adds an `incident` attribute (the opening time, RFC 3339 nano) to every event of a key with an open incident. The identity of a message is (event type, key, discriminator, incident). Events with no incident are deduplicated for 24 h (`NotifyOnly`, `NeedsRecreate`, the version-gate warning, `Unsuspended` without an incident), so a `restart: "no"` parent that stays down is not announced again by every poll, but is after a day.
+3. **Dedupe is persisted** (review follow-up 1; first built in memory only, then persisted on the maintainer's decision).
 4. **`DriftBlocked` and `Suspended(drift)` are one message.** The engine publishes both; the first carries the findings. A test pins exactly one.
 5. **Rate limit shape.** A sliding window of one hour per URL, `WHALENURSE_NOTIFY_RATE_LIMIT` (default 20). Routine messages may use half of it, important ones all of it, so that a storm of "restarted" cannot swallow "giving up". Held-back messages are counted, shown in `status`, and the next message that goes out says how many ("N earlier messages were held back"). I did not build a separate summary message. Not in the task: the 2:1 reserve and the default of 20 are mine.
 6. **Retries.** A failed delivery is retried twice (after 2 s and 10 s) before it counts as failed, because a push service that hiccups should not lose "giving up". The retries run in that URL's worker, so they delay only that URL's later messages. Shutdown gives the queue 5 s, then aborts what is in flight.
@@ -35,8 +35,20 @@ How whalenurse uses it: per URL, `router.NewWithOptions(nil, types.SenderOptions
 14. **Panic isolation.** The router's send is not used (see the upstream table's last paragraph); `Locate` and the send are under a recover, the worker's call to any `Sender` is too, and so is the dispatcher's handling of each event (a template bug drops that event and counts it).
 15. **New variables** (plan §4): `WHALENURSE_NOTIFY_TIMEOUT` (10s), `WHALENURSE_NOTIFY_RATE_LIMIT` (20), `WHALENURSE_HEARTBEAT_INTERVAL` (5m). The "accepted with a warning, ignored until M3" entries for `NOTIFY_URLS` and `HEARTBEAT_URL` are gone.
 
+## Review follow-ups (v3.7 approved 19 Oct 2026)
+
+The maintainer's answers to the open questions, implemented in a follow-up commit on PR #11:
+
+1. **The dedupe is persisted.** `internal/store` schema 2 adds `notified (id PRIMARY KEY, type, key, at)` with an index on (type, key); a schema-1 database is migrated in place (tested). The notifier takes a `notify.Ledger` (the store implements it): it loads the rows younger than 24 h when it starts and writes a row when it accepts a message, in the dispatcher goroutine, never the engine's. Rows are pruned hourly with the history. `run --dry-run` has no store, so its ledger is memory only. An unreadable ledger is logged and the dedupe starts empty. A message is recorded as accepted when it passes the dedupe, not when delivery succeeds: a delivery that fails after its retries is not sent again after a restart. Tests: the real store across two notifier lifetimes (a repeated `NotifyOnly` and `Suspended` are silent, a new incident and another container are not), the ledger round trip, expiry, forget and the migration.
+2. **`RateLimited` is notified**, important, **at most once an hour per URL** whichever container hit it ("action rate limit reached, healing waits"; the message says every container waits). The spacing is per URL and in memory (after a restart the next one may come sooner, which is also when the persisted rate-limit ledger of the engine can run out again). A skipped message is counted (`throttled` in `status`) and spends none of the URL's 20 an hour. The key line names the container that hit the limit first.
+3. **20 an hour per URL stays the default.**
+4. **`Unsuspended` is notified, as a routine message** ("unsuspended", the reason: back to healthy, a `create`, a start after a manual stop, or the command). Two consequences I had to decide: (a) within one incident the container can be suspended, come back, and fail again before `RECOVERY_PERIOD`, so `Suspended` and `Unsuspended` are made news again by each other (the ledger rows of the other type for that key are forgotten), otherwise the second "giving up" would be swallowed and the last word the user heard would be "unsuspended"; (b) an `unsuspend` by command is never deduplicated. Recovered still arrives `RECOVERY_PERIOD` after it.
+
+Also: the plan's status line, CLAUDE.md and `running.md` are updated, and plan §3.10 now says the `notified` table is built.
+
 ## What M3 built
 
+- `internal/store`: schema 2, the `notified` table (`LoadNotified`, `SaveNotified`, `ForgetNotified`, `PruneNotified`).
 - `internal/notify`: `Notifier` (queue, dispatcher, one worker and sender per URL, dedupe, rate limit, retries, counters, shutdown flush), `render` and the templates, `Redactor`, `NewTargets` (Shoutrrr), `SendTest`/`PrintTest`, `Pinger`.
 - `internal/engine`: the `incident` attribute (`AttrIncident`) on events of a key with an open incident.
 - `internal/config`: `NotifyURLs` (`SplitURLs`), `NotifyTimeout`, `NotifyRateLimit`, `PingURL`, `PingInterval`.
@@ -59,18 +71,13 @@ CI run [39121767631](https://github.com/jackspiering/whalenurse/actions/runs/391
 - **A real push service.** Only the generic service was exercised (a loopback webhook). ntfy, Gotify, Discord and Telegram were not sent to: that needs real accounts. `notify test` is the check for the maintainer's own URLs ([maintainer]).
 - **TLS from the image.** The loopback tests use plain HTTP. HTTPS needs the CA bundle in `gcr.io/distroless/static`, which ships one, but no test here makes an HTTPS request from the built image.
 - **A panic in a goroutine a Shoutrrr service starts itself** (the sender-level recover cannot see it). No such service is known; the services of v0.22.0 were not audited.
-- **Behaviour across a whalenurse restart** of the notification dedupe (in memory, open question 1).
+- **A restart of the real binary mid-incident** with notifications on: the persisted dedupe is tested with a real store across two notifier lifetimes in unit tests, but no integration test restarts whalenurse and checks the receiver.
 - **The `incident` attribute** is covered by engine tests, and all existing tests pass unchanged, but no test restarts whalenurse mid-incident and checks that the notifier says nothing twice.
 
 ## Open questions for the maintainer
 
-1. **Persist the dedupe?** (§3.10's "notifications sent" table.) Without it a restart can repeat a `NotifyOnly` (a `restart: "no"` parent still down) once. I judged it not worth a schema change in M3; say if you want it, with M5's history page it would give "what was sent when" for free.
-2. **Notify `RateLimited`?** Whalenurse's own action budget running out usually means a host-wide outage, which is when you want to hear about it. It is one `Critical` template away.
-3. **The 20 an hour per URL default and the 2:1 reserve** are mine. A host with many opted-in containers failing at once (a NAS losing its disks) will hit them; the held-back count is shown in the next message and in `status`.
-4. **Should `Unsuspended` be notified?** A container that was SUSPENDED and then recovers by hand gets `Recovered` only after `RECOVERY_PERIOD` (10 min). Today nothing says "it is back" in between.
-5. **Binary size** (+8.5 MB, 28 MB). Accepted; the alternative is a fork or vendoring a handful of services.
+All answered on 19 Oct 2026 (see *Review follow-ups*). Still open, not blocking: the binary size (+8.5 MB, 28 MB), accepted for v1; the alternative is a fork or vendoring a handful of services.
 
 ## [maintainer]
 
-- Review plan v3.7 (it is proposed, not approved).
 - Run `docker exec whalenurse /whalenurse notify test` against your real ntfy/Gotify/Discord/Telegram URLs and tell me which, if any, misbehave. Keep the URLs out of anything you paste.

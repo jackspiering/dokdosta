@@ -175,3 +175,24 @@ func settleSent(t *testing.T, h *cfH, n int64) {
 	}
 	t.Fatalf("status.sent never reached %d: %+v", n, h.d.Status().(Status).Notify)
 }
+
+// Unsuspended is a routine message: a SUSPENDED container that comes back is told, and then it is recovered.
+func TestAContainerThatComesBackAfterSuspendedIsAnnouncedAsUnsuspendedThenRecovered(t *testing.T) {
+	snd := &captureSender{}
+	h := newCompose(t, nil, nil, docker.ServerInfo{}, withNotifier(t, snd, false))
+	ladderToSuspended(h)
+	h.replace("p", "web", func(c *docker.Container) { c.Health = "healthy" })
+	h.advance(15 * time.Minute)
+	settleMessages(t, snd, 5)
+	var got []string
+	for _, m := range snd.messages() {
+		got = append(got, m.Title)
+	}
+	joined := strings.Join(got, "|")
+	if len(got) != 5 || !strings.Contains(got[2], "SUSPENDED") || !strings.Contains(got[3], "unsuspended") || !strings.Contains(got[4], "recovered") {
+		t.Fatalf("%s", joined)
+	}
+	if snd.messages()[3].Critical {
+		t.Error("unsuspended is routine")
+	}
+}

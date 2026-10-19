@@ -4,13 +4,16 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
 	"github.com/nicholas-fedor/shoutrrr/pkg/types"
 
+	"github.com/jackspiering/whalenurse/internal/clock"
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/store"
 )
 
 func suspended(incident string) engine.Event {
@@ -358,5 +361,177 @@ func TestTheHeldBackNoteNeverPushesTheBodyOverTheLimit(t *testing.T) {
 	short := withNote("nas/p/web/1\nrecovered", "(1 earlier messages were held back by the rate limit)", MaxBody)
 	if short != "nas/p/web/1\nrecovered\n(1 earlier messages were held back by the rate limit)" {
 		t.Fatalf("%q", short)
+	}
+}
+
+// ---- v3.7 follow-ups: the persisted dedupe, RateLimited, Unsuspended ------------------------------------------
+
+type memLedger struct {
+	mu      sync.Mutex
+	rows    map[string]time.Time
+	forgot  []string
+	loadErr error
+}
+
+func (l *memLedger) LoadNotified(now time.Time, ttl time.Duration) (map[string]time.Time, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := map[string]time.Time{}
+	for k, v := range l.rows {
+		if now.Sub(v) < ttl {
+			out[k] = v
+		}
+	}
+	return out, l.loadErr
+}
+func (l *memLedger) SaveNotified(id, typ, key string, at time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.rows == nil {
+		l.rows = map[string]time.Time{}
+	}
+	l.rows[id] = at
+}
+func (l *memLedger) ForgetNotified(typ, key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.forgot = append(l.forgot, typ+"|"+key)
+	for id := range l.rows {
+		if strings.HasPrefix(id, typ+"|"+key+"|") {
+			delete(l.rows, id)
+		}
+	}
+}
+
+// A restart of whalenurse does not say the same thing twice: the first process's notifier writes the ledger, the second
+// one's reads it.
+func TestTheDedupeSurvivesARestartOfWhalenurse(t *testing.T) {
+	dir := t.TempDir()
+	run := func(events ...engine.Event) []string {
+		st, err := store.Open(dir, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer st.Close()
+		nt, senders, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = st; o.Clock = clock.Real{} })
+		for _, e := range events {
+			nt.Handle(e)
+		}
+		flush(nt)
+		return senders[0].titles()
+	}
+	down := ev(engine.NotifyOnly, webKey, "left down", map[string]string{"class": "exited-host-stopped", "dependents": "stack-side-1"})
+	susp := suspended("inc-1")
+	if got := run(down, susp); len(got) != 2 {
+		t.Fatalf("first run: %v", got)
+	}
+	// The same things after the restart: the engine re-emits the advisory, and an incident's events repeat.
+	if got := run(down, susp); len(got) != 0 {
+		t.Fatalf("a restart repeated what was already said: %v", got)
+	}
+	// News is still news: a new incident, and a different container.
+	other := down
+	other.Key = "nas/stack/db/1"
+	if got := run(other, suspended("inc-2")); len(got) != 2 {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestAnUnreadableLedgerStartsEmptyAndDoesNotStopTheNotifier(t *testing.T) {
+	l := &memLedger{loadErr: errors.New("disk on fire")}
+	nt, s, _, lb := newTest(t, 1, func(o *Options) { o.Ledger = l })
+	nt.Handle(suspended("i"))
+	flush(nt)
+	if len(s[0].messages()) != 1 || !strings.Contains(lb.String(), "cannot read the notification ledger") {
+		t.Fatalf("%v / %s", s[0].titles(), lb.String())
+	}
+}
+
+func TestUnsuspendedIsRoutineAndSuspendingAgainInTheSameIncidentIsNewsAgain(t *testing.T) {
+	l := &memLedger{}
+	nt, s, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l })
+	inc := map[string]string{engine.AttrIncident: "i"}
+	susp := func() engine.Event {
+		return ev(engine.Suspended, webKey, "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder", engine.AttrIncident: "i"})
+	}
+	back := ev(engine.Unsuspended, webKey, "container returned to healthy", map[string]string{"reason": "healthy", engine.AttrIncident: inc[engine.AttrIncident]})
+	nt.Handle(susp())
+	nt.Handle(susp()) // a repeat: said once
+	nt.Handle(back)
+	nt.Handle(susp()) // it failed again before the incident closed: news again, or the last word would be "unsuspended"
+	nt.Handle(back)   // and again the same reason, same incident: this is the second time it came back
+	flush(nt)
+	var got []string
+	for _, m := range s[0].messages() {
+		got = append(got, m.Title)
+	}
+	want := []string{"giving up", "unsuspended", "giving up", "unsuspended"}
+	if len(got) != 4 {
+		t.Fatalf("%v", got)
+	}
+	for i, w := range want {
+		if !strings.Contains(got[i], w) {
+			t.Errorf("message %d = %q, want %q", i+1, got[i], w)
+		}
+	}
+	if s[0].messages()[1].Critical {
+		t.Error("unsuspended is a routine message")
+	}
+	if len(l.forgot) == 0 {
+		t.Error("the ledger was not told to forget the suspension")
+	}
+}
+
+func TestAnUnsuspendByCommandIsNeverDeduplicated(t *testing.T) {
+	nt, s, _, _ := newTest(t, 1, nil)
+	cmd := ev(engine.Unsuspended, webKey, "unsuspended by command", map[string]string{"reason": "command"})
+	nt.Handle(cmd)
+	nt.Handle(cmd)
+	flush(nt)
+	if len(s[0].messages()) != 2 {
+		t.Fatalf("%v", s[0].titles())
+	}
+}
+
+// "Action rate limit reached" is host-wide: at most one an hour per URL, whichever container hit it.
+func TestRateLimitedIsSentAtMostOncePerHourPerURL(t *testing.T) {
+	nt, s, clk, _ := newTest(t, 2, nil)
+	rl := func(key string) engine.Event {
+		e := ev(engine.RateLimited, key, "rate limit of 10 actions/hour reached; will retry", map[string]string{engine.AttrIncident: key})
+		e.Key = key
+		return e
+	}
+	nt.Handle(rl("nas/p/a/1"))
+	nt.Handle(rl("nas/p/b/1")) // another container, same hour: skipped
+	settle(t, "the first message", func() bool {
+		return len(s[0].messages()) == 1 && len(s[1].messages()) == 1 && nt.Status().Targets[0].Throttled == 1
+	})
+	clk.Advance(59 * time.Minute)
+	nt.Handle(rl("nas/p/c/1")) // 59 minutes: still skipped
+	settle(t, "the skip", func() bool { return nt.Status().Targets[0].Throttled == 2 })
+	clk.Advance(2 * time.Minute)
+	nt.Handle(rl("nas/p/d/1")) // more than an hour since the last one that went out
+	flush(nt)
+	for i, snd := range s {
+		got := snd.messages()
+		if len(got) != 2 || !strings.Contains(got[0].Body, "nas/p/a/1") || !strings.Contains(got[1].Body, "nas/p/d/1") {
+			t.Errorf("url %d: %v", i+1, snd.titles())
+		}
+	}
+	if st := nt.Status().Targets[0]; st.Throttled != 2 || st.RateLimited != 0 || st.Sent != 2 {
+		t.Errorf("%+v", st)
+	}
+}
+
+func TestAThrottledMessageDoesNotSpendTheURLsHourlyBudget(t *testing.T) {
+	nt, s, _, _ := newTest(t, 1, func(o *Options) { o.RateLimit = 2 })
+	for _, k := range []string{"a", "b", "c", "d"} {
+		e := ev(engine.RateLimited, "nas/p/"+k+"/1", "rate limit reached", nil)
+		nt.Handle(e)
+	}
+	nt.Handle(suspended("i")) // critical, budget of 2: the one RateLimited that went out used 1, this is the 2nd
+	flush(nt)
+	if got := len(s[0].messages()); got != 2 {
+		t.Fatalf("%v", s[0].titles())
 	}
 }

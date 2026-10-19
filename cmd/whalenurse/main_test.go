@@ -143,7 +143,7 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	}
 	bus := &engine.Bus{}
 	bus.Subscribe(daemon.LogSink(log))
-	nt, red := setupNotify(cfg, log, bus)
+	nt, red := setupNotify(cfg, log, bus, nil)
 	pinger := &notify.Pinger{URL: cfg.PingURL, Interval: time.Hour, Timeout: time.Second, Log: log, Redact: red}
 	d := daemon.New(daemon.Options{Config: cfg, Reader: docker.NewFake(), Actor: docker.NewFake(), Clock: clock.Real{}, Bus: bus, Log: log,
 		NotifyStatus: func() notify.Status { st := nt.Status(); ps := pinger.Status(); st.Ping = &ps; return st }})

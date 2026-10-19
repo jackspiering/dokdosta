@@ -43,6 +43,16 @@ type Target struct {
 	Err    string
 }
 
+// Ledger persists the dedupe, so a restart of whalenurse does not say the same thing twice. internal/store implements it.
+// It is called from the dispatcher goroutine only, never from the engine's.
+type Ledger interface {
+	// LoadNotified returns the identity of every message sent within ttl, and when; older ones are dropped.
+	LoadNotified(now time.Time, ttl time.Duration) (map[string]time.Time, error)
+	SaveNotified(id, typ, key string, at time.Time)
+	// ForgetNotified drops the rows of one event type for one key.
+	ForgetNotified(typ, key string)
+}
+
 // Options configure a Notifier.
 type Options struct {
 	Host   string
@@ -59,7 +69,12 @@ type Options struct {
 	Backoff []time.Duration
 	// DedupeFor is how long a sent message suppresses its twin when there is no incident to tell them apart; default 24h.
 	DedupeFor time.Duration
+	// Ledger, when set, keeps the dedupe across restarts (nil in a dry run, which stores nothing).
+	Ledger Ledger
 }
+
+// DefaultDedupeFor is how long a sent message is remembered (and how long the ledger keeps a row).
+const DefaultDedupeFor = 24 * time.Hour
 
 // Notifier is the subscriber. Create it with New, subscribe Handle to the bus, and call Shutdown when the daemon stops.
 type Notifier struct {
@@ -89,8 +104,10 @@ type worker struct {
 	nt *Notifier
 
 	mu          sync.Mutex
-	stamps      []time.Time // when this URL's messages were sent, for the hourly limit
-	suppressed  int         // messages the limit held back since the last one that went out
+	stamps      []time.Time          // when this URL's messages were sent, for the hourly limit
+	throttled   map[string]time.Time // message class -> when the last one of it went out (a class has a minimum spacing)
+	throttledN  int64
+	suppressed  int // messages the limit held back since the last one that went out
 	sentN       int64
 	failedN     int64
 	limitedN    int64
@@ -122,7 +139,7 @@ func New(o Options) *Notifier {
 		o.Backoff = []time.Duration{2 * time.Second, 10 * time.Second}
 	}
 	if o.DedupeFor <= 0 {
-		o.DedupeFor = 24 * time.Hour
+		o.DedupeFor = DefaultDedupeFor
 	}
 	n := &Notifier{
 		o: o, clk: o.Clock, log: o.Log,
@@ -131,8 +148,15 @@ func New(o Options) *Notifier {
 		reasons: map[string]string{},
 	}
 	n.sendCtx, n.cancel = context.WithCancel(context.Background())
+	if o.Ledger != nil {
+		if sent, err := o.Ledger.LoadNotified(n.clk.Now(), o.DedupeFor); err != nil {
+			n.log.Error("cannot read the notification ledger; dedupe starts empty", "error", err.Error())
+		} else {
+			n.sent = sent
+		}
+	}
 	for _, t := range o.Targets {
-		w := &worker{t: t, q: make(chan Message, o.QueueSize), nt: n}
+		w := &worker{t: t, q: make(chan Message, o.QueueSize), nt: n, throttled: map[string]time.Time{}}
 		n.targets = append(n.targets, w)
 		if t.Sender != nil {
 			n.wg.Add(1)
@@ -228,21 +252,45 @@ func (n *Notifier) route(e engine.Event) {
 	if !ok {
 		return
 	}
-	if id != "" && n.seen(id) {
+	if id != "" && n.seen(id, e) {
 		return
+	}
+	// Suspended and unsuspended alternate within an incident; each is news again after the other, or the last word the
+	// user heard would be wrong.
+	switch e.Type {
+	case engine.Unsuspended:
+		n.forget(engine.Suspended, e.Key)
+	case engine.Suspended:
+		n.forget(engine.Unsuspended, e.Key)
 	}
 	for _, w := range n.targets {
 		w.offer(m)
 	}
 }
 
+// forget drops the remembered messages of one type for one key.
+func (n *Notifier) forget(typ engine.EventType, key string) {
+	prefix := string(typ) + "|" + key + "|"
+	for id := range n.sent {
+		if strings.HasPrefix(id, prefix) {
+			delete(n.sent, id)
+		}
+	}
+	if n.o.Ledger != nil {
+		n.o.Ledger.ForgetNotified(string(typ), key)
+	}
+}
+
 // seen records the identity and reports whether it was already sent within DedupeFor.
-func (n *Notifier) seen(id string) bool {
+func (n *Notifier) seen(id string, e engine.Event) bool {
 	now := n.clk.Now()
 	if at, ok := n.sent[id]; ok && now.Sub(at) < n.o.DedupeFor {
 		return true
 	}
 	n.sent[id] = now
+	if n.o.Ledger != nil {
+		n.o.Ledger.SaveNotified(id, string(e.Type), e.Key, now)
+	}
 	if len(n.sent) > 4096 {
 		for k, at := range n.sent {
 			if now.Sub(at) >= n.o.DedupeFor {
@@ -260,6 +308,13 @@ func (w *worker) offer(m Message) {
 	}
 	w.mu.Lock()
 	now := w.nt.clk.Now()
+	if m.Class != "" && m.MinSpacing > 0 {
+		if last, ok := w.throttled[m.Class]; ok && now.Sub(last) < m.MinSpacing {
+			w.throttledN++
+			w.mu.Unlock()
+			return
+		}
+	}
 	cut := now.Add(-time.Hour)
 	kept := w.stamps[:0]
 	for _, s := range w.stamps {
@@ -282,6 +337,9 @@ func (w *worker) offer(m Message) {
 		return
 	}
 	w.stamps = append(w.stamps, now)
+	if m.Class != "" && m.MinSpacing > 0 {
+		w.throttled[m.Class] = now
+	}
 	if w.suppressed > 0 {
 		m.Body = withNote(m.Body, fmt.Sprintf("(%d earlier messages were held back by the rate limit)", w.suppressed), MaxBody)
 		w.suppressed = 0
@@ -359,6 +417,7 @@ type TargetStatus struct {
 	Sent        int64     `json:"sent"`
 	Failed      int64     `json:"failed"`
 	RateLimited int64     `json:"rate_limited"`
+	Throttled   int64     `json:"throttled,omitempty"` // messages of a class that has a minimum spacing, skipped inside it
 	Dropped     int64     `json:"dropped"`
 	LastError   string    `json:"last_error,omitempty"` // redacted
 	LastErrorAt time.Time `json:"last_error_at,omitzero"`
@@ -381,7 +440,7 @@ func (n *Notifier) Status() Status {
 	for _, w := range n.targets {
 		w.mu.Lock()
 		s.Targets = append(s.Targets, TargetStatus{
-			URL: w.t.Label, Sent: w.sentN, Failed: w.failedN, RateLimited: w.limitedN, Dropped: w.droppedN,
+			URL: w.t.Label, Sent: w.sentN, Failed: w.failedN, RateLimited: w.limitedN, Throttled: w.throttledN, Dropped: w.droppedN,
 			LastError: w.lastErr, LastErrorAt: w.lastErrAt, LastOK: w.lastOK, Invalid: w.t.Err,
 		})
 		w.mu.Unlock()
