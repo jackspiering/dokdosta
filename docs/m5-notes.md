@@ -36,11 +36,6 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 - A stream survives a server `ReadTimeout` shorter than the stream (a regression test with a 300 ms timeout and an event after 1.2 s): `net/http` does not cancel a body-less GET's request at that deadline, so no extra code was needed.
 - The attribute allow-list is complete for everything the daemon tests emit: the daemon test harness fails any event whose attribute key `api.AttrAllowed` would drop (the dashboard test's planted keys excepted), across all the M1 to M5 scenarios.
 
-## Not verified
-
-- **The pages were not looked at in a browser.** The preview tool was off for this thread, and the headless Chromium on the box lacks `libasound`/`libgbm`. The templates, the CSS (light/dark by `prefers-color-scheme`; a 40rem breakpoint that turns the tables into stacked cards) and `app.js` were reviewed by reading and tested by fetching the HTML, not by rendering. **[maintainer]** please open the dashboard once on a desktop and a phone, in both colour schemes, and tell me what looks wrong.
-- `app.js` live refresh (EventSource plus the 15 s refetch) was not exercised in a browser; the server side of the stream is covered by Go tests.
-
 ## Review follow-ups (the maintainer's answers, 19 Oct 2026; plan v3.9 items 11 to 16)
 
 1. **Basic next to bearer: approved.** Password = the token, user name ignored, the same constant-time compare. Documented as TLS only (a proxy that terminates TLS, or Tailscale Serve), or loopback; the startup text and `docs/running.md` say so.
@@ -49,6 +44,28 @@ No new dependency. The Prometheus text format is written by hand (about 100 line
 4. **DNS rebinding fixed.** Without a token: Host `localhost`, `127.0.0.1`, `[::1]` and `WHALENURSE_HTTP_ALLOWED_HOSTS`, else 403. Choices made: the port is ignored; names compare lowercase with a trailing dot stripped; list entries may carry a port or brackets (dropped); `/healthz` is exempt; with a token the Host is not checked (a proxy forwards its own name) and the variable is ignored with a startup warning; a request with no Host header (HTTP/1.0) is served. It defends against browsers only: `curl -H 'Host: localhost'` still works, which is why a network-reachable listener still wants a token.
 5. **Wrong-token limit.** 10 per minute per client IP, then 429 with `Retry-After`, with a doubling block (1, 2, 4 ... 15 minutes, strikes forgotten after an hour). Choices made: the client is the peer address (IPv6 reduced to its /64, which a client controls entirely); **`X-Forwarded-For` is ignored** (forgeable, and honouring it would let an attacker rotate addresses), so behind a reverse proxy all users share the proxy's budget and one guesser can lock everybody out; a request with no credentials is not a guess (a browser sends one before its prompt); a right token does not reset the count; **while blocked the right token also gets 429** (otherwise the block only slows guessing); `/healthz` is exempt; the block is logged once; 4,096 tracked clients. **Open for M6: a trusted-proxy option** (honour `X-Forwarded-For` from a listed proxy address) so that the budget is per real client.
 6. **Skipped rungs have their own marker.** From the open incident's `RungUnavailable` events (one read of the log per page, matched on the `incident` attribute), exposed as `healer.skipped_rungs`. The detail page says "recreate skipped – not available" and lists the reason; the list says "1 of 3 rungs run, 1 skipped (not available)". If the events were pruned by retention the marker disappears and the rung looks run again (retention is 30 days by default, longer than any open incident).
+
+## Screenshot review fixes (the maintainer's list, 19 Oct 2026; plan v3.9 item 17)
+
+The first screenshots (`docs/screenshots/`, taken from a real demo stack) showed these; the maintainer asked for them to be fixed (not the host paths in the compose labels, which stay by design), and the screenshots were retaken.
+
+1. **641 to about 790 px had a page-wide horizontal scroll** (the containers table has seven columns and needs 789 px). Cards now start at 900 px, and every table is wrapped in a `.tablewrap` that scrolls by itself. A sweep of 27 widths (320 to 1440, with 640/641 and 899/900/901) over 9 pages found no page-wide scroll and no element outside the viewport. **A bug of my own first try:** I made each `td` a two-column grid, which scatters a cell with several children (a badge and a text, a link and a key): "1 of 2 rungs run" landed in the label column and badges stretched across the card. The screenshots showed it; the label is now absolutely positioned and the content flows in the right column.
+2. **A Paused row** links to `/containers?scope=<scope>` (the containers under that pause scope, same rule as the engine). A container that is gone, or a key with no page, is plain text. `TestEveryLinkOnEveryPageWorks` follows every link of every page (also after a container was removed) and fails on any non-200; it was run against the old behaviour and fails there with the 404.
+3. **`EventAttributed` hidden** by default in "Latest events", the timelines and History, with a "Debug (everything)" filter and `?debug=1`. In the JSON API they stay (the cursor must see every event). The hidden type is excluded in the query, not after it, so it does not use up the 100 timeline slots.
+4. **Final container name**: compose's temporary `<12 hex>_<name>` is stripped in `EventDoc.Container` and `ContainerDoc.Name`. A name that merely looks like it (uppercase hex, or nothing after the underscore) is left alone.
+5. **Time column** `nowrap` on desktop (it wraps again inside a card).
+6. **Expiries** "2m left (until 14:32)", UTC, with the date when it is another day, "ended 3m ago" when it has passed. Used for the cooldown, a pause, the action budget's next slot and the restore window.
+7. **Detail page**: "Finished" only when the container is not running; "no (compose default)"; empty labels hidden in the page (the API keeps them); no Container column in the container's own timeline and incidents; the parent and each dependent show their state as a badge (`RelationDoc` gained optional `state`, `health`, `healer_state`; the badge says for example "running, unhealthy · SUSPENDED").
+8. **Cards**: label and value on one line (two columns), also for the `dl` lists on the phone.
+9. **Rollback**: one `<pre>` per command (`white-space: pre`, `overflow-x: auto`) and a Copy button for each, wired in `app.js`. Checked in Chromium: each button puts exactly its command in the clipboard, the label says "Copied" and returns to "Copy", the fallback path (no clipboard API) works, the buttons are not rendered without JavaScript, and there is no console error or CSP violation.
+11. **Drift text in plain language** with compose's raw words under "details" (the `message` template function, for every event text, the SUSPENDED banner and the drift card). It matches the one finding text the guard writes for a config change; other findings are shown as they are.
+
+Item 10 (host paths) was left as it is.
+
+## Not verified
+
+- **By a person.** The pages were checked by Playwright with headless Chromium (screenshots, an audit script for overflow, contrast, empty cells and secrets, link following, the copy buttons, a width sweep), and I looked at the screenshots. Nobody has used them in a real browser on a real phone.
+- The live refresh (EventSource plus the 15 s refetch) has been seen to start ("live" in every screenshot) but not watched over a long time.
 
 ## Open questions
 

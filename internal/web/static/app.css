@@ -78,9 +78,8 @@ table.grid { width: 100%; border-collapse: collapse; background: var(--panel); b
   table.grid thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
   table.grid, .grid tbody, .grid tr, .grid td { display: block; width: 100%; }
   .grid tr { border-bottom: 1px solid var(--line); padding: 0.35rem 0; }
-  .grid td { display: grid; grid-template-columns: 6.5rem minmax(0, 1fr); gap: 0 0.75rem; border: 0; padding: 0.15rem 0.75rem; align-items: baseline; }
-  .grid td::before { content: attr(data-label); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
-  .grid td > * { min-width: 0; }
+  .grid td { display: block; position: relative; border: 0; padding: 0.15rem 0.75rem 0.15rem 8rem; min-height: 1.6rem; overflow-wrap: anywhere; }
+  .grid td::before { content: attr(data-label); position: absolute; left: 0.75rem; top: 0.3rem; width: 6.5rem; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); overflow-wrap: normal; }
   .grid td.nowrap, .grid td.nowrap time { white-space: normal; }
 }
 @media (max-width: 40rem) {
