@@ -45,7 +45,7 @@ Decisions, deviations and open questions for milestone M4 (the pull rung) of [PL
 
 ## What CI covered
 
-CI run [39218281977](https://github.com/jackspiering/whalenurse/actions/runs/39218281977) (PR #12, commit ff0f774): all 10 jobs green: build/unit, shellcheck and self-tests, both `image-drift` jobs and all six integration legs (classic and containerd store × compose 5.2.0, 5.6.0, latest). The six M4 tests and the guard unit tests ran on every leg:
+CI run [39220206164](https://github.com/jackspiering/whalenurse/actions/runs/39220206164) (PR #12, commit 8cdd3f8, the last code change; the commit that records this run changes only this file): all 10 jobs green (the run before it, 39218281977 on ff0f774, was green too, before the `last_seen` change): build/unit, shellcheck and self-tests, both `image-drift` jobs and all six integration legs (classic and containerd store × compose 5.2.0, 5.6.0, latest). The six M4 tests and the guard unit tests ran on every leg:
 
 - `TestLocalRegistryRoundTrip`: a `registry:2` on `127.0.0.1:<port>` works with plain HTTP on **both stores** (no `insecure-registries` setting, no change to `setup-docker.sh`); a push of a newer image under the same tag leaves the local tag alone and a pull moves it; **`docker events` reports the pull on both stores** (the positive control for every "no pull" assertion). It also showed the two IDs: on the classic store the platform ID and the plain ID are equal; on the containerd store they differ (the plain one is the index digest), which is why the comparison uses the platform ID and the rollback the plain one.
 - `TestPullRungNeverRunsWithoutTheLabel`: restart, recreate, SUSPENDED; no `compose pull`, no image pull event, the local image unchanged, the container still on v1.
