@@ -62,6 +62,17 @@ The first screenshots (`docs/screenshots/`, taken from a real demo stack) showed
 
 Item 10 (host paths) was left as it is.
 
+### The last round (plan v3.9 item 18)
+
+1. **Copy button**: it was absolutely positioned over the end of the `<pre>` and covered text on long lines. `.cmd` is now a flex row: the `<pre>` takes the room and scrolls, the button sits beside it. A check in the audit script measures that no button overlaps its code (0 on every page, all sizes).
+2. **Plain SUSPENDED text** (banner, and the `Suspended` row): built from the engine's message `recreate skipped by the drift guard (<finding>): <why the incident opened>` by `suspendedText`; the finding is mapped to words (`config:` findings and `config --hash` mismatches to "the configuration or image changed since the container was created", a moved tag to "the image tag moved ...", anything else, such as "can't verify", is shown as written). The restart clause is added only where the page knows a restart ran (the banner: the ladder starts with `restart` and one rung ran). The timeline row says only that the recreate was blocked by the drift guard, because the `DriftBlocked` row next to it has the explanation; both keep the raw text under "details". A Suspended message that is not a drift block (the ladder, flapping) is not touched. The parsing splits at the last "): ", so a reason that itself contains "): " would be cut oddly; it only affects wording.
+3. **Blocked rung**: `restart ✓ → recreate ✗ blocked (drift)`; the rung is the first one that did not run when the container is SUSPENDED for drift (the engine does not count a blocked rung as run, so this is the rung the guard stopped).
+4. **Upgrade card**: the raw message line is gone.
+5. **Paused event**: "for 2h, until 19:05" (the date is added when it is another day).
+6. **Cards**: `td.none` cells (health, incident, cooldown) are hidden up to 900 px and shown in the table above it; checked in Chromium at 390, 768, 900 (0 of 12 visible) and 901, 1440 (12 of 12).
+
+`TestADriftSuspensionReadsInPlainLanguage` runs a real drift block (the compose fake) through the daemon, the store and the pages and checks the banner, the ladder, the list and both timeline rows; `TestFriendlyTextsAndCards` and the unit tests in `internal/web` cover the rest. The history page and the other shots that show these texts were retaken too (overview, containers, detail-suspended, detail-upgraded, history, in all sizes and themes); `detail-sidecar-*` shows none of them and was left.
+
 ## Not verified
 
 - **By a person.** The pages were checked by Playwright with headless Chromium (screenshots, an audit script for overflow, contrast, empty cells and secrets, link following, the copy buttons, a width sweep), and I looked at the screenshots. Nobody has used them in a real browser on a real phone.
