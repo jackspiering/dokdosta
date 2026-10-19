@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -184,6 +185,7 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 	d.eng.Begin(t, plan, dec)
 	pctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
+	d.markActing()
 	pullErr := d.o.ComposeActor.Pull(pctx, p)
 	if d.cfg.DryRun {
 		recheck := d.eng.End(t, plan, engine.Result{DryRun: true}, cfg)
@@ -216,6 +218,7 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 
 	actx, acancel := context.WithTimeout(ctx, composeTimeout)
 	defer acancel()
+	d.markActing()
 	upErr := d.o.ComposeActor.Up(actx, p)
 	if upErr == nil {
 		upErr = d.postCheckUpgraded(actx, t, c, p)
@@ -250,6 +253,7 @@ func (d *Daemon) postCheckUpgraded(ctx context.Context, t engine.Target, old doc
 	if cur.ID == old.ID {
 		d.eng.Note(t, engine.UpgradePostCheck, "the container is still the old one after a non-forced up: recreating it with --force-recreate",
 			map[string]string{"id": docker.ShortID(old.ID)})
+		d.markActing()
 		if err := d.o.ComposeActor.Recreate(ctx, p); err != nil {
 			return err
 		}
@@ -287,4 +291,36 @@ func firstNonEmpty(ss ...string) string {
 		}
 	}
 	return ""
+}
+
+// markActing says that an action phase is starting: /healthz tolerates a silent loop for pullTimeout plus a minute from
+// here. Every phase that can take minutes (the pull, the up, a forced recreate) calls it, so a pull followed by an up
+// followed by a forced recreate is judged phase by phase, not as one 20-minute silence.
+func (d *Daemon) markActing() { d.acting.Store(d.clk.Now().UnixNano()) }
+
+// keepAlive writes the last_seen heartbeat from a goroutine of its own while an action runs, and returns the function
+// that stops it. The loop is synchronous, so during a pull or a recreate it does not tick and would write nothing; a
+// last_seen that old would make the shutdown window of a daemon restart (plan §3.3 rule 4: 30 s before last_seen, up to
+// 5 minutes after it within one boot) miss the containers that restart stopped, and a `restart: "no"` app that exits 1 on
+// SIGTERM would be started by whalenurse. The goroutine does not touch d.lastBeat, which only the loop owns; the store's
+// SetMeta is safe from another goroutine (database/sql).
+func (d *Daemon) keepAlive() (stop func()) {
+	if d.o.Meta == nil {
+		return func() {}
+	}
+	done, finished := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(finished)
+		t := time.NewTicker(d.beatEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				d.o.Meta.SetMeta(MetaLastSeen, strconv.FormatInt(d.clk.Now().UnixNano(), 10))
+			}
+		}
+	}()
+	return func() { close(done); <-finished }
 }

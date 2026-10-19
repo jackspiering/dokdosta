@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -345,11 +346,6 @@ func TestPullAllowsATagThatMovedUnderTheContainer(t *testing.T) {
 
 // ---- a shared tag -----------------------------------------------------------------------------------------------
 
-type memMeta map[string]string
-
-func (m memMeta) Meta(k string) (string, bool) { v, ok := m[k]; return v, ok }
-func (m memMeta) SetMeta(k, v string)          { m[k] = v }
-
 // shared builds a second stack whose service runs the same image reference as the pulled one (an image of the same tag
 // and the same ID as web had), unhealthy and past rung 1, so the next recreate runs its drift guard.
 func (h *cfH) sharedAPI() docker.Container {
@@ -363,7 +359,7 @@ func (h *cfH) sharedAPI() docker.Container {
 // After the pull rung moved a tag, a drift block on another stack that shares the tag names the service that moved it and
 // when.
 func TestDriftBlockOnASharedTagNamesWhoMovedIt(t *testing.T) {
-	meta := memMeta{}
+	meta := memMetaSafe{mu: &sync.Mutex{}, m: map[string]string{}}
 	h := newCompose(t, nil, nil, docker.ServerInfo{}, func(o *Options) { o.Meta = meta })
 	web := h.svc(hexID("a1"), "p", "web", config.LabelHealPull, "true")
 	api := h.sharedAPI()
@@ -549,3 +545,63 @@ func TestHealthyToleratesAnActionInFlight(t *testing.T) {
 		t.Fatal("an action stuck for 12 minutes is a dead loop")
 	}
 }
+
+// ---- last_seen during a long action -------------------------------------------------------------------------------
+
+// The loop does not tick while a pull runs, so last_seen would go stale, and a daemon restart in the middle of a long pull
+// would leave the containers it stopped outside the shutdown window (5 minutes after last_seen): a `restart: "no"` app
+// that exits 1 on SIGTERM would then be started (plan §3.3 rule 4). A goroutine keeps last_seen current while an action
+// runs.
+func TestLastSeenAdvancesWhileAPullIsBlocked(t *testing.T) {
+	meta := memMetaSafe{mu: &sync.Mutex{}, m: map[string]string{}}
+	h := newCompose(t, nil, nil, docker.ServerInfo{}, func(o *Options) { o.Meta = meta })
+	h.d.beatEvery = 5 * time.Millisecond
+	web := h.svc(hexID("a1"), "p", "web", config.LabelHealPull, "true")
+	h.cf.OnRecreate = func(compose.Project) error {
+		h.replace("p", "web", func(c *docker.Container) { c.Health = "unhealthy" })
+		return nil
+	}
+	started, release := make(chan struct{}), make(chan struct{})
+	var seenDuring [2]string
+	h.cf.OnPull = func(compose.Project) error {
+		close(started)
+		seenDuring[0], _ = meta.Meta(MetaLastSeen)
+		h.clk.Advance(8 * time.Minute) // the pull takes a long time
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if v, _ := meta.Meta(MetaLastSeen); v != seenDuring[0] {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+		seenDuring[1], _ = meta.Meta(MetaLastSeen)
+		<-release
+		return nil
+	}
+	close(release)
+	breakAndRun(h, web.ID, 30*time.Minute)
+	<-started
+	if seenDuring[0] == "" || seenDuring[1] == seenDuring[0] {
+		t.Fatalf("last_seen did not advance while the pull was blocked: %q -> %q", seenDuring[0], seenDuring[1])
+	}
+	want := h.clk.Now().Add(-time.Hour).UnixNano() // the advanced clock is what it wrote, far past the first value
+	var a, b int64
+	fmt.Sscan(seenDuring[0], &a)
+	fmt.Sscan(seenDuring[1], &b)
+	if b-a < int64(7*time.Minute) || b < want {
+		t.Fatalf("last_seen = %d then %d: it should follow the clock", a, b)
+	}
+}
+
+type memMetaSafe struct {
+	mu *sync.Mutex
+	m  map[string]string
+}
+
+func (m memMetaSafe) Meta(k string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.m[k]
+	return v, ok
+}
+func (m memMetaSafe) SetMeta(k, v string) { m.mu.Lock(); defer m.mu.Unlock(); m.m[k] = v }

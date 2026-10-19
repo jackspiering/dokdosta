@@ -113,6 +113,7 @@ type Daemon struct {
 	idx         index
 	compState   atomic.Pointer[composeState] // the startup version gate, readable from the control socket
 	depGate     map[string]depGate           // one dependent at a time per parent, keyed by the raw container: reference
+	beatEvery   time.Duration                // how often last_seen is written during an action (heartbeatEvery; tests shorten it)
 	moves       map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
 
 	eventsUp   atomic.Bool
@@ -137,9 +138,10 @@ func New(o Options) *Daemon {
 			RecoveryPeriod: g.RecoveryPeriod, CrashloopAfter: g.CrashloopAfter, FlapLimit: g.FlapLimit, FlapWindow: g.FlapWindow,
 			Persist: o.Persist,
 		}, o.Clock, o.Bus),
-		pend:    map[string]pending{},
-		warned:  map[string]bool{},
-		depGate: map[string]depGate{},
+		beatEvery: heartbeatEvery,
+		pend:      map[string]pending{},
+		warned:    map[string]bool{},
+		depGate:   map[string]depGate{},
 	}
 	d.eng.Restore(o.Snapshot)
 	d.started = o.Clock.Now()
@@ -706,8 +708,9 @@ func (d *Daemon) adjust(c docker.Container, cfg config.Container, dec rules.Deci
 // between the decision and the action, and an API restart of a dependent whose parent ID is gone turns a running
 // dependent into an exited one (E1).
 func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container) {
-	d.acting.Store(d.clk.Now().UnixNano())
+	d.markActing()
 	defer d.acting.Store(0)
+	defer d.keepAlive()()
 	if plan.Act == rules.ActionPull {
 		d.executePull(ctx, t, c, dec, plan, cfg)
 		return

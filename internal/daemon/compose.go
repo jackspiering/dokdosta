@@ -309,6 +309,7 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 	actx, cancel := context.WithTimeout(ctx, composeTimeout)
 	defer cancel()
 	var runErr error
+	d.markActing()
 	if stale {
 		runErr = d.o.ComposeActor.Up(actx, p)
 		if runErr == nil && !d.cfg.DryRun {
