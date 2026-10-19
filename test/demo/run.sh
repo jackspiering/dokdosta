@@ -15,6 +15,8 @@ P=whalenurse-test-demo
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/whalenurse-demo.XXXXXX")"
+# mktemp makes the directory mode 0700, and whalenurse (uid 65532) must be able to read the stack it recreates from.
+chmod 0755 "$dir"
 cp "$root/examples/demo/compose.yaml" "$dir/compose.yaml"
 cd "$dir"
 {

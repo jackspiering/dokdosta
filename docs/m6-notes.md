@@ -110,6 +110,11 @@ repository's *immutable releases* setting works (an existing immutable release m
 17. **The demo sets `WHALENURSE_STARTUP_SETTLE: 10s`** (the 2 m default is for a host that has just booted), and the CI demo job
     waits for the dashboard to list bop rather than assuming it does at once (found by the first run of the demo job, which
     got as far as "everything healthy, dashboard answers" on the image built from the commit).
+18. **The demo job's second run found the recreate refused** ("compose inputs ... are not readable from here ... permission denied"):
+    the test script's `mktemp -d` directory is mode 0700, so uid 65532 in the container could not read the compose file. The
+    script now `chmod 0755`s it. The behaviour is the documented one (the stacks must be readable by uid 65532), and a good
+    check of the message: it names the file and the fix. A directory from `git clone` is 0755; mind this if your stacks live in a
+    0700 directory.
 
 ## What was verified, and how
 
