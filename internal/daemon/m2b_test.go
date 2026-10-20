@@ -546,6 +546,39 @@ func TestExternalParentRecreateRecreatesTheDependent(t *testing.T) {
 	}
 }
 
+// The incident the dependents step opens for a dependent that is not opted in must close once the dependent has recovered.
+// Found on a real host: it stayed open ("rung 2 done"), so the next time the parent was recreated the dependent went
+// straight to SUSPENDED and was never repaired.
+func TestDependentIncidentClosesAndTheNextParentRecreateRepairsItAgain(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	h.set(dep.ID, func(c *docker.Container) { delete(c.Labels, config.LabelEnable) }) // a sidecar with no opt-in of its own
+	var newParent docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+		return nil
+	}
+	h.tick()
+	for round := 1; round <= 2; round++ {
+		before := h.current("p", "dep").ID
+		newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+		h.event(newParent, "create", "")
+		h.event(newParent, "start", "")
+		h.advance(3 * time.Minute)
+		if got := h.current("p", "dep"); got.ID == before || got.NetworkMode != "container:"+newParent.ID {
+			t.Fatalf("round %d: the dependent was not recreated against the new parent: %+v", round, got)
+		}
+		h.advance(12 * time.Minute) // RECOVERY_PERIOD is 10 minutes
+		if open, _ := h.d.Engine().IncidentOpen(key("p", "dep")); open {
+			t.Fatalf("round %d: the dependent's incident is still open after it recovered", round)
+		}
+	}
+	if h.count(engine.Suspended) != 0 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+	_ = dep
+}
+
 // The parent is still being healed: the stale dependent waits (its recreate would fail to join a parent that is not
 // running), and goes ahead when the parent runs.
 func TestStaleDependentWaitsForItsParent(t *testing.T) {

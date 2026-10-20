@@ -102,6 +102,10 @@ type Input struct {
 	// gone) is opted in. Such a container is repaired by the dependents step even when it is not opted in itself, unless
 	// it is labelled whalenurse.enable=false; its own failures are still its own business (plan v3.6).
 	DependentOfOptedIn bool
+	// IncidentOpen: the engine has an open incident for this key. A dependent that is not opted in is skipped unless the
+	// dependents step has work for it; with an incident open, a decision that needs no action still reaches the engine,
+	// so the incident the dependents step opened can recover and close.
+	IncidentOpen bool
 	// HostStopped: the container stopped inside a shutdown window (plan §3.3 rule 4): between 30 s before the
 	// previous run's last_seen, or the events-stream loss, and the daemon's restore. Whatever its exit code.
 	HostStopped bool
@@ -171,8 +175,9 @@ func Classify(in Input) Decision {
 			}
 		}
 	}
-	if !in.Cfg.OptedIn && !d.IsDependentStep() {
-		// Not opted in, but its parent is: only the dependents step may touch it.
+	if !in.Cfg.OptedIn && !d.IsDependentStep() && !(in.IncidentOpen && d.Action == ActionNone) {
+		// Not opted in, but its parent is: only the dependents step may touch it. (A decision that needs no action still
+		// goes through while the dependents step's incident is open: it is how that incident recovers.)
 		return skip(SkipNotOptedIn, "not opted in (only the dependents step of an opted-in parent repairs it)")
 	}
 	return d
