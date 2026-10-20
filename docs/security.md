@@ -107,8 +107,8 @@ can use Docker (`docker compose config` shows it too).
 ## Private registries
 
 The pull rung cannot log in to a private registry, **on purpose for now**: the compose child process never reads a Docker
-config (its `DOCKER_CONFIG` points at a directory that cannot exist, so `$HOME/.docker` is not read either; `DOCKER_AUTH_CONFIG`
-is removed) and the image carries no credentials. Putting registry credentials inside a container that has the Docker
+config (its `DOCKER_CONFIG` is an empty directory whalenurse creates for itself, so `$HOME/.docker` is not read either;
+`DOCKER_AUTH_CONFIG` is removed) and the image carries no credentials. Putting registry credentials inside a container that has the Docker
 socket is a trade-off to make deliberately, so it is not on by default. It is on the post-v1 list.
 
 ## Supply chain

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"syscall"
@@ -192,7 +193,9 @@ func runCmd(args []string) error {
 		log.Warn("DRY RUN: decisions are logged, no container is changed")
 	}
 	opts.Actor = actor
-	opts.Compose, opts.ComposeActor, opts.ComposeNote = composeFor(ctx, cfg, log)
+	var removeConfigDir func()
+	opts.Compose, opts.ComposeActor, opts.ComposeNote, removeConfigDir = composeFor(ctx, cfg, log)
+	defer removeConfigDir()
 	var pinger *notify.Pinger
 	opts.NotifyStatus = func() notify.Status {
 		st := nt.Status()
@@ -287,22 +290,34 @@ func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus, ledger no
 // composeFor finds the compose binary (plan §3.4: WHALENURSE_COMPOSE_BIN, then the host plugin mounted read-only, then
 // the bundled copy) and builds the compose Reader and Actor. With none, rungs 2 and 3 are disabled by the version gate
 // and the note says why. In dry-run mode the Actor is a no-op; the Reader still runs the drift guard, which only reads.
-func composeFor(ctx context.Context, cfg config.Global, log *slog.Logger) (compose.Reader, compose.Actor, string) {
+// The commands get an empty directory of their own as DOCKER_CONFIG, next to the control socket (writable in both
+// deployments: /run is a tmpfs in the examples, the runtime directory under systemd) or else in the temp directory; the
+// returned func removes it.
+func composeFor(ctx context.Context, cfg config.Global, log *slog.Logger) (compose.Reader, compose.Actor, string, func()) {
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	bin, notes, err := compose.Resolve(rctx, compose.Lookup{Env: cfg.ComposeBin})
 	if err != nil {
 		log.Warn("no usable docker compose binary", "error", err.Error())
-		return nil, nil, err.Error()
+		return nil, nil, err.Error(), func() {}
 	}
 	log.Info("compose binary", "path", bin.Path, "source", string(bin.Source), "version", bin.VersionString(), "skipped", strings.Join(notes, "; "))
-	c := compose.New(*bin, nil)
+	var sockDir string
+	if cfg.ControlSocket != "" {
+		sockDir = filepath.Dir(cfg.ControlSocket)
+	}
+	dir, remove, err := compose.PrivateConfigDir(sockDir, os.TempDir())
+	if err != nil {
+		log.Warn("no private DOCKER_CONFIG directory for compose; compose before v5.6.0 then cannot dry-run and the drift guard uses config --hash",
+			"error", err.Error(), "docker_config", compose.NoDockerConfig)
+	}
+	c := compose.New(*bin, compose.ExecRunner{ConfigDir: dir})
 	if cfg.DryRun {
 		return c, compose.DryRun{Would: func(verb string, p compose.Project) {
 			log.Info("dry-run: would run compose", "verb", verb, "project", p.Name, "service", p.Service)
-		}}, ""
+		}}, "", remove
 	}
-	return c, c, ""
+	return c, c, "", remove
 }
 
 func healthCmd(args []string) error {

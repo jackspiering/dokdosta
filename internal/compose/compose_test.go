@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -234,7 +235,7 @@ func TestRollbackCommandsAreExactAndQuoted(t *testing.T) {
 
 func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
 	env := ChildEnv([]string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "COMPOSE_PROJECT_NAME=evil", "COMPOSE_FILE=/x", "COMPOSE_PROFILES=a",
-		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "DOCKER_AUTH_CONFIG={}", "WHALENURSE_NOTIFY_URLS=secret://", "NO_COLOR=0"})
+		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "DOCKER_AUTH_CONFIG={}", "WHALENURSE_NOTIFY_URLS=secret://", "NO_COLOR=0"}, "")
 	got := strings.Join(env, "\n")
 	for _, bad := range []string{"COMPOSE_", "DOCKER_CONTEXT", "/elsewhere", "DOCKER_AUTH_CONFIG", "WHALENURSE_", "NO_COLOR=0"} {
 		if strings.Contains(got, bad) {
@@ -249,26 +250,63 @@ func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
 }
 
 // HOME is passed through, so DOCKER_CONFIG must be set, not only removed: unset, the Docker CLI reads $HOME/.docker
-// (under the example systemd unit that is /var/lib/whalenurse/.docker). The path must read as "no config file": it
-// must not exist and no one may be able to create it.
+// (under the example systemd unit that is /var/lib/whalenurse/.docker).
 func TestChildEnvNeverLetsComposeReadAConfigDirectory(t *testing.T) {
-	for _, env := range [][]string{{"HOME=/h"}, {"HOME=/h", "DOCKER_CONFIG=/h/.docker"}} {
-		var n int
-		for _, kv := range ChildEnv(env) {
-			if strings.HasPrefix(kv, "DOCKER_CONFIG=") {
-				n++
+	for _, tc := range []struct {
+		env       []string
+		dir, want string
+	}{
+		{[]string{"HOME=/h"}, "/run/whalenurse-docker-config-1", "/run/whalenurse-docker-config-1"},
+		{[]string{"HOME=/h", "DOCKER_CONFIG=/h/.docker"}, "/run/whalenurse-docker-config-1", "/run/whalenurse-docker-config-1"},
+		{[]string{"HOME=/h", "DOCKER_CONFIG=/h/.docker"}, "", NoDockerConfig},
+	} {
+		var got []string
+		for _, kv := range ChildEnv(tc.env, tc.dir) {
+			if v, ok := strings.CutPrefix(kv, "DOCKER_CONFIG="); ok {
+				got = append(got, v)
 			}
 		}
-		if n != 1 {
-			t.Errorf("%v: %d DOCKER_CONFIG entries", env, n)
+		if len(got) != 1 || got[0] != tc.want {
+			t.Errorf("%v, %q: DOCKER_CONFIG %v, want %s", tc.env, tc.dir, got, tc.want)
 		}
 	}
+	// The last resort reads as "no config file": it does not exist and no one can create it.
 	if _, err := os.Stat(NoDockerConfig); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("%s: %v", NoDockerConfig, err)
 	}
 	if err := os.Mkdir(NoDockerConfig, 0o700); err == nil {
 		_ = os.Remove(NoDockerConfig)
 		t.Fatalf("%s could be created", NoDockerConfig)
+	}
+}
+
+func TestPrivateConfigDirIsFreshEmptyAndPrivate(t *testing.T) {
+	parent := t.TempDir()
+	dir, remove, err := PrivateConfigDir("", filepath.Join(parent, "missing"), parent)
+	if err != nil || filepath.Dir(dir) != parent {
+		t.Fatal(dir, err)
+	}
+	fi, err := os.Stat(dir)
+	if err != nil || !fi.IsDir() || fi.Mode().Perm() != 0o700 {
+		t.Fatal(fi, err)
+	}
+	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+		t.Fatal(ents)
+	}
+	other, removeOther, err := PrivateConfigDir(parent)
+	if err != nil || other == dir {
+		t.Fatal(other, err)
+	}
+	removeOther()
+	if err := os.MkdirAll(filepath.Join(dir, "buildx", "instances"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	remove()
+	if _, err := os.Stat(dir); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if _, _, err := PrivateConfigDir(filepath.Join(parent, "missing")); err == nil {
+		t.Fatal("created in a missing parent")
 	}
 }
 
