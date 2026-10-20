@@ -43,9 +43,7 @@ docker compose logs -f whalenurse
 Within a minute whalenurse restarts bop, then recreates it, then repairs the sidecar behind it. The dashboard is at
 http://localhost:8484. `docker compose down -v` cleans up.
 
-> Until the first release, build the image yourself: `docker build -t whalenurse:dev ../..` and add
-> `WHALENURSE_IMAGE=whalenurse:dev` to `.env`. If the compose plugin isn't at `/usr/libexec/docker/cli-plugins/docker-compose`,
-> set `COMPOSE_PLUGIN` in `.env`.
+> If the compose plugin isn't at `/usr/libexec/docker/cli-plugins/docker-compose`, set `COMPOSE_PLUGIN` in `.env`.
 
 ## Use it
 
@@ -79,10 +77,6 @@ Every setting is in [docs/configuration.md](docs/configuration.md) and every lab
 [Security](docs/security.md) · [Troubleshooting](docs/troubleshooting.md) · [Upgrading](docs/upgrading.md) ·
 [Verifying a release](docs/verifying-releases.md) · [Changelog](CHANGELOG.md) · [Contributing](CONTRIBUTING.md) ·
 [Design notes](docs/PLAN.md)
-
-## Status
-
-Not released yet. v0.1.0 follows a few days of dry-run on a real host ([the release gate](docs/releasing.md#the-release-gate)).
 
 ## License
 
