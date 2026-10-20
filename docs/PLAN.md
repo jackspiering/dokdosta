@@ -663,8 +663,10 @@ internal/config/     env + label parsing
 - **From M2a** the integration tests run on Engine 29.x with compose v5.6.0 on both stores, installed the way the `image-drift` job installs them (the runner's Engine 28.0.4 has no `image inspect --platform`, and its compose 2.38.2 prints `null` for the dry-run oracle). M2a does not drive compose: it uses compose only to set up test stacks, so the other two versions add nothing there.
 - **From M2b** the full compose matrix applies, because whalenurse then runs compose itself and the oracle's output and the config hash are what the matrix pins:
 - **v5.6.0**, the version M0 ran on;
-- **the latest release**, floating. It is v5.6.0 today, so the two jobs coincide until a newer release;
+- **the latest release**, floating. It is v5.6.0 today, so the two jobs coincide until a newer release. While they coincide, the latest legs' shards stop early and stay green (maintainer decision, 20 Oct 2026: they would repeat the pinned leg exactly); the `scope` job of `ci.yml` resolves the release (`scripts/ci/compose-latest.sh`), and a failed lookup runs the legs in full;
 - **v5.2.0**, the only release with compose bug #13878. v5.3.0 (2 Jul 2026) contains the fix, and v5.2.0 (23 Jun) is the only release before the fix (29 Jun). It exercises recreate-on-every-`up` for sidecars, config-hash and dry-run output across versions, and the version-skew check (§3.6).
+
+**Documentation-only pull requests (maintainer decision, 20 Oct 2026).** A pull request whose every changed file is Markdown (`*.md`) or under `docs/` (`scripts/ci/changes.sh`; any doubt counts as code) runs only the build, vet and unit-test job, whose tests check the documentation; the other required checks pass as skipped (the six `integration` legs and the two `image-drift` legs pass explicitly, and only if the `scope` job succeeded). Pushes to `main` always run everything. The image under test is built once per run (the `image` job) and loaded by the integration shards and the demo.
 
 ## 7. Milestones
 
