@@ -10,6 +10,10 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-20
+
+A fix to how whalenurse starts compose.
+
 ### Fixed
 
 - **The compose child could read `$HOME/.docker`.** whalenurse removed `DOCKER_CONFIG` from the environment of the compose
@@ -90,6 +94,7 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0
 [0.1.0-rc.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0-rc.1
