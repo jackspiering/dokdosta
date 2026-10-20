@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/store"
 )
 
 // M2b: rung 2 through compose, the drift guard, the version gate and the dependents step, against a fake Docker and a fake
@@ -577,6 +579,99 @@ func TestDependentIncidentClosesAndTheNextParentRecreateRepairsItAgain(t *testin
 		t.Fatalf("%v", h.rec.Types())
 	}
 	_ = dep
+}
+
+// restartWithStore stands for a restart of whalenurse on the same store (and the compose fake of the test).
+func (h *cfH) restartWithStore(st *store.Store) {
+	h.t.Helper()
+	with := h.withStore(st, "boot-A")
+	h.start(func(o *Options) {
+		o.Compose, o.ComposeActor, o.Stat = h.cf, h.cf, okStat
+		with(o)
+	})
+}
+
+// Compose writes an empty depends_on label on a service recreated with `up --no-deps` (create.go builds it from the services
+// in scope), which is how whalenurse recreates a dependent. The parent of a dependent that is not opted in is then found
+// only through what whalenurse learned, so the second parent recreate (here, after a restart of whalenurse) must still
+// repair it. Found on a real host: before, the second repair never happened and nothing said so.
+func TestDependentIsRepairedAgainAfterComposeEmptiedItsDependsOnLabel(t *testing.T) {
+	st := openStore(t)
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.restartWithStore(st)
+	_, dep := h.pair()
+	h.set(dep.ID, func(c *docker.Container) { delete(c.Labels, config.LabelEnable) }) // a sidecar with no opt-in of its own
+	var newParent docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) {
+			c.NetworkMode = "container:" + newParent.ID
+			c.Labels = maps.Clone(c.Labels)
+			delete(c.Labels, compose.LabelDependsOn) // what `up --no-deps` leaves
+		})
+		return nil
+	}
+	h.tick()
+	h.advance(time.Minute) // the dependent is looked at, and its parent is learned from the label
+	for round := 1; round <= 2; round++ {
+		if round == 2 {
+			h.restartWithStore(st)
+			h.tick()
+		}
+		before := h.current("p", "dep").ID
+		newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+		h.event(newParent, "create", "")
+		h.event(newParent, "start", "")
+		h.advance(3 * time.Minute)
+		got := h.current("p", "dep")
+		if got.ID == before || got.NetworkMode != "container:"+newParent.ID {
+			t.Fatalf("round %d: the dependent was not recreated against the new parent: %+v (verbs %s)", round, got, h.verbs())
+		}
+		if round == 1 && got.Labels[compose.LabelDependsOn] != "" {
+			t.Fatal("the fake should have emptied the label")
+		}
+		h.advance(12 * time.Minute)
+	}
+	if h.count(engine.Suspended) != 0 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+}
+
+// What is learned about a dependent's parents: the label replaces, a live container: reference adds and never shrinks.
+func TestLearnedParentsFollowTheLabelAndOnlyGrowFromLiveReferences(t *testing.T) {
+	st := openStore(t)
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.restartWithStore(st)
+	parent := h.svc(hexID("c1"), "p", "parent")
+	other := h.svc(hexID("c2"), "p", "other")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "other:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) {
+		c.NetworkMode = "container:" + parent.ID
+		delete(c.Labels, config.LabelEnable)
+	})
+	_ = other
+	k := key("p", "dep")
+	h.tick()
+	h.advance(time.Minute)
+	if got := strings.Join(h.d.knownParents(k), ","); got != "other" {
+		t.Fatalf("from the label: %q", got)
+	}
+	h.set(dep.ID, func(c *docker.Container) { c.Labels = maps.Clone(c.Labels); delete(c.Labels, compose.LabelDependsOn) })
+	h.advance(time.Minute)
+	// an empty label forgets nothing, and the live container: reference adds the network parent
+	if got := strings.Join(h.d.knownParents(k), ","); got != "other,parent" {
+		t.Fatalf("an empty label must not shrink what was learned, and a live reference adds its service: %q", got)
+	}
+	if v, _ := st.Meta(metaParents + k); v != "other,parent" {
+		t.Fatalf("not persisted: %q", v)
+	}
+	h.set(dep.ID, func(c *docker.Container) {
+		c.Labels = maps.Clone(c.Labels)
+		c.Labels[compose.LabelDependsOn] = "parent:service_started:true"
+	})
+	h.advance(time.Minute)
+	if got := strings.Join(h.d.knownParents(k), ","); got != "parent" {
+		t.Fatalf("a non-empty label is authoritative: %q", got)
+	}
 }
 
 // The parent is still being healed: the stale dependent waits (its recreate would fail to join a parent that is not

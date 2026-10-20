@@ -54,6 +54,10 @@ The first public release.
 - A `network_mode: service:<parent>` sidecar without an opt-in of its own: the incident the dependents step opens for it now
   closes once it has recovered. Before, it stayed open, so the next time the parent was recreated the sidecar went straight to
   SUSPENDED and was not repaired. Found in the release-gate rehearsal on a real host.
+- A sidecar recreated by whalenurse is repaired again the next time its parent is recreated. Compose writes an empty
+  `depends_on` label on a service recreated with `up --no-deps`, and that label was how whalenurse found the parent of a sidecar
+  whose parent was gone; from the second repair on, the sidecar was skipped without a word. whalenurse now remembers the
+  services a sidecar depends on (in its store).
 
 ### Requirements
 

@@ -118,6 +118,8 @@ type Daemon struct {
 	depGate     map[string]depGate           // one dependent at a time per parent, keyed by the raw container: reference
 	beatEvery   time.Duration                // how often last_seen is written during an action (heartbeatEvery; tests shorten it)
 	view        *view                        // what the API reads
+	parents     map[string][]string          // per key: the services a dependent depends on, learned (also kept in the store's meta; parents.go)
+	parentsGone map[string]time.Time         // keys that were not in the last list, and since when
 	moves       map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
 
 	eventsUp   atomic.Bool
@@ -145,8 +147,9 @@ func New(o Options) *Daemon {
 		beatEvery: heartbeatEvery,
 		pend:      map[string]pending{},
 		warned:    map[string]bool{},
-		depGate:   map[string]depGate{},
-		view:      newView(),
+		parents:   map[string][]string{}, parentsGone: map[string]time.Time{},
+		depGate: map[string]depGate{},
+		view:    newView(),
 	}
 	d.eng.Restore(o.Snapshot)
 	d.started = o.Clock.Now()
@@ -577,6 +580,7 @@ func (d *Daemon) poll(ctx context.Context) {
 		return
 	}
 	now := d.clk.Now()
+	d.forgetParents(now)
 	for _, s := range d.idx.all {
 		cfg, _ := config.ParseLabels(s.Labels, d.cfg.Mode)
 		if !cfg.OptedIn && (cfg.Disabled || !hasRef(s)) {
@@ -617,6 +621,9 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	sum, ok := d.idx.byKey[key]
 	t := engine.Target{Key: key}
 	if !ok {
+		if _, known := d.parentsGone[key]; !known {
+			d.parentsGone[key] = d.clk.Now()
+		}
 		d.eng.Forget(t)
 		d.view.forget(key)
 		return
@@ -636,6 +643,7 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	t.ID, t.Name = c.ID, c.Name
 	now := d.clk.Now()
 
+	d.learnParents(key, c)
 	cfg, warns := config.ParseLabels(c.Labels, d.cfg.Mode)
 	for _, w := range warns {
 		if id := key + "|" + w; !d.warned[id] {

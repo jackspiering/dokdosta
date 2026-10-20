@@ -186,7 +186,7 @@ func (d *Daemon) staleParentRefusal(c docker.Container) string {
 	if project == "" {
 		return ""
 	}
-	for _, dep := range dependsOn(c.Labels[compose.LabelDependsOn]) {
+	for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
 		for _, s := range d.idx.all {
 			if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || s.Labels[docker.LabelOneOff] == "True" {
 				continue
@@ -247,7 +247,7 @@ func (d *Daemon) parentOptedIn(c docker.Container) bool {
 			continue
 		}
 		project := c.Labels[docker.LabelProject]
-		for _, dep := range dependsOn(c.Labels[compose.LabelDependsOn]) {
+		for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
 			for _, s := range d.idx.all {
 				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || s.Labels[docker.LabelOneOff] == "True" {
 					continue

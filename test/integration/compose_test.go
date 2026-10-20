@@ -447,6 +447,45 @@ func TestStaleDependentOfAnExternallyRecreatedParentIsRecreatedNotRestarted(t *t
 	}
 }
 
+// Compose writes the depends_on label of the services it has in scope, so a sidecar that whalenurse recreated with
+// `up --no-deps` comes back with an empty one, and its parent could no longer be found by it. The second time the parent is
+// recreated the sidecar must still be repaired (plan v3.11). The sidecar is not opted in itself.
+func TestSidecarIsRepairedAgainWhenTheParentIsRecreatedASecondTime(t *testing.T) {
+	g, cli := requireIntegration(t)
+	s := sidecarStack(t, g, cli, "deptwice", false, reachHealthcheck, "", false)
+	waitFor(t, "dep to be healthy", 60*time.Second, func() bool { return s.container("dep").Health == "healthy" })
+	if s.container("dep").Labels[compose.LabelDependsOn] == "" {
+		t.Fatal("setup: a sidecar made by a full up should carry a depends_on label")
+	}
+	r := startDaemonOpts(t, g, cli, daemonOpts{})
+	for round := 1; round <= 2; round++ {
+		oldParent, oldDep := s.container("parent"), s.container("dep")
+		s.compose("up", "-d", "--force-recreate", "--no-deps", "--pull", "never", "parent")
+		if s.container("parent").ID == oldParent.ID {
+			t.Fatalf("round %d: setup: the parent was not recreated", round)
+		}
+		waitFor(t, fmt.Sprintf("round %d: the sidecar to be recreated", round), 150*time.Second, func() bool { return s.container("dep").ID != oldDep.ID })
+		waitFor(t, fmt.Sprintf("round %d: the sidecar to be healthy", round), 60*time.Second, func() bool {
+			d := s.container("dep")
+			return d.Running && d.Health == "healthy"
+		})
+		parent, dep := s.container("parent"), s.container("dep")
+		if docker.ContainerRef(dep.NetworkMode) != parent.ID || !reaches(g, dep.ID) {
+			t.Fatalf("round %d: %+v", round, dep)
+		}
+		if got := dep.Labels[compose.LabelDependsOn]; got != "" {
+			// the positive control: this is what makes the second round meaningful
+			t.Fatalf("round %d: compose kept the depends_on label (%q) of a service recreated with --no-deps; the premise of plan v3.11 no longer holds", round, got)
+		}
+		waitFor(t, fmt.Sprintf("round %d: the sidecar's incident to close", round), 60*time.Second, func() bool {
+			return countFor(r.Rec, engine.Recovered, s.key("dep")) >= round
+		})
+	}
+	if countFor(r.Rec, engine.Suspended, s.key("dep")) != 0 {
+		t.Fatal("the sidecar was SUSPENDED")
+	}
+}
+
 // A parent restarted through the API keeps its ID, and its sidecar keeps the old namespace: it is restarted too, not
 // recreated. The sidecar is not opted in itself (plan v3.6).
 func TestDependentIsRestartedAfterItsParentIsRestarted(t *testing.T) {
