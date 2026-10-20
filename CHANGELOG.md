@@ -49,6 +49,12 @@ The first public release.
   [security](docs/security.md), [troubleshooting](docs/troubleshooting.md), [deployment](docs/deployment.md) (container and
   systemd), [upgrading](docs/upgrading.md); examples in [examples/](examples/).
 
+### Fixed
+
+- A `network_mode: service:<parent>` sidecar without an opt-in of its own: the incident the dependents step opens for it now
+  closes once it has recovered. Before, it stayed open, so the next time the parent was recreated the sidecar went straight to
+  SUSPENDED and was not repaired. Found in the release-gate rehearsal on a real host.
+
 ### Requirements
 
 - Docker Engine 25 or later for rung 1 (restart). Rungs 2 and 3 and the drift guard need Engine 28.1 or later and Docker

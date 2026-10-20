@@ -156,6 +156,21 @@ demo's race and its 0700 directory). The final push only changes documentation a
 checks.
 
 
+## Found by the release-gate rehearsal (20 Oct 2026)
+
+Run on the maintainer's host (Engine 29.9.1, compose 5.6.0, image store containerd): whalenurse live over a stack with `bop`, a
+`network_mode: service:bop` sidecar with no opt-in, and a private ntfy; a dry-run pass, then live, then a reboot.
+
+- **Passed:** the dry-run decisions and `[dry-run]` messages; the live ladder (restart, recreate, the sidecar recreated as a stale
+  dependent); the ntfy messages; a deliberate `docker stop` left alone; a host reboot (new boot id, restore window, nothing
+  healed, nothing notified, all containers back).
+- **Bug, fixed:** the incident the dependents step opens for a sidecar that is not opted in never closed. `rules.Classify` skips
+  a non-opted-in container unless the decision is a dependents-step action, and a healthy sidecar's decision is "OK", so the
+  skip kept it from `engine.Evaluate` and so from `recovering()`. The next parent recreate then found the sidecar's incident
+  "rung 2 done" and suspended it without repairing it. The fix: `rules.Input.IncidentOpen`; a decision that needs no action
+  passes while the incident is open. The test (`TestDependentIncidentClosesAndTheNextParentRecreateRepairsItAgain`) failed
+  before the fix. It is not a plan rule change: plan §3.5 already says the dependents step repairs a sidecar every time.
+
 ## Not verified
 
 - **The signing and attestation steps have never run.** They need the OIDC token of the publish job, which only a `v*` tag

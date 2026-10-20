@@ -644,8 +644,9 @@ func (d *Daemon) process(ctx context.Context, key string) {
 		}
 	}
 
+	incidentOpen, _ := d.eng.IncidentOpen(key)
 	in := rules.Input{
-		Now: now, C: c, Cfg: cfg,
+		Now: now, C: c, Cfg: cfg, IncidentOpen: incidentOpen,
 		DependentOfOptedIn: !cfg.OptedIn && !cfg.Disabled && d.parentOptedIn(c),
 		Self:               d.o.SelfID != "" && c.ID == d.o.SelfID,
 		Parents:            d.parentsOf(ctx, c),
