@@ -16,7 +16,7 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 below for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-## [0.1.0] - YYYY-MM-DD
+## [0.1.0] - 2026-10-20
 
 The first public release.
 
