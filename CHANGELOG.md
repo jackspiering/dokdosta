@@ -10,6 +10,16 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The compose child could read `$HOME/.docker`.** whalenurse removed `DOCKER_CONFIG` from the environment of the compose
+  commands it runs, but kept `HOME`, and with `DOCKER_CONFIG` unset the Docker CLI reads `$HOME/.docker/config.json`. Under
+  the example systemd unit that is `/var/lib/whalenurse/.docker`: a `config.json` there would have given compose registry
+  credentials and a `currentContext` pointing at another daemon. Every compose command now runs with
+  `DOCKER_CONFIG=/proc/whalenurse-no-docker-config`, a directory that cannot exist, so no Docker config is ever read.
+  `DOCKER_AUTH_CONFIG` (credentials in the environment, read by recent Docker CLIs) is removed too. The container image was
+  not affected in practice (its home is empty and the root filesystem read-only).
+
 ## [0.1.0] - 2026-10-20
 
 The first public release.

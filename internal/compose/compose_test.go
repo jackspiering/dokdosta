@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
 	"strings"
@@ -233,17 +234,41 @@ func TestRollbackCommandsAreExactAndQuoted(t *testing.T) {
 
 func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
 	env := ChildEnv([]string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "COMPOSE_PROJECT_NAME=evil", "COMPOSE_FILE=/x", "COMPOSE_PROFILES=a",
-		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "WHALENURSE_NOTIFY_URLS=secret://", "NO_COLOR=0"})
+		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "DOCKER_AUTH_CONFIG={}", "WHALENURSE_NOTIFY_URLS=secret://", "NO_COLOR=0"})
 	got := strings.Join(env, "\n")
-	for _, bad := range []string{"COMPOSE_", "DOCKER_CONTEXT", "DOCKER_CONFIG", "WHALENURSE_", "NO_COLOR=0"} {
+	for _, bad := range []string{"COMPOSE_", "DOCKER_CONTEXT", "/elsewhere", "DOCKER_AUTH_CONFIG", "WHALENURSE_", "NO_COLOR=0"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("%s survived: %v", bad, env)
 		}
 	}
-	for _, keep := range []string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "NO_COLOR=1"} {
+	for _, keep := range []string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "DOCKER_CONFIG=" + NoDockerConfig, "NO_COLOR=1"} {
 		if !slices.Contains(env, keep) {
 			t.Errorf("%s missing: %v", keep, env)
 		}
+	}
+}
+
+// HOME is passed through, so DOCKER_CONFIG must be set, not only removed: unset, the Docker CLI reads $HOME/.docker
+// (under the example systemd unit that is /var/lib/whalenurse/.docker). The path must read as "no config file": it
+// must not exist and no one may be able to create it.
+func TestChildEnvNeverLetsComposeReadAConfigDirectory(t *testing.T) {
+	for _, env := range [][]string{{"HOME=/h"}, {"HOME=/h", "DOCKER_CONFIG=/h/.docker"}} {
+		var n int
+		for _, kv := range ChildEnv(env) {
+			if strings.HasPrefix(kv, "DOCKER_CONFIG=") {
+				n++
+			}
+		}
+		if n != 1 {
+			t.Errorf("%v: %d DOCKER_CONFIG entries", env, n)
+		}
+	}
+	if _, err := os.Stat(NoDockerConfig); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("%s: %v", NoDockerConfig, err)
+	}
+	if err := os.Mkdir(NoDockerConfig, 0o700); err == nil {
+		_ = os.Remove(NoDockerConfig)
+		t.Fatalf("%s could be created", NoDockerConfig)
 	}
 }
 
