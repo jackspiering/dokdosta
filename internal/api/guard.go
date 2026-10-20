@@ -3,6 +3,7 @@ package api
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"sync"
@@ -88,20 +89,62 @@ func newAttemptLimiter(now func() time.Time) *attemptLimiter {
 }
 
 // clientKey is the client's IP (an IPv6 address is reduced to its /64, which a client controls entirely). It is the
-// connection's peer address: behind a reverse proxy that is the proxy, so all clients share one budget there.
-func clientKey(r *http.Request) string {
+// connection's peer address, unless the peer is one of the trusted proxies (WHALENURSE_HTTP_TRUSTED_PROXIES): then it is
+// the client that proxy reports in X-Forwarded-For (see forwardedClient). Without that option, behind a reverse proxy
+// all clients share the proxy's one budget.
+func clientKey(r *http.Request, trusted []netip.Prefix) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	ip := net.ParseIP(host)
-	if ip == nil {
+	peer, err := netip.ParseAddr(host)
+	if err != nil {
 		return host
 	}
-	if v4 := ip.To4(); v4 != nil {
-		return v4.String()
+	peer = peer.Unmap()
+	if inAny(trusted, peer) {
+		if c, ok := forwardedClient(r.Header.Values("X-Forwarded-For"), trusted); ok {
+			peer = c
+		}
 	}
-	return ip.Mask(net.CIDRMask(64, 128)).String() + "/64"
+	if peer.Is4() {
+		return peer.String()
+	}
+	return netip.PrefixFrom(peer, 64).Masked().Addr().String() + "/64"
+}
+
+// forwardedClient is the client address in the X-Forwarded-For lines that a trusted proxy sent: the right-most entry that is
+// not itself a trusted proxy. Every proxy appends the address it received the request from, so the entries on the right were
+// written by our own infrastructure, and the walk stops at the first one that is not: whatever a client put further left
+// is never read. An entry that is not an address, or a header with nothing but trusted proxies in it, gives no answer;
+// the caller then keeps the proxy's own address, the strict choice (the proxies' shared budget).
+func forwardedClient(lines []string, trusted []netip.Prefix) (netip.Addr, bool) {
+	var entries []string
+	for _, l := range lines {
+		for _, e := range strings.Split(l, ",") {
+			entries = append(entries, strings.TrimSpace(e))
+		}
+	}
+	for i := len(entries) - 1; i >= 0; i-- {
+		a, err := netip.ParseAddr(entries[i])
+		if err != nil {
+			return netip.Addr{}, false
+		}
+		a = a.Unmap()
+		if !inAny(trusted, a) {
+			return a, true
+		}
+	}
+	return netip.Addr{}, false
+}
+
+func inAny(prefixes []netip.Prefix, a netip.Addr) bool {
+	for _, p := range prefixes {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // blocked reports whether the client is blocked, and for how long.

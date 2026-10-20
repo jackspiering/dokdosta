@@ -1,0 +1,30 @@
+# The smallest working whalenurse: it restarts opted-in containers that go unhealthy or stop, and nothing else. No
+# recreate: that needs two more mounts (examples/full/compose.yaml); until you add them whalenurse says why rung 2 is skipped
+# and SUSPENDS a container that a restart did not fix.
+#
+# Setup (the image runs as uid 65532, which cannot read the Docker socket, so it needs the socket's group):
+#   echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" > .env
+#   docker compose up -d
+#   docker compose exec whalenurse /whalenurse status
+#
+# Opt a container in with a label, in ITS compose file:
+#   labels:
+#     whalenurse.enable: "true"
+# Add WHALENURSE_DRY_RUN: "true" below first if you want to watch its decisions (docker compose logs -f) before it acts.
+# Mounting the Docker socket is root-equivalent on the host: docs/security.md.
+services:
+  whalenurse:
+    image: ghcr.io/jackspiering/whalenurse:latest
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    group_add: ["${DOCKER_GID:?run: echo DOCKER_GID=$(stat -c %g /var/run/docker.sock) > .env}"]
+    tmpfs:
+      - /run:uid=65532,gid=65532,mode=0700 # the control socket (the image's healthcheck and the CLI) lives here
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - whalenurse-data:/data # the state store; the image makes /data writable for the nonroot user
+
+volumes:
+  whalenurse-data: {}

@@ -252,3 +252,31 @@ func TestHTTPAllowedHosts(t *testing.T) {
 		t.Fatal("empty by default")
 	}
 }
+
+func TestHTTPTrustedProxies(t *testing.T) {
+	g, warns, err := FromEnv([]string{"WHALENURSE_HTTP_TRUSTED_PROXIES=172.18.0.0/16, 10.0.0.5\tfd00::/8 192.168.1.77/24 ::ffff:10.1.2.0/120"})
+	if err != nil || len(warns) != 0 {
+		t.Fatalf("%v %v", warns, err)
+	}
+	var got []string
+	for _, p := range g.HTTPTrustedProxies {
+		got = append(got, p.String())
+	}
+	// A single address is a host prefix; host bits of a CIDR are masked; an IPv4-mapped prefix becomes the IPv4 range.
+	if want := "172.18.0.0/16 10.0.0.5/32 fd00::/8 192.168.1.0/24 10.1.2.0/24"; strings.Join(got, " ") != want {
+		t.Fatalf("got %v, want %s", got, want)
+	}
+	if g, _, _ = FromEnv(nil); len(g.HTTPTrustedProxies) != 0 {
+		t.Fatal("empty by default")
+	}
+	for _, bad := range []string{"nginx", "10.0.0.0/33", "0.0.0.0/0", "::/0", "10.0.0.0/8 proxy.example", "::ffff:0.0.0.0/95"} {
+		if _, _, err := FromEnv([]string{"WHALENURSE_HTTP_TRUSTED_PROXIES=" + bad}); err == nil {
+			t.Errorf("%q was accepted", bad)
+		}
+	}
+	// Whoever sets this also sets a token; an error about the list never mentions the token.
+	_, _, err = FromEnv([]string{"WHALENURSE_HTTP_TOKEN=tok-secret-value", "WHALENURSE_HTTP_TRUSTED_PROXIES=0.0.0.0/0"})
+	if err == nil || strings.Contains(err.Error(), "tok-secret-value") || !strings.Contains(err.Error(), "trusts every address") {
+		t.Fatalf("%v", err)
+	}
+}

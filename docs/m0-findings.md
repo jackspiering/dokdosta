@@ -2,7 +2,7 @@
 
 Milestone M0 of [PLAN.md](PLAN.md): diagnose and verify, no app code. Run on 17 Oct 2026 on a throwaway Debian VM (snapshotted before the session) with the maintainer's permission to run `test/m0/run.sh` there. Raw output lives in `captures/` (gitignored); only scrubbed excerpts and fixtures are committed.
 
-**Summary.** The design holds. §3.5 is confirmed. §3.3 and §3.6 each need small corrections, listed in [Verdicts](#verdicts). Nothing contradicts a rule badly enough to stop work, but three items change what M1/M2 must implement:
+**Summary.** The design holds. §3.5 is confirmed. §3.3 and §3.6 each need small corrections, listed in [Verdicts](#4-verdicts). Nothing contradicts a rule badly enough to stop work, but three items change what M1/M2 must implement:
 
 1. A failed *restart-policy* restart emits **no event at all** and **keeps the previous exit code** (1, not 126–128); only `State.Error` marks it (§3.3).
 2. A `network_mode` dependent whose parent was *recreated* must be **recreated, never API-restarted**: the restart fails and turns a running-but-disconnected container into an exited one (§3.5).

@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.27.2 AS build
+FROM golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8 AS build
 WORKDIR /src
 ENV CGO_ENABLED=0
 COPY go.mod go.sum ./
@@ -34,7 +34,7 @@ RUN mkdir -p /out/data
 # socket's group at run time with `group_add` (see docs/running.md).
 # To recreate, mount the host's compose plugin read-only at /host/docker-compose (used first) and the stacks root
 # read-only at the identical host path; without the plugin the bundled copy above is used.
-FROM gcr.io/distroless/static:nonroot
+FROM gcr.io/distroless/static:nonroot@sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3
 COPY --from=build /out/whalenurse /whalenurse
 COPY --from=build --chmod=0755 /out/docker-compose /usr/libexec/whalenurse/docker-compose
 COPY --from=build --chown=65532:65532 /out/data /data

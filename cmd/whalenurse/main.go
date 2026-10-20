@@ -214,7 +214,7 @@ func runCmd(args []string) error {
 
 	svc := daemon.NewAPI(d, evlog, history, hub, red.Redact)
 	tcpHandler, sockHandler := handlers(d, api.Options{
-		Service: svc, Token: cfg.HTTPToken, AllowedHosts: cfg.HTTPAllowedHosts, Web: web.Handler(svc),
+		Service: svc, Token: cfg.HTTPToken, AllowedHosts: cfg.HTTPAllowedHosts, TrustedProxies: cfg.HTTPTrustedProxies, Web: web.Handler(svc),
 		OnBlock: func(client string, d time.Duration) {
 			log.Warn("dashboard: too many wrong tokens; the client is blocked", "client", client, "for", d.String())
 		},
@@ -234,7 +234,7 @@ func runCmd(args []string) error {
 		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute}
 		srv.RegisterOnShutdown(hub.Close)
 		go func() {
-			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics, "extra_hosts_without_token", len(cfg.HTTPAllowedHosts))
+			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics, "extra_hosts_without_token", len(cfg.HTTPAllowedHosts), "trusted_proxies", len(cfg.HTTPTrustedProxies))
 			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Error("http listener failed", "addr", cfg.HTTPAddr, "error", err.Error())
 			}
@@ -609,6 +609,9 @@ func httpWarnings(cfg config.Global) []string {
 	}
 	if cfg.HTTPToken != "" && len(cfg.HTTPAllowedHosts) > 0 {
 		w = append(w, "WHALENURSE_HTTP_ALLOWED_HOSTS is ignored while WHALENURSE_HTTP_TOKEN is set")
+	}
+	if cfg.HTTPToken == "" && len(cfg.HTTPTrustedProxies) > 0 {
+		w = append(w, "WHALENURSE_HTTP_TRUSTED_PROXIES is ignored without WHALENURSE_HTTP_TOKEN (it only changes the wrong-token limit)")
 	}
 	if cfg.HTTPToken != "" && len(cfg.HTTPToken) < 16 {
 		w = append(w, "WHALENURSE_HTTP_TOKEN is shorter than 16 characters; use a long random token")

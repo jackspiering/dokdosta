@@ -1,0 +1,40 @@
+# Labels
+
+whalenurse reads these labels from the containers it watches. In a compose file they go under the service:
+
+```yaml
+services:
+  web:
+    labels:
+      whalenurse.enable: "true"
+```
+
+An invalid value falls back to the default and logs one warning for that container; it never opts a container in or out by
+accident.
+
+| Label | Values | Default | What it does |
+|---|---|---|---|
+| `whalenurse.enable` | `true`, `false` | — | `true` opts the container in (with `WHALENURSE_MODE=label`, the default, nothing is watched without it). `false` leaves the container alone entirely, **also as the sidecar of an opted-in parent** (see below). |
+| `whalenurse.actions` | `restart`, `recreate`, or `restart,recreate` | `restart,recreate` | The rungs of the ladder, in order. `restart` alone never recreates the container: after a failed restart it is SUSPENDED. `pull` is not accepted here; use `whalenurse.heal.pull`. |
+| `whalenurse.heal.pull` | `true`, `false` | `false` | Appends rung 3: after restart and recreate failed, pull a newer image and recreate from it. **Needs `recreate` in `whalenurse.actions`** (else one warning and the pull stays off). Never runs for a service with `pull_policy: never` or `build`. Cannot log in to a private registry. It is the only thing in whalenurse that fetches an image. |
+| `whalenurse.heal-exited` | `crashed`, `always`, `never` | `crashed` | What to do with a container that has *exited*. `crashed`: heal one that crashed (a non-zero exit other than 137/143, an OOM kill, a `die` nobody asked for); leave an intended exit (`restart: "no"`/`on-failure` with exit 0) and a stop by hand alone. `always`: heal any exited container, including one a host shutdown stopped and Docker's restart policy did not restore. `never`: notify only. |
+| `whalenurse.cooldown` | a positive duration | `WHALENURSE_COOLDOWN` | Overrides the base cooldown between rungs for this container (it still doubles per rung, capped at 5 minutes). |
+| `whalenurse.flap-limit` | a positive integer | `WHALENURSE_FLAP_LIMIT` | Overrides the flap limit for this container. |
+
+## Sidecars
+
+A container with `network_mode: service:<parent>` (or `container:<parent>`) breaks whenever its parent restarts or is
+recreated. For an **opted-in** parent, whalenurse repairs such sidecars after it has healed the parent, even if they carry
+no `whalenurse.enable` label, unless they are labelled `whalenurse.enable=false`. Only that repair needs no opt-in: a sidecar
+that is unhealthy or exited *on its own* is healed only if it is opted in itself. See the README for what "repair" does.
+
+## Labels whalenurse reads from compose
+
+The recreate rung uses the labels compose put on the container, not your current compose file: `com.docker.compose.project`,
+`.project.working_dir`, `.project.config_files`, `.project.environment_file`, `.service`, `.config-hash`, `.image` and
+`.version`. A container that compose did not make only gets the restart rung.
+
+## Per-container state, not labels
+
+Pausing and unsuspending are done with the CLI (`docker exec whalenurse /whalenurse pause <project>[/<service>] --for 2h`,
+`unsuspend`), not with labels; see the README.

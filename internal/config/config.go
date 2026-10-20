@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/netip"
 	"os"
 	"sort"
 	"strconv"
@@ -39,7 +40,10 @@ type Global struct {
 	// HTTPAllowedHosts are the Host names served besides localhost, 127.0.0.1 and [::1] when there is no token
 	// (WHALENURSE_HTTP_ALLOWED_HOSTS: a DNS rebinding defence). Ignored when a token is set.
 	HTTPAllowedHosts []string
-	ControlSocket    string // unix socket for /healthz and the CLI (pause, resume, unsuspend, status)
+	// HTTPTrustedProxies are the reverse proxies (WHALENURSE_HTTP_TRUSTED_PROXIES, CIDRs or single addresses) whose
+	// X-Forwarded-For the wrong-token limiter believes. Empty: the peer address is the client. Only matters with a token.
+	HTTPTrustedProxies []netip.Prefix
+	ControlSocket      string // unix socket for /healthz and the CLI (pause, resume, unsuspend, status)
 
 	RecoveryPeriod   time.Duration // an incident closes after this long recovered; a crash loop clears after it
 	FlapLimit        int           // more than this many incidents within FlapWindow suspends the container
@@ -196,6 +200,13 @@ func FromEnv(environ []string) (Global, []string, error) {
 	if v, ok := take("WHALENURSE_HTTP_ALLOWED_HOSTS"); ok {
 		g.HTTPAllowedHosts = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
 	}
+	if v, ok := take("WHALENURSE_HTTP_TRUSTED_PROXIES"); ok {
+		ps, err := ParseProxies(v)
+		if err != nil {
+			errs = append(errs, "WHALENURSE_HTTP_TRUSTED_PROXIES: "+err.Error())
+		}
+		g.HTTPTrustedProxies = ps
+	}
 	if v, ok := take("WHALENURSE_METRICS"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -283,4 +294,33 @@ func ParseDuration(v string) (time.Duration, error) {
 		return time.Duration(days)*24*time.Hour + tail, nil
 	}
 	return time.ParseDuration(v)
+}
+
+// ParseProxies parses a comma or space separated list of CIDRs or single addresses (a single address is a /32 or /128). It
+// refuses a prefix of length 0: every client would then be a trusted proxy and could write its own address.
+func ParseProxies(v string) ([]netip.Prefix, error) {
+	var out []netip.Prefix
+	for _, f := range strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' }) {
+		p, err := netip.ParsePrefix(f)
+		if err != nil {
+			a, aerr := netip.ParseAddr(f)
+			if aerr != nil {
+				return nil, fmt.Errorf("%q is not a CIDR such as 172.18.0.0/16 or an address", f)
+			}
+			p = netip.PrefixFrom(a.Unmap(), a.Unmap().BitLen())
+		}
+		if p.Addr().Is4In6() {
+			// ::ffff:10.0.0.0/104 is the IPv4 range 10.0.0.0/8, and requests are matched after unmapping.
+			a := p.Addr().Unmap()
+			if p.Bits() < 96 {
+				return nil, fmt.Errorf("%q: an IPv4-mapped prefix needs at least 96 bits", f)
+			}
+			p = netip.PrefixFrom(a, p.Bits()-96)
+		}
+		if p.Bits() == 0 {
+			return nil, fmt.Errorf("%q trusts every address, so any client could forge its own; list the proxy's network", f)
+		}
+		out = append(out, p.Masked())
+	}
+	return out, nil
 }
