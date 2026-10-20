@@ -10,6 +10,19 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The compose child could read `$HOME/.docker`.** whalenurse removed `DOCKER_CONFIG` from the environment of the compose
+  commands it runs, but kept `HOME`, and with `DOCKER_CONFIG` unset the Docker CLI reads `$HOME/.docker/config.json`. Under
+  the example systemd unit that is `/var/lib/whalenurse/.docker`: a `config.json` there would have given compose registry
+  credentials and a `currentContext` pointing at another daemon. Every compose command now runs with
+  `DOCKER_CONFIG` set to an empty directory whalenurse creates for itself at startup (mode 0700, next to the control socket,
+  else in the temp directory; removed at exit), so no Docker config is ever read. It has to be writable: compose v5.2.0 to
+  v5.5.x write buildx state there during the drift guard's dry-run. If no such directory can be created, a startup warning
+  says so and the drift guard of those versions uses `config --hash` instead of the dry-run.
+  `DOCKER_AUTH_CONFIG` (credentials in the environment, read by recent Docker CLIs) is removed too. The container image was
+  not affected in practice: nothing in it creates `/home/nonroot/.docker`.
+
 ## [0.1.0] - 2026-10-20
 
 The first public release.

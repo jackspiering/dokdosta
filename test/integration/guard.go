@@ -515,8 +515,11 @@ type ComposeRunner struct {
 	log   []string
 }
 
-// NewComposeRunner runs real compose behind the filter.
-func NewComposeRunner() *ComposeRunner { return &ComposeRunner{Inner: compose.ExecRunner{}} }
+// NewComposeRunner runs real compose behind the filter, with configDir (an empty directory, as whalenurse gives it) as its
+// DOCKER_CONFIG.
+func NewComposeRunner(configDir string) *ComposeRunner {
+	return &ComposeRunner{Inner: compose.ExecRunner{ConfigDir: configDir}}
+}
 
 func (r *ComposeRunner) Run(ctx context.Context, c compose.Command) (compose.Result, error) {
 	if filepath.Base(c.Bin) != "docker-compose" {

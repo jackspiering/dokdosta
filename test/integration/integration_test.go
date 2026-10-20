@@ -235,7 +235,7 @@ func startDaemonOpts(t *testing.T, g *Guard, cli *docker.Moby, o daemonOpts) *ru
 		o.Tweak(&cfg)
 	}
 	var actor docker.Actor = Actor{Reader: cli, Inner: cli}
-	runner := NewComposeRunner()
+	runner := NewComposeRunner(t.TempDir())
 	c := compose.New(*composeBin(t), runner)
 	var reader compose.Reader = c
 	var cactor compose.Actor = c
