@@ -72,8 +72,9 @@ label values outside `com.docker.compose.*` and `whalenurse.*`, host paths, host
 
 ## Releases
 
-Only the maintainer tags, from `main`: [docs/releasing.md](docs/releasing.md). Nothing in a pull request publishes anything; CI
-builds the same artifacts as a GoReleaser snapshot to prove they build.
+Only the maintainer decides to tag: by hand, or by telling an agent to make one specific tag, from `main`
+([docs/releasing.md](docs/releasing.md)). Contributors and agents never tag on their own. Nothing in a pull request publishes
+anything; CI builds the same artifacts as a GoReleaser snapshot to prove they build.
 
 ## Licence
 
