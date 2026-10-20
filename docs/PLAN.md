@@ -1,7 +1,46 @@
-# whalenurse — implementation plan v3.11
+# whalenurse — implementation plan v3.12
 
-Status: **v3.11, written on 20 Oct 2026 after the release-gate rehearsal and approved by the maintainer on 20 Oct 2026** (it is v3.10 plus the two fixes below: [m6-notes.md](m6-notes.md), "Found by the release-gate rehearsal"). **v3.10, written by the M6 build on 20 Oct 2026, was approved by the maintainer on 20 Oct 2026** with its four publish permissions, the trusted-proxy option as built, the deferral of private registries (R5, the first post-v1 item) and the `v0.1.0-rc.1` rehearsal before `v0.1.0` (it is v3.9 plus the release pipeline, the documentation set and the trusted-proxy option below, with the post-v1 list; [m6-notes.md](m6-notes.md)). **v3.9 was approved by the maintainer on 19 Oct 2026** (the M5 review: it is v3.8 plus the M5 decisions below, [m5-notes.md](m5-notes.md), with the maintainer's six answers in items 11 to 16 and the screenshot review's fixes in items 17 and 18). v3.8 was approved by the maintainer on 19 Oct 2026 (the M4 review: it is v3.7 plus the M4 findings and decisions below, [m4-notes.md](m4-notes.md), with the maintainer's answers in items 11 to 15). v3.7 was approved by the maintainer on 19 Oct 2026 (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.10 (which was never approved; v3.11 contains it). Facts and versions are as of 20 Oct 2026 (16 Oct for the prior-art survey; the release tooling versions are in [m6-notes.md](m6-notes.md)).
+Status: **v3.12, written on 20 Oct 2026 to start milestone M7 (private registries, R5); awaiting the maintainer's approval.** It is v3.11 plus the compose child's Docker config fix (item 1) and the M7 design below; items 3, 4 and 7 hold the maintainer's answers of 20 Oct 2026. **v3.11, written on 20 Oct 2026 after the release-gate rehearsal and approved by the maintainer on 20 Oct 2026** (it is v3.10 plus the two fixes below: [m6-notes.md](m6-notes.md), "Found by the release-gate rehearsal"). **v3.10, written by the M6 build on 20 Oct 2026, was approved by the maintainer on 20 Oct 2026** with its four publish permissions, the trusted-proxy option as built, the deferral of private registries (R5, the first post-v1 item) and the `v0.1.0-rc.1` rehearsal before `v0.1.0` (it is v3.9 plus the release pipeline, the documentation set and the trusted-proxy option below, with the post-v1 list; [m6-notes.md](m6-notes.md)). **v3.9 was approved by the maintainer on 19 Oct 2026** (the M5 review: it is v3.8 plus the M5 decisions below, [m5-notes.md](m5-notes.md), with the maintainer's six answers in items 11 to 16 and the screenshot review's fixes in items 17 and 18). v3.8 was approved by the maintainer on 19 Oct 2026 (the M4 review: it is v3.7 plus the M4 findings and decisions below, [m4-notes.md](m4-notes.md), with the maintainer's answers in items 11 to 15). v3.7 was approved by the maintainer on 19 Oct 2026 (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.10 (which was never approved; v3.11 contains it). Facts and versions are as of 20 Oct 2026 (16 Oct for the prior-art survey; the release tooling versions are in [m6-notes.md](m6-notes.md)).
 Repo: `github.com/jackspiering/whalenurse` (Go module path, GHCR image and binary are all lowercase).
+
+**Changes in v3.12** (the M7 design, written before any M7 code; the maintainer chose R5 as the first post-v1 item, a plan first, and items 3, 4 and 7 on 20 Oct 2026):
+1. §3.4 (v3.6 item 1 amended), **the compose child never reads a Docker config.** v3.6 item 1 removed `DOCKER_CONFIG` from the compose child's environment but kept `HOME`. With `DOCKER_CONFIG` unset, the Docker CLI reads `$HOME/.docker` (docker/cli `config.Dir()`). Under the example systemd unit that is `/var/lib/whalenurse/.docker`, so a `config.json` there would have brought credentials and a `currentContext` pointing at another daemon. Confirmed with compose v5.6.0: a malformed `config.json` in that place is parsed. Recent docker/cli also reads credentials from `DOCKER_AUTH_CONFIG`, which was passed through. Now every compose child gets `DOCKER_CONFIG=/proc/whalenurse-no-docker-config` (`compose.NoDockerConfig`). Nothing can create an entry in `/proc`, so the CLI reads that as "no config file". A path under a regular file would give `ENOTDIR`, and the CLI warns about that on stderr on every command. `DOCKER_AUTH_CONFIG` is removed as well. This is a fix to v0.1.0 (pull request #28; CHANGELOG under Unreleased). The container image was not affected in practice: its home directory is empty and its root filesystem is read-only.
+2. §7 (new M7), §8, **R5 becomes milestone M7**, the first post-v1 milestone. The rest of §8 stays post-v1.
+3. §3.7, §4, **`WHALENURSE_REGISTRY_AUTH_DIR`** (the maintainer's name). It is the path of a directory holding `config.json`: a read-only mount in container mode, any directory under systemd. Empty, the default, keeps today's behaviour, with no credentials. **Only `pull --policy always <svc>` gets it**, as `DOCKER_CONFIG=<dir>`. Every other compose command (the oracle, `config --hash`, `config --format json`, `up`) keeps `NoDockerConfig`, and whalenurse's own Engine API calls never send credentials. The dry-run actor still never pulls.
+4. §3.7, **what the file may hold** (the maintainer's answer: only `auths`, else refuse):
+   - The top level of `config.json` may hold **only `auths`**. Any other key is a **startup error that names the key** (`currentContext`, `credsStore`, `credHelpers`, `proxies`, `features`, ...), never a value, because the pull command reads the whole file.
+   - Each entry of `auths` needs an inline credential: `auth` (base64 `user:password`, which must decode and contain a colon), `username` with `password`, or `identitytoken`.
+   - The image has no credential helpers, so `credsStore` and `credHelpers` could not work anyway.
+   - Each key of `auths` is a registry host (`ghcr.io`, `registry.example.lan:5000`; Docker Hub is `https://index.docker.io/v1/`).
+   - A `contexts` entry in the directory is refused.
+   - A missing or unreadable file, malformed JSON, or an empty `auths` is a startup error.
+   - The file is checked at startup and again before each pull, because compose reads the file itself on each pull. If the file has become invalid by then, the pull is an ordinary failed action whose reason names the problem (redacted).
+   - At startup whalenurse warns when the directory or the file is writable by its own process ("mount it read-only").
+5. §3.9, §3.12, **the credentials are secrets**, like the notification URLs:
+   - Never logged, and never in `status`, `/healthz`, the API, the pages or a notification.
+   - The redactor learns every `auth` value, its decoded password, every `password` and every `identitytoken`, so compose's error text cannot leak one.
+   - `config` never quotes the file's values in an error.
+   - `TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput` and `TestNoSecretReachesAnyPageEndpointOrStream` plant registry credentials.
+6. §3.7, **no new notification type.** A pull refused by the registry (401, `denied`) is an ordinary failed pull: `ActionResult`, then the giving-up message with compose's redacted reason. Troubleshooting says what to check.
+7. §3.11, **what is shown** (the maintainer's answer: registry hosts only). `status`, `/api/v1/status` (a new field, `pull_auth.registries`: a sorted list of hosts, empty when off) and the home page name the registry hosts in `auths`, never a user name or a secret. The API only gains a field; the golden changes.
+8. §3.9, `docs/security.md`, **the risk, written down.** The credentials sit in a container that holds the Docker socket. The socket is root on the host, so whoever controls whalenurse already controls the host; what is added is that the credentials can be read inside the container. The advice:
+   - a **read-only, pull-only token** scoped to the repositories needed (not a personal password and not your `~/.docker/config.json`);
+   - the file at mode `0400`/`0440`, owned by uid 65532 (container) or by the `whalenurse` user (systemd);
+   - the directory mounted `:ro`.
+9. §6, §7 M7, **the tests.**
+   - **Unit:** the validation table (each refused key, each bad entry, the `contexts` directory, a writable directory warns); the environment per command (only `Pull` gets the directory, and `NoDockerConfig` otherwise); the redactor with each credential form; the status and API field; the two secrets tests.
+   - **Integration** (CI, both image stores, the compose matrix): a second `registry:2` with htpasswd auth (`REGISTRY_AUTH=htpasswd`; the bcrypt file is written by the test with `golang.org/x/crypto/bcrypt`, because `registry:2` no longer ships `htpasswd`), as a `whalenurse-test-registry-*` project on `127.0.0.1:<port>`. The Guard also accepts `docker login` to that registry only, with a temporary `--config` directory that the test removes. Cases:
+     - **positive control:** without the variable, the pull rung fails on the authenticated registry with an auth error and the container ends SUSPENDED with the image unchanged;
+     - **with the directory** (mode `0555`, the file `0444`): the pull rung upgrades, and the directory tree is byte-identical afterwards (listing and sha256), so compose wrote nothing into it;
+     - a `config.json` with `credsStore` refuses to start;
+     - **once with the image:** the directory mounted `:ro`, uid 65532, the real deployment shape;
+     - no credential appears in the logs, `status` or the API of any of these runs.
+10. §6, the documentation and examples:
+    - `docs/configuration.md` (the variable), `docs/security.md` (item 8), `docs/deployment.md` (container and systemd), `docs/troubleshooting.md` (401 and `denied`, a refused key), `docs/running.md`;
+    - `examples/full` gets the mount and the variable, commented out;
+    - `CHANGELOG.md` under Unreleased.
+
+    A new feature is a new minor version (v0.2.0), so it goes through the release gate in [releasing.md](releasing.md); the tag stays the maintainer's.
 
 **Changes in v3.11** (from the release-gate rehearsal on a real host, 20 Oct 2026; evidence in [m6-notes.md](m6-notes.md)):
 1. §3.5, **a sidecar's repair incident closes.** The incident the dependents step opens for a dependent that is not opted in never recovered: `rules.Classify` skipped a healthy non-opted-in container before the engine saw it, so `recovering()` never ran, and the next parent recreate found the incident at "rung 2 done" and suspended the sidecar unrepaired. Now a decision that needs no action reaches the engine while the container has an open incident (`rules.Input.IncidentOpen`). No change of rule: §3.5 already said the dependents step repairs a sidecar every time.
@@ -137,7 +176,7 @@ Repo: `github.com/jackspiering/whalenurse` (Go module path, GHCR image and binar
 
 ## 0. Instructions for Claude Code
 
-- **One milestone at a time, in order:** H, M0, M1, M0b, M2a, M2b, M3 … M6. At the end of each milestone, stop and report:
+- **One milestone at a time, in order:** H, M0, M1, M0b, M2a, M2b, M3 … M6, then M7 (the first post-v1 milestone, v3.12). At the end of each milestone, stop and report:
   - what you built;
   - what you verified, and how;
   - what is still uncertain;
@@ -445,7 +484,12 @@ The notification ("upgraded during heal", from `TagMoved`) includes:
 
 `TagMoved` records that whalenurse moved a tag: the container, the time and the old and new IDs, in the store's meta, kept until the same reference is moved again. Other stacks sharing the tag will now see image drift, and when the drift guard blocks one of them, its message says which container moved the tag and when (only while the reference still resolves to what that pull produced). A dry run never pulls and records nothing.
 
-Limitation: the pull uses the compose child's environment (no `DOCKER_CONFIG`), so it cannot log in to a private registry (v3.8 item 15; a read-only `DOCKER_CONFIG` mount is an M6 candidate).
+Private registries (M7, v3.12 items 3 to 8). Without `WHALENURSE_REGISTRY_AUTH_DIR`, the pull runs with the compose child's environment, which reads no Docker config (`DOCKER_CONFIG=compose.NoDockerConfig`, v3.12 item 1), so a registry that needs a login refuses it (v3.8 item 15). With the variable set, **the pull command and only the pull command** runs with `DOCKER_CONFIG=<dir>`:
+- the directory's `config.json` may hold only `auths`, each entry with an inline `auth`, `username`+`password` or `identitytoken`;
+- any other key, or a `contexts` entry, is a startup error;
+- the file is checked again before each pull;
+- the credentials are secrets (the redactor knows them);
+- `status`, the API and the home page show only the registry hosts.
 
 ### 3.8 Guardrails
 - Opt-in label `whalenurse.enable=true`, or `WHALENURSE_MODE=all`.
@@ -561,6 +605,7 @@ Initial defaults; tune them after M0.
 | `WHALENURSE_HTTP_ALLOWED_HOSTS` | — (extra Host names served when there is **no token**, besides localhost, 127.0.0.1 and [::1]; comma or space separated; from M5) |
 | `WHALENURSE_HTTP_TRUSTED_PROXIES` | — (CIDRs or addresses, comma or space separated, of reverse proxies whose `X-Forwarded-For` the wrong-token limit believes; ignored without a token; `/0` refused; from M6) |
 | `WHALENURSE_HISTORY_RETENTION` | `30d` |
+| `WHALENURSE_REGISTRY_AUTH_DIR` | — (directory holding a `config.json` with inline `auths` only, mounted read-only; passed to the pull rung's `compose pull` as `DOCKER_CONFIG`, to no other command; holds secrets; from M7) |
 | `WHALENURSE_HEARTBEAT_URL` | — (uptime ping, secret; from M3) |
 | `WHALENURSE_HEARTBEAT_INTERVAL` | `5m` (from M3) |
 | `WHALENURSE_LOG_LEVEL` | `info` |
@@ -775,6 +820,16 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 - **Done when:** a GoReleaser snapshot builds in CI from every commit, the examples pass their checks, and the maintainer's steps in [releasing.md](releasing.md) are documented.
 - [maintainer] The release gate, the GitHub settings, the first tag, the announcement ([releasing.md](releasing.md)).
 
+### M7 — Private registries for the pull rung (R5; v3.12)
+- §3.7 private registries: `WHALENURSE_REGISTRY_AUTH_DIR`, the validation (only `auths`, inline credentials, checked at startup and before each pull), the pull-only `DOCKER_CONFIG`, the redactor, the registry hosts in `status`, the API and the home page (v3.12 items 3 to 8).
+- Prerequisite, done separately: the compose child never reads a Docker config (v3.12 item 1, pull request #28).
+- The docs and examples of v3.12 item 10.
+- **Done when:**
+  - the unit tests of v3.12 item 9 pass, including the two secrets tests with planted registry credentials;
+  - the integration tests against the htpasswd `registry:2` pass in CI on both image stores and the compose matrix: the positive control, the upgrade with the directory byte-identical afterwards, the refused `credsStore`, and the image run with the `:ro` mount;
+  - the documentation states the risk.
+- [maintainer] Review; whether and when to release it (v0.2.0, a new minor, so through the release gate in [releasing.md](releasing.md)); a check on a real host against a real private registry, if wanted.
+
 ## 8. Roadmap (post-v1)
 - **R1 — Multi-server hub:**
   - One autonomous agent per host, plus `whalenurse hub`, which pulls each agent's `/api/v1` over the tailnet with per-agent tokens and a `since` cursor.
@@ -782,7 +837,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
   - Rejected: a central controller driving remote Docker sockets.
 - **R2 — Dashboard controls:** unsuspend, pause/resume, heal now. Needs auth and CSRF protection; every action goes into the history.
 - **R3 — Hardening:** socket proxy, update rollback.
-- **R5 — Private registries for the pull rung:** an optional read-only `DOCKER_CONFIG` mount for the compose child (today it runs without `DOCKER_CONFIG`, v3.6 item 1). It reverses the environment scrubbing, puts registry credentials in a container that holds the Docker socket (document the risk), and needs an integration test against an authenticated `registry:2` (htpasswd) before it is trusted.
+- **R5 — Private registries for the pull rung:** now milestone **M7** (v3.12).
 - **R4 — Scheduled updates:**
   - Per-service schedule, `apply` or `notify` mode, drift guard first, dependents step, Updates page.
   - Revisit this against the Watchtower fork's feature set and the state of compose #13878 before building it.
