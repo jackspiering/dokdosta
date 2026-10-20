@@ -171,6 +171,25 @@ Run on the maintainer's host (Engine 29.9.1, compose 5.6.0, image store containe
   passes while the incident is open. The test (`TestDependentIncidentClosesAndTheNextParentRecreateRepairsItAgain`) failed
   before the fix. It is not a plan rule change: plan §3.5 already says the dependents step repairs a sidecar every time.
 
+### Second finding: compose empties the `depends_on` label (v3.11 item 2)
+
+After the first fix, a second break of bop recreated the parent but not the sidecar: no incident, no suspension, no message.
+The debug log said `skip: not opted in`. The sidecar had been recreated by whalenurse with `up -d --no-deps`, and its
+`com.docker.compose.depends_on` label was empty, so with the parent's ID gone nothing tied it to its parent.
+
+- **Compose, checked by hand** on `whalenurse-test-gate` (compose 5.6.0): `up -d --no-deps --force-recreate bop-sidecar` leaves
+  the label empty, `--force-recreate` without `--no-deps` writes `bop:service_started:false`, and `config-hash` is the same
+  in both (it already includes the resolved parent ID, which is why those services skip the hash check), so there is no
+  new false drift. Source (v5.6.0): `pkg/compose/create.go` builds the label from `service.DependsOn` (lines 282 to 285);
+  `--no-deps` narrows the project with `types.IgnoreDependencies` (`pkg/compose/up.go`).
+- **Fix:** `internal/daemon/parents.go`; the plan note is v3.11 item 2. One resolver for all four readers of the label; the
+  learned set is in the store's meta (`parents:<key>`), so it survives a restart. The unit test restarts whalenurse between two
+  repairs on the same store and fails (in round 2) without the fix; the integration test
+  `TestSidecarIsRepairedAgainWhenTheParentIsRecreatedASecondTime` recreates the parent twice against real compose and
+  asserts, as a positive control, that compose really emptied the label.
+- **Not done:** reading `network_mode` from the compose file as a fallback when the store is lost and a parent is recreated
+  before whalenurse has seen the live link. The gap is narrow; say if you want it.
+
 ## Not verified
 
 - **The signing and attestation steps have never run.** They need the OIDC token of the publish job, which only a `v*` tag

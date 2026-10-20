@@ -368,7 +368,7 @@ func (d *Daemon) sidecarsSharing(ctx context.Context, c docker.Container, ref st
 		if s.ID == c.ID || !hasRef(s) || s.Labels[docker.LabelProject] != c.Labels[docker.LabelProject] {
 			continue
 		}
-		if !docker.MatchesRef(c.ID, c.Name, docker.ContainerRef(s.NetworkMode)) && !slices.Contains(dependsOn(s.Labels[compose.LabelDependsOn]), c.Labels[docker.LabelService]) {
+		if !docker.MatchesRef(c.ID, c.Name, docker.ContainerRef(s.NetworkMode)) && !slices.Contains(d.parentServices(d.keyOf(s), s.Labels), c.Labels[docker.LabelService]) {
 			continue
 		}
 		dep, err := d.rd.Inspect(ctx, s.ID)
@@ -405,7 +405,7 @@ func (d *Daemon) dependentMayTakeMove(ctx context.Context, c docker.Container) b
 		return false
 	}
 	project := c.Labels[docker.LabelProject]
-	for _, dep := range dependsOn(c.Labels[compose.LabelDependsOn]) {
+	for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
 		for _, s := range d.idx.all {
 			if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || d.keyOf(s) != m.Key {
 				continue
