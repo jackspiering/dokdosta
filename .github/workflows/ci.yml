@@ -38,6 +38,8 @@ jobs:
           go build -trimpath -o whalenurse ./cmd/whalenurse
           file whalenurse
           ! ldd whalenurse
+      - name: The integration shards are every integration test, once (and the workflow's matrix is those shards)
+        run: scripts/ci/shard-integration.sh --check-ci .github/workflows/ci.yml
       - name: unit tests (no Docker is touched)
         env:
           CGO_ENABLED: "1" # -race needs cgo; the shipped binary is built with CGO_ENABLED=0 above
@@ -65,6 +67,8 @@ jobs:
         run: |
           scripts/release/release-notes.sh --self-test
           scripts/release/verify.sh --self-test
+      - name: Integration sharding self-test (the packing, the anchoring, the matrix check)
+        run: scripts/ci/shard-integration.sh --self-test
       - name: Dockerfile and Dockerfile.release ship the same compose and the same base images
         run: scripts/ci/check-dockerfiles.sh
 
@@ -186,10 +190,16 @@ jobs:
       - name: Run the demo
         run: test/demo/run.sh whalenurse-test/whalenurse:ci
 
-  integration:
-    name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, whalenurse-test-* projects only)
+  integration-shard:
+    # The six legs (2 image stores x 3 compose releases) each run the whole suite, split over three runners: the tests are
+    # real ladders against a real daemon and run one after another, so one runner per leg took ~14 minutes. A runner has
+    # one daemon, and a whalenurse watches every opted-in container on its daemon, so the split is across runners, never
+    # t.Parallel. scripts/ci/shard-integration.sh packs the tests (from `go test -list`, so none is forgotten) by their
+    # recorded durations; the go job checks that this matrix is 0/n .. n-1/n of one n and covers every test once.
+    # No `needs: [go]`: the unit tests and these shards start together (a red unit test cancels nothing, but costs only
+    # runner minutes, and the wall clock is not 90 s longer for it).
+    name: integration shard ${{ matrix.shard }} (${{ matrix.store }} store, compose ${{ matrix.compose }})
     runs-on: ubuntu-latest
-    needs: [go]
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -198,6 +208,7 @@ jobs:
         # v5.2.0 is the only release with compose bug #13878, v5.6.0 is the version M0 ran on, and "latest" floats (it is
         # v5.6.0 today, so those two legs coincide until a newer release). Plan section 6.
         compose: ["5.2.0", "5.6.0", latest]
+        shard: ["0/3", "1/3", "2/3"]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -217,14 +228,37 @@ jobs:
           docker info --format 'storage driver: {{.Driver}} / {{json .DriverStatus}}'
       - name: Build the image
         run: docker build -t whalenurse-test/whalenurse:ci --build-arg VERSION=ci .
-      - name: Run the integration tests
+      - name: Run shard ${{ matrix.shard }} of the integration tests
         env:
           WHALENURSE_INTEGRATION: "1"
           WHALENURSE_TEST_IMAGE: whalenurse-test/whalenurse:ci
-        run: go test -tags integration -count=1 -v -timeout 50m ./test/integration/
+          SHARD: ${{ matrix.shard }}
+        run: |
+          run=$(scripts/ci/shard-integration.sh "$SHARD")
+          echo "-run '$run'"
+          go test -tags integration -count=1 -v -timeout 50m -run "$run" ./test/integration/
       - name: Leftover test projects (should be empty)
         if: always()
         run: docker ps -a --filter label=com.docker.compose.project --format '{{.Names}} {{.Label "com.docker.compose.project"}}' | grep whalenurse-test- || true
+
+  integration:
+    # The six checks the repository ruleset requires, under their old names: each is green when every shard is. (A needs
+    # on a matrix is all of its jobs, so one red shard turns all six red; the red shard's own name says which leg.)
+    name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, whalenurse-test-* projects only)
+    runs-on: ubuntu-latest
+    needs: [integration-shard]
+    if: ${{ always() }}
+    strategy:
+      matrix:
+        store: [classic, containerd]
+        compose: ["5.2.0", "5.6.0", latest]
+    steps:
+      - name: Every shard passed
+        env:
+          RESULT: ${{ needs.integration-shard.result }}
+        run: |
+          echo "shards: $RESULT"
+          [ "$RESULT" = success ]
 
   image-drift:
     name: image-drift check (${{ matrix.store }} store)

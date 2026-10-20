@@ -56,7 +56,8 @@ Do not skip this because CI is green. CI runs on throwaway runners; what it cann
   pass, block force pushes and deletion. Required checks: `build, vet, unit tests`, `shellcheck and M0 self-tests`,
   `workflows (actionlint, actions pinned to SHAs)`, `GoReleaser snapshot (builds everything, publishes nothing)`,
   `examples (compose config, systemd-analyze verify)`, `demo (examples/demo, break bop and watch the ladder)`, the six
-  `integration (...)` legs and the two `image-drift check (...)` legs. (The check names are the jobs' `name:` in `ci.yml`.)
+  `integration (...)` legs and the two `image-drift check (...)` legs. (The check names are the jobs' `name:` in `ci.yml`. The six `integration (...)` checks are aggregate jobs that wait for the
+  three `integration shard ... ` jobs each leg is split into; require the aggregates, not the shards.)
 - **Tag protection for `v*`**: a tag ruleset (Settings, Rules, Rulesets, target: tags, pattern `v*`) that restricts who can create
   them to you, and blocks updates and deletions. A release tag is the trigger of the only workflow that publishes; whoever can
   push one can publish.
