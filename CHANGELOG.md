@@ -18,7 +18,7 @@ workflow refuses an undated section.
   credentials and a `currentContext` pointing at another daemon. Every compose command now runs with
   `DOCKER_CONFIG=/proc/whalenurse-no-docker-config`, a directory that cannot exist, so no Docker config is ever read.
   `DOCKER_AUTH_CONFIG` (credentials in the environment, read by recent Docker CLIs) is removed too. The container image was
-  not affected in practice (its home is empty and the root filesystem read-only).
+  not affected in practice: nothing in it creates `/home/nonroot/.docker`.
 
 ## [0.1.0] - 2026-10-20
 
