@@ -10,12 +10,6 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
-## [0.1.0-rc.1] - 2026-10-20
-
-The first release candidate of 0.1.0, published to rehearse the release pipeline (signing, SBOMs, provenance, the image push and
-`scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
-below for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
-
 ## [0.1.0] - 2026-10-20
 
 The first public release.
@@ -77,6 +71,12 @@ The first public release.
 - No write endpoints on the network: `pause`, `resume` and `unsuspend` are CLI-only.
 - The dashboard has been checked in headless Chromium, not on a real phone.
 
+## [0.1.0-rc.1] - 2026-10-20
+
+The first release candidate of 0.1.0, published to rehearse the release pipeline (signing, SBOMs, provenance, the image push and
+`scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
+above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
+
 [Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.0...HEAD
-[0.1.0-rc.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0-rc.1
 [0.1.0]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0
+[0.1.0-rc.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0-rc.1

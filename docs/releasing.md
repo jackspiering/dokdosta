@@ -1,8 +1,10 @@
 # Releasing
 
-How a release is made, and the steps that only the maintainer can do (marked **[maintainer]**: GitHub settings and anything on
-the real Docker host). Nothing here is done by the build agents or by CI on pull requests: **only a `v*` tag pushed by the
-maintainer publishes anything.**
+How a release is made, and the steps that only the maintainer can do (marked **[maintainer]**: GitHub settings, anything on
+the real Docker host, and the decision to tag). CI on pull requests and `main` publishes nothing: **only a `v*` tag publishes,
+and only the maintainer decides to make one.** The maintainer tags by hand ([Cutting a release](#cutting-a-release-maintainer)),
+or tells an agent (for example an autonomous Claude Code session) to make one specific tag, which it then makes the same way.
+An agent never tags on its own initiative, as a side effect of another task, or because the checks are green.
 
 ## What the pipeline does
 
@@ -36,8 +38,8 @@ Verify a release yourself: [verifying-releases.md](verifying-releases.md).
 
 ## The release gate
 
-**No `v0.1.0` tag until whalenurse has run for a few days in dry-run on a real host, and then live on a few test containers.**
-**[maintainer]**
+**No new minor or major version is tagged until it has run for a few days in dry-run on a real host, and then live on a few
+test containers** (v0.1.0 went through this gate). **[maintainer]**
 
 1. Run the image built from `main` (`docker build -t whalenurse .`, or a snapshot) on your real host with
    `WHALENURSE_DRY_RUN=true` and notifications on. Read every `IncidentOpened`, `would restart` and `DriftBlocked` for a few days,
@@ -98,6 +100,11 @@ The first push creates `ghcr.io/jackspiering/whalenurse` as a **private** packag
 3. Tag the real release the same way (`v0.1.0`), push it, watch the workflow, run `make verify-release TAG=v0.1.0`, do the
    anonymous pull above.
 4. Announce.
+
+Steps 2 and 3 can be delegated: tell an agent which tag to make ("tag and push v0.1.1"). It makes that tag and no other, from
+`main`, only if CI is green on the head commit and the changelog section is dated, and it stops and reports instead of fixing
+anything on its own. The tag ruleset still decides who can push a `v*` tag, so the agent pushes with the maintainer's
+credentials.
 
 If the `publish` job fails after the image was pushed but before the release exists, the image tag is already on GHCR: delete
 that package version (Packages, Versions) before retrying, or cut the next tag. If it fails at the final "Verify what was
