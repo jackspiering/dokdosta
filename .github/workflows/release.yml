@@ -48,6 +48,10 @@ jobs:
         env:
           CGO_ENABLED: "1" # -race needs cgo; the shipped binary is built with CGO_ENABLED=0
         run: go vet ./... && go test -race -count=1 ./...
+      # Known vulnerabilities in the Go release and the modules that the code reaches (pinned; check-workflows.sh). It
+      # fails on a new advisory without any code change: bump Go (go.mod and both Dockerfiles) or the module it names.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - name: release script self-tests
         run: |
           scripts/release/release-notes.sh --self-test

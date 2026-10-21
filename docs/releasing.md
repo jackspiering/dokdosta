@@ -46,6 +46,13 @@ refuses an unpinned one). **Dependabot does not update either**: to move BuildKi
 (`docker buildx imagetools inspect moby/buildkit:vX.Y.Z`, the `Digest:` line), change both workflows in one pull request, and
 let `release-snapshot` build both platforms with it.
 
+**Go** is one release everywhere: `go.mod`'s `go` line (or its `toolchain` line, if it has one) is what `actions/setup-go` installs
+for the tests and the release binaries, and both Dockerfiles' `golang:X.Y.Z@sha256:...` must be that release
+(`scripts/ci/check-dockerfiles.sh`). A Dependabot pull request that bumps the `golang` image stays red until `go.mod` is
+bumped in it too. `govulncheck` (pinned, in the `go` job and the release `test` job) fails when the code reaches a known
+vulnerability in the Go release or a module, also on a pull request that changes nothing: bump Go (`go.mod`, then both
+Dockerfiles with the new index digest) or the module it names.
+
 Verify a release yourself: [verifying-releases.md](verifying-releases.md).
 
 ## The release gate

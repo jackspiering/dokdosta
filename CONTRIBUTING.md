@@ -5,8 +5,8 @@ your containers. This page is how the work is organised, and how to send a chang
 
 ## The design comes first
 
-[docs/PLAN.md](docs/PLAN.md) is the design (currently v3.10). It is built **one milestone at a time, in order** (H, M0, M1,
-M0b, M2a, M2b, M3, M4, M5, M6); after each, the author writes a report (what was built, how it was verified, what is
+[docs/PLAN.md](docs/PLAN.md) is the design (currently v3.12). It is built **one milestone at a time, in order** (H, M0, M1,
+M0b, M2a, M2b, M3, M4, M5, M6, then M7); after each, the author writes a report (what was built, how it was verified, what is
 uncertain, what the maintainer must do) and waits for review before the next. The per-milestone decisions, deviations and open
 questions are in `docs/m*-notes.md`, and the facts about Docker's behaviour that the rules rest on are in
 [docs/m0-findings.md](docs/m0-findings.md) and [docs/m0b-findings.md](docs/m0b-findings.md).

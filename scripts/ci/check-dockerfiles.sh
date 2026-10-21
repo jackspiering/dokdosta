@@ -3,17 +3,19 @@
 # published image) must ship the same image: the same bundled compose release and checksums, the same Go toolchain image for
 # the download stage and the same distroless base, each pinned by digest. Dependabot bumps both; this fails if only one moved.
 # A `# syntax=` directive names an image that BuildKit runs as the Dockerfile frontend, so it is either absent from both
-# files (BuildKit's built-in frontend) or the same in both and pinned by digest.
+# files (BuildKit's built-in frontend) or the same in both and pinned by digest. The golang image's tag is the Go of go.mod
+# (its `toolchain goX.Y.Z` line, else its `go X.Y.Z`): CI's image (Dockerfile compiles) and the release (setup-go reads go.mod)
+# must build with the same Go, so a Dependabot bump of the image stays red until go.mod moves with it.
 #   scripts/ci/check-dockerfiles.sh [dir]
 #   scripts/ci/check-dockerfiles.sh --self-test
-# The first argument is the directory with the two files (default: the repository root).
+# The first argument is the directory with the two files and go.mod (default: the repository root).
 set -euo pipefail
 
 check() {
   local dir a b fail va vb name image
   dir="${1:-.}"
   a="$dir/Dockerfile" b="$dir/Dockerfile.release"
-  [[ -f "$a" && -f "$b" ]] || { echo "check-dockerfiles: $a and $b are needed" >&2; return 2; }
+  [[ -f "$a" && -f "$b" && -f "$dir/go.mod" ]] || { echo "check-dockerfiles: $a, $b and $dir/go.mod are needed" >&2; return 2; }
   fail=0
 
   syntax() { # syntax <file>: the image of a "# syntax=" parser directive, or nothing
@@ -66,6 +68,20 @@ check() {
       echo "ok   FROM $va"
     fi
   done
+
+  local gover
+  gover=$(sed -n 's/^toolchain[[:space:]]*go\([0-9][^[:space:]]*\)[[:space:]]*$/\1/p' "$dir/go.mod" | head -n 1)
+  [[ -n "$gover" ]] || gover=$(sed -n 's/^go[[:space:]][[:space:]]*\([0-9][^[:space:]]*\)[[:space:]]*$/\1/p' "$dir/go.mod" | head -n 1)
+  va=$(base "$a" golang:)
+  if ! [[ "$gover" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "FAIL $dir/go.mod names no Go release like 1.27.2 (go or toolchain line): '${gover:-none}'"
+    fail=1
+  elif [[ "$va" != "golang:$gover@"* ]]; then
+    echo "FAIL FROM ${va:-golang:?} is not the Go of go.mod ($gover): bump go.mod and both Dockerfiles together"
+    fail=1
+  else
+    echo "ok   go.mod and the golang image are Go $gover"
+  fi
   return "$fail"
 }
 
@@ -86,6 +102,9 @@ FROM gcr.io/distroless/static:nonroot@sha256:516757106de35205efb70b91ba03f6f1298
     d=$(mktemp -d "$tmp/case.XXXX")
     printf '%s\n%s\n' "$4" "$body" | sed "${6:-}" >"$d/Dockerfile"
     printf '%s\n%s\n' "$5" "$body" | sed "${6:-}" | sed "${7:-}" >"$d/Dockerfile.release"
+    printf '%s\n' "${GOMOD:-module x
+
+go 1.27.2}" >"$d/go.mod"
     out=$("$here/check-dockerfiles.sh" "$d" 2>&1) && rc=0 || rc=$?
     if [[ $want == pass && $rc -eq 0 ]] || [[ $want == fail && $rc -ne 0 && "$out" == *"$needle"* ]]; then
       echo "ok   $what"
@@ -102,6 +121,12 @@ FROM gcr.io/distroless/static:nonroot@sha256:516757106de35205efb70b91ba03f6f1298
   t fail "two different pinned directives" "# syntax= differs" "$pinned" "${pinned%1}2"
   t fail "a compose version that differs" "ARG COMPOSE_VERSION differs" "" "" "" "/^ARG COMPOSE_VERSION/s/5.6.0/5.6.1/"
   t fail "an unpinned base image" "is not pinned by digest" "" "" "s/@sha256:5167[0-9a-f]*//"
+  GOMOD=$'module x\n\ngo 1.27.0\n\ntoolchain go1.27.2' t pass "the toolchain line wins over the go line" "" "" ""
+  GOMOD=$'module x\n\ngo 1.27.3' t fail "go.mod is a newer Go than the image" "is not the Go of go.mod (1.27.3)" "" ""
+  GOMOD=$'module x\n\ngo 1.27.2\n\ntoolchain go1.27.3' t fail "the toolchain is a newer Go than the image" "is not the Go of go.mod (1.27.3)" "" ""
+  t fail "both images bumped, go.mod not" "is not the Go of go.mod (1.27.2)" "" "" "s/golang:1.27.2@/golang:1.28.0@/"
+  GOMOD=$'module x\n\ngo 1.27' t fail "a go line without a patch release" "names no Go release" "" ""
+  GOMOD='module x' t fail "a go.mod without a go line" "names no Go release" "" ""
   if [[ $fail -ne 0 ]]; then echo "FAIL check-dockerfiles.sh self-test"; return 1; fi
   echo "ok   check-dockerfiles.sh self-test"
 }

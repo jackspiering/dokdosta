@@ -7,6 +7,8 @@
 #     GOMODCACHE and GOCACHE, and a tag run restores the caches main's CI saved; go build trusts GOCACHE's compiled packages,
 #     go mod verify does not look at them), every docker/setup-buildx-action step has `cache-binary: false`, and there is no
 #     actions/cache step and no type=gha build cache.
+#   - ci.yml and release.yml both run govulncheck at a pinned version (go run golang.org/x/vuln/cmd/govulncheck@vX.Y.Z), the
+#     same one: a release must not ship a Go or module vulnerability that the code reaches.
 #   - every docker/setup-buildx-action step, in every workflow, runs a BuildKit image pinned by digest
 #     (`driver-opts: image=moby/buildkit:vX.Y.Z@sha256:...`), the same one everywhere: without it the builder is the floating
 #     moby/buildkit:buildx-stable-1, which builds the image that is signed. Dependabot does not update it (docs/releasing.md).
@@ -79,6 +81,21 @@ check() { # check <workflow-dir>
     echo "FAIL $release:${n%%:*} uses the GitHub Actions build cache (type=gha)"
     fail=1
   fi
+  local vuln="" v wf
+  for wf in "$dir/ci.yml" "$release"; do
+    v=$(grep -Eo 'golang\.org/x/vuln/cmd/govulncheck@[^[:space:]]+' "$wf" 2>/dev/null | sort -u || true)
+    if ! [[ "$v" =~ ^golang\.org/x/vuln/cmd/govulncheck@v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      echo "FAIL $wf must run govulncheck at one pinned version (go run golang.org/x/vuln/cmd/govulncheck@vX.Y.Z); found: '${v//$'\n'/ }'"
+      fail=1
+    elif [[ -n "$vuln" && "$v" != "$vuln" ]]; then
+      echo "FAIL $wf runs ${v#*@} of govulncheck, the other workflow ${vuln#*@}"
+      fail=1
+    else
+      vuln="$v"
+      echo "ok   $wf runs ${v##*/}"
+    fi
+  done
+
   shopt -s nullglob
   local builder="" img
   for f in "$dir"/*.yml "$dir"/*.yaml; do
@@ -121,7 +138,7 @@ self_test() {
     local want=$1 what=$2 needle=$3 d out rc
     d=$(mktemp -d "$tmp/case.XXXX")
     cat >"$d/release.yml"
-    if [[ -n "${CI_YML:-}" ]]; then printf '%s\n' "$CI_YML" >"$d/ci.yml"; fi
+    printf '%s\n%s\n' "${CI_YML:-jobs:}" "$vuln_ci" >"$d/ci.yml"
     out=$("$here/check-workflows.sh" "$d" 2>&1) && rc=0 || rc=$?
     if [[ $want == pass && $rc -eq 0 ]] || [[ $want == fail && $rc -ne 0 && "$out" == *"$needle"* ]]; then
       echo "ok   $what"
@@ -129,6 +146,10 @@ self_test() {
       echo "FAIL $what (rc=$rc):"; printf '%s\n' "$out" | sed 's/^/       /'; fail=1
     fi
   }
+  # appended to every ci.yml fixture: a job that runs govulncheck
+  local vuln_ci='  vuln:
+    steps:
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...'
   # shellcheck disable=SC2016 # the fixtures are workflow text: ${{ ... }} is not shell
   local good='jobs:
   publish:
@@ -154,7 +175,9 @@ self_test() {
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
       - name: after
-        run: echo GORELEASER_CURRENT_TAG'
+        run: echo GORELEASER_CURRENT_TAG
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...'
 
   t pass "the release step names the tag" "" <<<"$good"
   t fail "the release step without GORELEASER_CURRENT_TAG" "must set GORELEASER_CURRENT_TAG" <<<"$(grep -v 'GORELEASER_CURRENT_TAG: ' <<<"$good")"
@@ -190,6 +213,10 @@ self_test() {
   CI_YML="${buildx_ci/v0.33.1/buildx-stable-1}" t fail "a floating BuildKit tag with a digest" "must set driver-opts" <<<"$good"
   t fail "setup-buildx-action without driver-opts" "must set driver-opts" <<<"$(grep -v 'driver-opts\|image=moby' <<<"$good")"
   t fail "an image= that is not under driver-opts" "must set driver-opts" <<<"$(grep -v 'driver-opts' <<<"$good")"
+  t fail "release.yml without govulncheck" "release.yml must run govulncheck" <<<"$(grep -v govulncheck <<<"$good")"
+  t fail "govulncheck@latest" "must run govulncheck at one pinned version" <<<"${good/govulncheck@v1.9.0/govulncheck@latest}"
+  vuln_ci="${vuln_ci/v1.9.0/v1.8.0}" t fail "the two workflows run different govulncheck versions" "the other workflow v1.8.0" <<<"$good"
+  vuln_ci='' t fail "ci.yml without govulncheck" "ci.yml must run govulncheck" <<<"$good"
   t fail "a checkout that keeps the credentials" "must have persist-credentials: false" <<<"$(grep -v 'persist-credentials' <<<"$good")"
   CI_YML='jobs:
   a:
