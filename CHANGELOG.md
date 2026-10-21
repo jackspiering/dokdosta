@@ -38,6 +38,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **`make verify-release` says why a check failed.** With `gh` installed but not logged in it reported a genuine release as
+  `NOT VERIFIED` with "rejected" lines; it now says that `gh` is not logged in (`gh auth login` or `GH_TOKEN`), and every failed
+  cosign or gh call shows the tool's own error. It prints the image digest it verified and checks the image's provenance
+  for that digest, and the by-hand `gh attestation verify` commands in the docs pin the release workflow (`--signer-workflow`).
 - **A final release tagged on the same commit as its `-rc` is released as itself.** The release workflow now tells
   GoReleaser the tag it is releasing; before, GoReleaser took the first tag on the commit, the `-rc`, and would have
   re-published the `-rc` image tag and failed to create the release.

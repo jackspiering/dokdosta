@@ -16,7 +16,11 @@ to lose: what you check is that the signature was made by *that workflow, for th
 
 You need [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) v3 or later (releases are signed with v3, which writes `.sigstore.json` bundles and stores image signatures as OCI referrers; an older cosign may not read them) and
 `sha256sum`; the [GitHub CLI](https://cli.github.com/) is optional, and without it the script says that the provenance check
-was skipped.
+was skipped. The provenance check needs `gh` **logged in** (`gh auth login`, or a token in `GH_TOKEN`; any account will do, it
+reads public attestations): with `gh` installed but not logged in, the script prints
+``FAIL gh is not logged in (run `gh auth login` or set GH_TOKEN): build provenance not checked`` and `NOT VERIFIED`. That is not a
+sign of tampering; log in and run it again. When a check fails, the last lines of the tool's own output are shown under the
+`FAIL` line, so a network error, a login problem and a bad signature can be told apart.
 
 ```
 git clone https://github.com/jackspiering/whalenurse && cd whalenurse
@@ -33,7 +37,9 @@ It downloads `checksums.txt` and its bundle, and checks, in this order, stopping
 2. **every file listed** in the signed checksums (downloaded, then `sha256sum --check --strict`: nothing is skipped, a missing
    file is an error).
 3. **the image's signature**, pinned to the same identity.
-4. **the build provenance** of both archives and the image (`gh attestation verify`), pinned to the release workflow.
+4. **the build provenance** of both archives and the image (`gh attestation verify`), pinned to the release workflow. The image
+   is checked by the digest cosign verified in step 3, and the script prints that digest
+   (`ok   ghcr.io/jackspiering/whalenurse:v0.1.0 is sha256:...`): pin it in your compose file (below).
 
 It prints `VERIFIED v0.1.0` and exits 0, or `NOT VERIFIED` and exits non-zero. Its own tests run in CI with stubbed tools, so the
 paths that must fail (a tampered archive, a bad signature) are exercised on every change. The release workflow runs the same
@@ -50,12 +56,14 @@ ISSUER=https://token.actions.githubusercontent.com
 cosign verify-blob --bundle checksums.txt.sigstore.json \
   --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER" checksums.txt
 sha256sum --check --ignore-missing checksums.txt          # the archives you downloaded
-gh attestation verify whalenurse_0.1.0_linux_amd64.tar.gz --repo jackspiering/whalenurse
+gh attestation verify whalenurse_0.1.0_linux_amd64.tar.gz --repo jackspiering/whalenurse \
+  --signer-workflow jackspiering/whalenurse/.github/workflows/release.yml
 
 # the image
 cosign verify ghcr.io/jackspiering/whalenurse:$TAG \
   --certificate-identity "$ID" --certificate-oidc-issuer "$ISSUER"
-gh attestation verify oci://ghcr.io/jackspiering/whalenurse:$TAG --repo jackspiering/whalenurse
+gh attestation verify oci://ghcr.io/jackspiering/whalenurse:$TAG --repo jackspiering/whalenurse \
+  --signer-workflow jackspiering/whalenurse/.github/workflows/release.yml
 ```
 
 A tag can be moved; a digest cannot. Resolve the digest you verified and run exactly that:
