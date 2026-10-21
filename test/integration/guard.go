@@ -301,6 +301,22 @@ func (g *Guard) Push(ctx context.Context, ref string) error {
 	return err
 }
 
+// DockerConfigPrefix is the only kind of directory the tests may hand to `docker --config`: one they made themselves.
+const DockerConfigPrefix = "whalenurse-test-docker-config-"
+
+// PushWith is Push with a docker config directory of the test's own, which holds the credentials of an authenticated
+// test registry (M7). Anything else as a config directory is refused: it could hold another registry's login.
+func (g *Guard) PushWith(ctx context.Context, ref, configDir string) error {
+	if err := requireRegistryRef(ref); err != nil {
+		return err
+	}
+	if filepath.Dir(configDir) != filepath.Clean(os.TempDir()) || !strings.HasPrefix(filepath.Base(configDir), DockerConfigPrefix) {
+		return refuse("docker config %q is not a %s* directory of the test", configDir, DockerConfigPrefix)
+	}
+	_, err := g.R.Run(ctx, "docker", "--config", configDir, "push", "-q", ref)
+	return err
+}
+
 // PullRegistry pulls a reference of the test registry.
 func (g *Guard) PullRegistry(ctx context.Context, ref string) error {
 	if err := requireRegistryRef(ref); err != nil {
@@ -513,6 +529,21 @@ type ComposeRunner struct {
 	Inner compose.Runner
 	mu    sync.Mutex
 	log   []string
+
+	// authDir is the one directory a `pull` may be given as DOCKER_CONFIG (WHALENURSE_REGISTRY_AUTH_DIR, M7); pullDirs
+	// records the ConfigDir of each pull, in order.
+	authDir  string
+	pullDirs []string
+}
+
+// AllowAuthDir lets `compose pull` (and nothing else) run with dir as its DOCKER_CONFIG.
+func (r *ComposeRunner) AllowAuthDir(dir string) { r.authDir = dir }
+
+// PullConfigDirs returns the ConfigDir each pull ran with ("" for the runner's own empty directory).
+func (r *ComposeRunner) PullConfigDirs() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.pullDirs...)
 }
 
 // NewComposeRunner runs real compose behind the filter, with configDir (an empty directory, as whalenurse gives it) as its
@@ -528,8 +559,15 @@ func (r *ComposeRunner) Run(ctx context.Context, c compose.Command) (compose.Res
 	if err := CheckComposeCommand(c.Args); err != nil {
 		return compose.Result{}, err
 	}
+	isPull := strings.Contains(strings.Join(c.Args, " "), " pull --policy always ")
+	if c.ConfigDir != "" && !(isPull && r.authDir != "" && c.ConfigDir == r.authDir) {
+		return compose.Result{}, refuse("compose %v with DOCKER_CONFIG %q: only a pull may use the credentials directory", c.Args, c.ConfigDir)
+	}
 	r.mu.Lock()
 	r.log = append(r.log, strings.Join(c.Args, " "))
+	if isPull {
+		r.pullDirs = append(r.pullDirs, c.ConfigDir)
+	}
 	r.mu.Unlock()
 	return r.Inner.Run(ctx, c)
 }

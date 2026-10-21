@@ -124,6 +124,13 @@ func runCmd(args []string) error {
 		log.Warn("config", "detail", w)
 	}
 
+	// The credentials of the pull rung (M7): checked first, like the rest of the configuration, so a bad file stops `run`
+	// before it touches Docker, instead of failing the first pull.
+	regAuth, err := loadRegistryAuth(cfg, log)
+	if err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -184,11 +191,6 @@ func runCmd(args []string) error {
 	}
 	bus.Subscribe(hub.Notify) // after the event log's own subscriber: the event is readable when the streams wake
 
-	// The credentials of the pull rung (M7): checked now, so a bad file stops `run` instead of failing the first pull.
-	regAuth, err := loadRegistryAuth(cfg, log)
-	if err != nil {
-		return err
-	}
 	nt, red := setupNotify(cfg, log, bus, ledger, regAuth.secrets())
 	defer nt.Shutdown(5 * time.Second) // the last message before a stop is often the one that matters
 

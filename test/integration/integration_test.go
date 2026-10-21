@@ -236,7 +236,8 @@ func startDaemonOpts(t *testing.T, g *Guard, cli *docker.Moby, o daemonOpts) *ru
 	}
 	var actor docker.Actor = Actor{Reader: cli, Inner: cli}
 	runner := NewComposeRunner(t.TempDir())
-	c := compose.New(*composeBin(t), runner)
+	runner.AllowAuthDir(cfg.RegistryAuthDir)
+	c := compose.New(*composeBin(t), runner).WithRegistryAuth(cfg.RegistryAuthDir)
 	var reader compose.Reader = c
 	var cactor compose.Actor = c
 	if o.WrapCompose != nil {
