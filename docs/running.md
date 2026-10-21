@@ -71,10 +71,7 @@ Every decision is a JSON log line on stderr with a `type` such as `IncidentOpene
 
 ## Docker socket access
 
-Mounting `docker.sock` is **root-equivalent on the host**. The image is `gcr.io/distroless/static:nonroot` (uid 65532, no shell), so it cannot open the socket by default and fails with `permission denied while trying to connect to the docker API`. Give it the socket's group:
-
-- container: `group_add: ["<gid>"]` where `<gid>` is `stat -c %g /var/run/docker.sock`; or
-- run as root with `user: "0"` if you accept that.
+Mounting `docker.sock` is **root-equivalent on the host**. The image is `gcr.io/distroless/static:nonroot` (uid 65532, no shell), so it cannot open the socket by default and fails with `permission denied while trying to connect to the docker API`. Give it the socket's group: `group_add: ["<gid>"]` where `<gid>` is `stat -c %g /var/run/docker.sock`. Do not run it as root instead: with the recommended `cap_drop: [ALL]`, uid 0 has no `CAP_DAC_OVERRIDE` and can write neither `/data` nor the `/run` tmpfs (both belong to uid 65532), so `whalenurse run` exits with "cannot open the state store".
 
 Run it with a read-only root filesystem. Writable paths: `/run` (a tmpfs for the control socket) and **`/data`, a volume for the state store**. The image creates `/data` owned by uid 65532 and declares it a volume, so a fresh named volume (`data:/data`) is writable by the nonroot user. A bind mount keeps the host directory's owner: `chown 65532:65532` it. `whalenurse run` (not dry-run) refuses to start if it cannot open the store.
 

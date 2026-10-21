@@ -26,6 +26,9 @@ workflow refuses an undated section.
 - **Docs: backing up the store.** [docs/upgrading.md](docs/upgrading.md#backing-up-and-restoring-the-store) now says to stop
   whalenurse before copying its SQLite database (a copy of a running one may not open), and gives the backup and restore
   commands for the container and systemd setups, including removing a newer version's `-wal`/`-shm` before a restore.
+- **Docs: no root alternative for the socket.** [docs/running.md](docs/running.md#docker-socket-access) offered `user: "0"`
+  instead of `group_add`, which cannot start with the documented hardening (`cap_drop: [ALL]`: root cannot write `/data` or the
+  `/run` tmpfs, both owned by uid 65532). `group_add` is now the only way given, and troubleshooting explains the failure.
 
 ## [0.1.1] - 2026-10-20
 
