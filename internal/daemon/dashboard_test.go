@@ -42,7 +42,7 @@ const (
 
 	// The pull rung's registry credentials (M7): the user, the password, an identity token and the "auth" value (base64 of
 	// user:password) of a WHALENURSE_REGISTRY_AUTH_DIR file. The registry host is shown on purpose.
-	secRegUser  = "reguser-SECRET-71122"
+	secRegUser  = "reguser-71122" // a user name is not a secret (it is often the image namespace), but status must not show it
 	secRegPass  = "regpass-SECRET-71123"
 	secRegToken = "regtoken-SECRET-71124"
 	regHost     = "registry.example.lan:5000"
@@ -51,7 +51,7 @@ const (
 var secRegAuth = base64.StdEncoding.EncodeToString([]byte(secRegUser + ":" + secRegPass))
 
 var allSecrets = []string{secLabelA, secLabelB, secEnv, secUserinfo, secPath, secQuery, secPing, secHTTP, secAttr,
-	secRegUser, secRegPass, secRegToken, secRegAuth}
+	secRegPass, secRegToken, secRegAuth}
 
 // registryAuthDir writes a credentials directory the way the docs say, and loads it the way main does.
 func registryAuthDir(t *testing.T) *compose.RegistryAuth {
@@ -249,6 +249,11 @@ func TestNoSecretReachesAnyPageEndpointOrStream(t *testing.T) {
 				t.Errorf("%s holds a whole URL", p)
 			}
 		}
+	}
+
+	// A user name is not redacted from messages (it is often the image namespace), but the status documents never carry one.
+	if strings.Contains(pages["/api/v1/status"], secRegUser) {
+		t.Error("/api/v1/status shows the registry user name")
 	}
 
 	// The positive controls: the checks above are not vacuous. The secrets were fed through real paths, the redactor

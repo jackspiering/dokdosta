@@ -33,9 +33,21 @@ func TestLoadRegistryAuthAcceptsInlineCredentials(t *testing.T) {
 		t.Errorf("hosts: %s", got)
 	}
 	all := strings.Join(a.Secrets, "\n")
-	for _, want := range []string{authB64("alice:s3cr3t-PASS"), "alice:s3cr3t-PASS", "s3cr3t-PASS", "bob-PASS-1234", "bob-USER", "idtok-SECRET-9876"} {
+	for _, want := range []string{authB64("alice:s3cr3t-PASS"), "alice:s3cr3t-PASS", "s3cr3t-PASS", "bob-PASS-1234", "idtok-SECRET-9876"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("secret %q not collected: %v", want, a.Secrets)
+		}
+	}
+}
+
+func TestLoadRegistryAuthDoesNotTreatUserNamesAsSecrets(t *testing.T) {
+	a, err := LoadRegistryAuth(writeAuthDir(t, `{"auths": {"ghcr.io": {"auth": "`+authB64("jackspiering:s3cr3t-PASS")+`"}, "r.lan": {"username": "bob-USER", "password": "bob-PASS-1234"}}}`, 0o444))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range a.Secrets {
+		if strings.Contains(s, "bob-USER") || s == "jackspiering" {
+			t.Errorf("a user name was collected as a secret: %q", s)
 		}
 	}
 }

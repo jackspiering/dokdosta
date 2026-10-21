@@ -35,7 +35,7 @@ host, and the maintainer has not confirmed one; they run in CI.
 - Tests: the loader (accepted forms, 13 refusals, no value in any error, the directory itself, the warning); only `Pull` gets
   the directory, and a file that went bad is a failed pull; the redactor; the two secrets tests (`cmd/whalenurse`,
   `internal/daemon`) plant the user, the password, the identity token and the `auth` value, each **mutation-checked** (without
-  the credentials in the redactor, the daemon test reports 36 leaks and the `cmd` test 4; with them, none); the harness guard
+  the credentials in the redactor, the daemon test reports 27 leaks and the `cmd` test 3; with them, none); the harness guard
   (`ComposeRunner` lets only a pull use a credentials directory, and only the registered one; `Guard.PushWith` takes only a
   `whalenurse-test-docker-config-*` directory under the temp directory); and the four integration tests below.
 - Integration tests (`test/integration/registry_auth_test.go`): `registry:2` with htpasswd auth, as a `whalenurse-test-registry-*`
@@ -48,18 +48,25 @@ host, and the maintainer has not confirmed one; they run in CI.
 
 ## Decisions and deviations
 
-1. **User names are redacted too** (plan item 5 lists `auth`, the decoded password, `password` and `identitytoken`). A user
-   name of 4 characters or more is added to the redactor, because compose's errors can echo it, and `status` must not show it. The
-   cost is that a user called `admin` masks the word `admin` in redacted text. Whole `user:password` is added as well.
+1. **User names are not redacted, and not shown.** The first version of this milestone also added the registry user name to the
+   redactor; that was wrong and was removed before merge. On GHCR and Docker Hub the login user is usually the image
+   namespace (`ghcr.io/<user>/app`), so masking it would turn every image reference, drift message and pasteable rollback
+   command into `ghcr.io/***/app`. The redactor learns the `auth` value, `user:password`, the password and the identity token.
+   `status`, `/api/v1/status` and the home page never show the user name (tests check this), but compose's own error text may
+   echo it, and that is let through. `TestRedactorLeavesImageReferencesOfTheRegistryUserAlone` is the regression test.
 2. **The environment of the compose child is built per command, not per runner**: `Command.ConfigDir` overrides the runner's
    private empty directory (#28) for one command. This keeps `ChildEnv` the one place that sets `DOCKER_CONFIG`.
 3. **The writability warning uses `access(2)`**, so it fires for the in-process integration tests and for a development run
    as root, and does not fire on a `:ro` mount (EROFS). It is a warning, never an error.
 4. **No warning for "credentials set but no container has `heal.pull`"**: the variable is cheap to leave set, and a container
    can opt in later.
-5. **The Compose-side `Guard` (integration harness) refuses a `ConfigDir` on anything but the registered pull**, so a test that
+5. **The harness logs in with a written config, not `docker login`.** Plan item 9 has the Guard accept `docker login` with a
+   temporary `--config` directory. `Guard.PushWith` instead takes a `whalenurse-test-docker-config-*` directory under the temp
+   directory into which the test has written the same `auths` entry, and runs `docker --config <dir> push`. No `login` verb is
+   allowed through the Guard at all.
+6. **The Compose-side `Guard` (integration harness) refuses a `ConfigDir` on anything but the registered pull**, so a test that
    hands credentials to the wrong command fails closed.
-6. **CI durations**: the four new integration tests are not in `scripts/ci/integration-durations.txt`, so they count as 30 s
+7. **CI durations**: the four new integration tests are not in `scripts/ci/integration-durations.txt`, so they count as 30 s
    each when the shards are packed. Measure them on the first CI run and add them.
 
 ## Uncertain

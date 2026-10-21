@@ -107,7 +107,7 @@ func TestSplitArgsAcceptsFlagsAfterThePositional(t *testing.T) {
 
 // The tokens sit where real ones do: in the user info, in the path and in a query value, and in the host of a Discord URL.
 var leakTokens = []string{"tok-USERINFO-81237", "tok-PATH-55120", "tok-QUERY-90421", "tok-DOWN-31337", "tok-PINGUUID-77777", "tok-HTTPTOKEN-66666",
-	"reg-USER-82001", "reg-PASS-82002", "reg-IDTOKEN-82003", regAuthValue}
+	"reg-PASS-82002", "reg-IDTOKEN-82003", regAuthValue}
 
 // The registry credentials of the pull rung (M7): the "auth" value is base64 of user:password.
 var regAuthValue = base64.StdEncoding.EncodeToString([]byte("reg-USER-82001:reg-PASS-82002"))
@@ -228,6 +228,9 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	for name, out := range map[string]string{"status text": text.String(), "status json": string(js), "socket status": sockStatus.Body.String()} {
 		if !strings.Contains(out, "registry.example.lan:5000") || !strings.Contains(out, "ghcr.io") {
 			t.Errorf("%s does not name the registries:\n%s", name, out)
+		}
+		if strings.Contains(out, "reg-USER-82001") {
+			t.Errorf("%s shows the registry user name:\n%s", name, out)
 		}
 	}
 	if !strings.Contains(logs.String(), "registry credentials for the pull rung") || !strings.Contains(logs.String(), "***") {

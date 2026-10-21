@@ -97,12 +97,13 @@ func LoadRegistryAuth(dir string) (*RegistryAuth, error) {
 			if err != nil {
 				return nil, fmt.Errorf("%s: the \"auth\" of %s %v", path, quoteKey(host), err)
 			}
+			// The user name is not a secret and is not redacted: on GHCR and Docker Hub it is usually the image namespace
+			// (ghcr.io/<user>/app), and masking it would break every image reference and rollback command shown.
 			secret(e.Auth)
 			secret(user + ":" + pass)
-			secret(user)
 			secret(pass)
 		} else if e.Username != "" && e.Password != "" {
-			secret(e.Username)
+			// the password is collected below
 		} else if e.IdentityToken == "" {
 			return nil, fmt.Errorf("%s: the entry of %s has no inline credential (want \"auth\", \"username\" with \"password\", or \"identitytoken\")", path, quoteKey(host))
 		}

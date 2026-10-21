@@ -110,3 +110,13 @@ func TestRedactorRemovesRegistryCredentials(t *testing.T) {
 		t.Errorf("ordinary text was mangled: %s", out)
 	}
 }
+
+// A registry user name is usually the image namespace (ghcr.io/<user>/app): it is not a secret, and masking it would break
+// the image references and the pasteable rollback commands that whalenurse shows.
+func TestRedactorLeavesImageReferencesOfTheRegistryUserAlone(t *testing.T) {
+	r := NewRedactorWith([]string{"YWxpY2U6cDQ1NXcwcmQ=", "p455w0rd"}, "ntfy://ntfy.example.com/topic-SECRET-1")
+	in := "docker image tag sha256:0123456789ab ghcr.io/jackspiering/app:1 && docker compose -p stack up -d --no-deps --pull never app"
+	if got := r.Redact(in); got != in {
+		t.Errorf("an image reference was changed:\n%s\n%s", in, got)
+	}
+}
