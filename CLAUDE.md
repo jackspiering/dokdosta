@@ -21,7 +21,7 @@ Commands:
 go vet ./... && go test -race ./...                      # unit tests; touch no Docker
 CGO_ENABLED=0 go build -trimpath -o whalenurse ./cmd/whalenurse
 shellcheck -x $(grep -rIl --exclude-dir=testdata -E '^#!.*(ba)?sh' scripts test; find scripts test -name '*.sh')
-make scripts-test   # self-tests: no Docker needed (the M0 ones, scripts/release/*.sh --self-test, check-dockerfiles.sh, check-pins.sh, scripts/ci/{shard-integration,changes,compose-latest}.sh --self-test)
+make scripts-test   # self-tests: no Docker needed (the M0 ones, scripts/release/*.sh --self-test, check-dockerfiles.sh, check-pins.sh, scripts/ci/{shard-integration,changes,compose-latest,check-workflows}.sh --self-test)
 actionlint .github/workflows/*.yml
 ```
 

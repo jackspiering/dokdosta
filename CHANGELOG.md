@@ -21,6 +21,12 @@ workflow refuses an undated section.
   secret. The risk (credentials in a container that holds the Docker socket) and the advice (a pull-only token, mode
   0440, a `:ro` mount) are in [docs/security.md](docs/security.md#private-registries).
 
+### Fixed
+
+- **A final release tagged on the same commit as its `-rc` is released as itself.** The release workflow now tells
+  GoReleaser the tag it is releasing; before, GoReleaser took the first tag on the commit, the `-rc`, and would have
+  re-published the `-rc` image tag and failed to create the release.
+
 ## [0.1.1] - 2026-10-20
 
 A fix to how whalenurse starts compose.
