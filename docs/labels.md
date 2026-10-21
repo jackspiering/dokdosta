@@ -9,8 +9,8 @@ services:
       whalenurse.enable: "true"
 ```
 
-A boolean label accepts `true`/`false`, `1`/`0`, `t`/`f`, `TRUE`/`FALSE` and `True`/`False` (Go's `strconv.ParseBool`),
-with surrounding spaces ignored. An invalid value falls back to the default and logs one warning for that container; it never opts a container in or out by
+A boolean label accepts `1`, `t`, `T`, `TRUE`, `true`, `True` and `0`, `f`, `F`, `FALSE`, `false`, `False` (Go's
+`strconv.ParseBool`), with surrounding spaces ignored. An invalid value falls back to the default and logs one warning for that container; it never opts a container in or out by
 accident.
 
 | Label | Values | Default | What it does |
