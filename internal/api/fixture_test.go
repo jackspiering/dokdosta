@@ -31,6 +31,7 @@ func (fixtureSource) Status() StatusDoc {
 		Notifications: NotificationsDoc{
 			Enabled: true, URLs: 2, Sent: 5, Failed: 1, UptimePing: &PingDoc{Sent: 12, IntervalSeconds: 300},
 		},
+		PullAuth:         PullAuthDoc{Registries: []string{"ghcr.io", "registry.example.lan:5000"}},
 		HistoryRetention: 30 * 24 * 3600,
 	}
 }

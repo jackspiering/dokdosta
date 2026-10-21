@@ -60,6 +60,10 @@ type Global struct {
 	NotifyRateLimit int           // messages per hour per URL; the second half of that budget is kept for the important ones
 	PingURL         string        // WHALENURSE_HEARTBEAT_URL: pinged while whalenurse is healthy (healthchecks.io, Uptime Kuma push)
 	PingInterval    time.Duration // WHALENURSE_HEARTBEAT_INTERVAL
+
+	// RegistryAuthDir is WHALENURSE_REGISTRY_AUTH_DIR (M7): a directory with a config.json of inline "auths", given to
+	// `compose pull` as DOCKER_CONFIG and to no other command. The path is not a secret; the file is.
+	RegistryAuthDir string
 }
 
 // DriftGuard is WHALENURSE_DRIFT_GUARD.
@@ -234,6 +238,9 @@ func FromEnv(environ []string) (Global, []string, error) {
 	}
 	if v, ok := take("WHALENURSE_HEARTBEAT_URL"); ok {
 		g.PingURL = v
+	}
+	if v, ok := take("WHALENURSE_REGISTRY_AUTH_DIR"); ok {
+		g.RegistryAuthDir = v
 	}
 	dur("WHALENURSE_NOTIFY_TIMEOUT", &g.NotifyTimeout, false)
 	dur("WHALENURSE_HEARTBEAT_INTERVAL", &g.PingInterval, false)

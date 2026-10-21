@@ -95,3 +95,18 @@ func TestRedactorLeavesShortPathWordsAlone(t *testing.T) {
 		t.Errorf("%q", got)
 	}
 }
+
+// The registry credentials of the pull rung are literal secrets, not URLs: each goes whole, and escaped.
+func TestRedactorRemovesRegistryCredentials(t *testing.T) {
+	r := NewRedactorWith([]string{"YWxpY2U6cDQ1NXcwcmQ=", "alice:p455w0rd", "p455 w0rd/x", "ab"}, "ntfy://ntfy.example.com/topic-SECRET-1")
+	in := "unauthorized: auth YWxpY2U6cDQ1NXcwcmQ= user:pass alice:p455w0rd q=p455+w0rd%2Fx p=p455%20w0rd%2Fx on topic-SECRET-1 ab"
+	out := r.Redact(in)
+	for _, s := range []string{"YWxpY2U6cDQ1NXcwcmQ=", "alice:p455w0rd", "p455+w0rd%2Fx", "p455%20w0rd%2Fx", "topic-SECRET-1"} {
+		if strings.Contains(out, s) {
+			t.Errorf("%q survived: %s", s, out)
+		}
+	}
+	if !strings.HasSuffix(out, " ab") || !strings.HasPrefix(out, "unauthorized:") {
+		t.Errorf("ordinary text was mangled: %s", out)
+	}
+}

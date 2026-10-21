@@ -22,7 +22,8 @@ type Status struct {
 	HealthDetail string        `json:"health_detail,omitempty"`
 	Compose      ComposeStatus `json:"compose"`
 	Engine       engine.Status `json:"engine"`
-	Notify       notify.Status `json:"notify"` // counts per URL by position and scheme; never a URL
+	Notify       notify.Status `json:"notify"`    // counts per URL by position and scheme; never a URL
+	PullAuth     []string      `json:"pull_auth"` // registry hosts the pull rung has credentials for; never a user name or a secret
 }
 
 // Status snapshots the daemon for the CLI.
@@ -31,7 +32,7 @@ func (d *Daemon) Status() any {
 	st := Status{
 		Host: d.cfg.HostID, Mode: string(d.cfg.Mode), DryRun: d.cfg.DryRun, Persistent: d.o.Persist != nil,
 		EventsUp: d.eventsUp.Load(), Settled: d.settledFlag.Load(), Healthy: ok, HealthDetail: detail,
-		Compose: d.composeStatus(), Engine: d.eng.Status(),
+		Compose: d.composeStatus(), Engine: d.eng.Status(), PullAuth: pullAuthHosts(d.o.PullAuthHosts),
 	}
 	if d.o.NotifyStatus != nil {
 		st.Notify = d.o.NotifyStatus()
@@ -88,4 +89,16 @@ func ParseFor(v string, parse func(string) (time.Duration, error)) (time.Duratio
 		return 0, fmt.Errorf("--for %q: want a duration such as 2h or 1d, or 0 for no expiry", v)
 	}
 	return d, nil
+}
+
+// pullAuthHosts is never nil, so the JSON is [] and not null.
+func pullAuthHosts(h []string) []string {
+	out := make([]string, 0, len(h))
+	for _, s := range h {
+		if len(s) > 253 {
+			s = s[:253]
+		}
+		out = append(out, s)
+	}
+	return out
 }

@@ -244,6 +244,7 @@ func (s apiSource) Status() api.StatusDoc {
 			st.Counts.Paused++
 		}
 	}
+	st.PullAuth.Registries = pullAuthHosts(d.o.PullAuthHosts)
 	if d.o.NotifyStatus != nil {
 		ns := d.o.NotifyStatus()
 		n := api.NotificationsDoc{Enabled: ns.Enabled, URLs: len(ns.Targets), Dropped: ns.DroppedEvents}

@@ -40,8 +40,16 @@ type Actor interface {
 
 // Compose runs a compose binary through a Runner.
 type Compose struct {
-	bin Binary
-	run Runner
+	bin     Binary
+	run     Runner
+	authDir string // WHALENURSE_REGISTRY_AUTH_DIR: the DOCKER_CONFIG of Pull and of nothing else
+}
+
+// WithRegistryAuth makes Pull run with DOCKER_CONFIG=dir (plan v3.12 item 3). Every other command keeps the runner's
+// private empty directory. An empty dir changes nothing.
+func (c *Compose) WithRegistryAuth(dir string) *Compose {
+	c.authDir = dir
+	return c
 }
 
 // New returns a Compose for the binary. A nil runner means ExecRunner.
@@ -108,7 +116,16 @@ func (c *Compose) Up(ctx context.Context, p Project) error {
 // `compose pull` skip an image that is already present, and the rung would report "no newer image" for an image it never
 // looked up (upstream check, plan v3.8). The label whalenurse.heal.pull=true is the opt-in to exactly this.
 func (c *Compose) Pull(ctx context.Context, p Project) error {
-	_, err := c.run.Run(ctx, c.cmd(p, "pull", "--policy", "always", p.Service))
+	cmd := c.cmd(p, "pull", "--policy", "always", p.Service)
+	if c.authDir != "" {
+		// Compose reads the file itself on each pull, so it is checked again now: a file that went bad since startup is a
+		// failed pull with the reason, not a pull with whatever the file says.
+		if _, err := LoadRegistryAuth(c.authDir); err != nil {
+			return fmt.Errorf("registry credentials: %w", err)
+		}
+		cmd.ConfigDir = c.authDir
+	}
+	_, err := c.run.Run(ctx, cmd)
 	return err
 }
 

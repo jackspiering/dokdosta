@@ -31,6 +31,13 @@ type StatusDoc struct {
 	LastEventID      uint64           `json:"last_event_id"`
 	HistoryRetention int64            `json:"history_retention_seconds"`
 	Notifications    NotificationsDoc `json:"notifications"`
+	PullAuth         PullAuthDoc      `json:"pull_auth"`
+}
+
+// PullAuthDoc says which registries the pull rung has credentials for (WHALENURSE_REGISTRY_AUTH_DIR): the hosts, sorted,
+// and nothing else. Never a user name, a secret or the path.
+type PullAuthDoc struct {
+	Registries []string `json:"registries"`
 }
 
 // ComposeDoc says which compose binary whalenurse uses and where it came from.

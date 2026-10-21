@@ -28,7 +28,11 @@ type Redactor struct {
 }
 
 // NewRedactor builds a Redactor for the given raw URLs (notification URLs, the uptime ping URL).
-func NewRedactor(raw ...string) *Redactor {
+func NewRedactor(raw ...string) *Redactor { return NewRedactorWith(nil, raw...) }
+
+// NewRedactorWith is NewRedactor plus literal secrets that are not URLs (the registry credentials of M7): each one is
+// removed whole, and in its URL-escaped forms.
+func NewRedactorWith(secrets []string, raw ...string) *Redactor {
 	seen := map[string]bool{}
 	add := func(s string) {
 		if len(s) < minSecret || seen[s] {
@@ -40,6 +44,11 @@ func NewRedactor(raw ...string) *Redactor {
 		for _, f := range fragmentsOf(r) {
 			add(f)
 		}
+	}
+	for _, s := range secrets {
+		add(s)
+		add(url.QueryEscape(s))
+		add(url.PathEscape(s))
 	}
 	r := &Redactor{}
 	for f := range seen {

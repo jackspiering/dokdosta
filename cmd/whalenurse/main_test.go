@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -103,7 +106,11 @@ func TestSplitArgsAcceptsFlagsAfterThePositional(t *testing.T) {
 // ---- notifications: the URLs are secrets (plan v3.7) ----------------------------------------------------------
 
 // The tokens sit where real ones do: in the user info, in the path and in a query value, and in the host of a Discord URL.
-var leakTokens = []string{"tok-USERINFO-81237", "tok-PATH-55120", "tok-QUERY-90421", "tok-DOWN-31337", "tok-PINGUUID-77777", "tok-HTTPTOKEN-66666"}
+var leakTokens = []string{"tok-USERINFO-81237", "tok-PATH-55120", "tok-QUERY-90421", "tok-DOWN-31337", "tok-PINGUUID-77777", "tok-HTTPTOKEN-66666",
+	"reg-USER-82001", "reg-PASS-82002", "reg-IDTOKEN-82003", regAuthValue}
+
+// The registry credentials of the pull rung (M7): the "auth" value is base64 of user:password.
+var regAuthValue = base64.StdEncoding.EncodeToString([]byte("reg-USER-82001:reg-PASS-82002"))
 
 func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	var statuses = map[string]int{"401": 401, "500": 500}
@@ -130,7 +137,12 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 		"tok-QUERY-90421-is-not-a-url")
 	ping := "http://" + deadHost + "/ping/tok-PINGUUID-77777"
 
-	env := []string{"WHALENURSE_NOTIFY_URLS=" + strings.Join(urls, " "), "WHALENURSE_HEARTBEAT_URL=" + ping,
+	regDir := t.TempDir()
+	regFile := `{"auths": {"registry.example.lan:5000": {"auth": "` + regAuthValue + `"}, "ghcr.io": {"identitytoken": "reg-IDTOKEN-82003"}}}`
+	if err := os.WriteFile(filepath.Join(regDir, "config.json"), []byte(regFile), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"WHALENURSE_REGISTRY_AUTH_DIR=" + regDir, "WHALENURSE_NOTIFY_URLS=" + strings.Join(urls, " "), "WHALENURSE_HEARTBEAT_URL=" + ping,
 		"WHALENURSE_NOTIFY_TIMEOUT=2s", "WHALENURSE_HOST_ID=nas", "WHALENURSE_HTTP_TOKEN=tok-HTTPTOKEN-66666", "WHALENURSE_HTTP_ADDR=0.0.0.0:8484"}
 	cfg, warns, err := config.FromEnv(env)
 	if err != nil {
@@ -146,10 +158,17 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	}
 	bus := &engine.Bus{}
 	bus.Subscribe(daemon.LogSink(log))
-	nt, red := setupNotify(cfg, log, bus, nil)
+	regAuth, err := loadRegistryAuth(cfg, log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nt, red := setupNotify(cfg, log, bus, nil, regAuth.secrets())
+	// What compose's stderr can say about a refused login: the error text of a failed pull goes through the redactor.
+	log.Warn("pull failed", "error", red.Redact("pull: unauthorized: user reg-USER-82001 password reg-PASS-82002 auth "+regAuthValue+" token reg-IDTOKEN-82003"))
 	pinger := &notify.Pinger{URL: cfg.PingURL, Interval: time.Hour, Timeout: time.Second, Log: log, Redact: red}
 	d := daemon.New(daemon.Options{Config: cfg, Reader: docker.NewFake(), Actor: docker.NewFake(), Clock: clock.Real{}, Bus: bus, Log: log,
-		NotifyStatus: func() notify.Status { st := nt.Status(); ps := pinger.Status(); st.Ping = &ps; return st }})
+		PullAuthHosts: regAuth.hosts(),
+		NotifyStatus:  func() notify.Status { st := nt.Status(); ps := pinger.Status(); st.Ping = &ps; return st }})
 
 	// Events that are sent, to every URL, and fail for each of the reasons above.
 	key := "nas/p/web/1"
@@ -205,6 +224,14 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	// The checks above mean something only if the failures happened and were reported.
 	if !strings.Contains(test.String(), "FAILED") || !strings.Contains(test.String(), "#1 generic") || !strings.Contains(test.String(), "#4 nosuchservice") || !strings.Contains(test.String(), "#5 invalid") {
 		t.Errorf("notify test:\n%s", test.String())
+	}
+	for name, out := range map[string]string{"status text": text.String(), "status json": string(js), "socket status": sockStatus.Body.String()} {
+		if !strings.Contains(out, "registry.example.lan:5000") || !strings.Contains(out, "ghcr.io") {
+			t.Errorf("%s does not name the registries:\n%s", name, out)
+		}
+	}
+	if !strings.Contains(logs.String(), "registry credentials for the pull rung") || !strings.Contains(logs.String(), "***") {
+		t.Errorf("the log lacks the registry line or the redacted pull error:\n%s", logs.String())
 	}
 	for _, want := range []string{"notification failed", "notification URL is invalid", "uptime ping failed"} {
 		if !strings.Contains(logs.String(), want) {
