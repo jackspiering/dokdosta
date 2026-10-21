@@ -77,6 +77,9 @@ func (c *Compose) cmd(p Project, rest ...string) Command {
 }
 
 func (c *Compose) DryRunUp(ctx context.Context, p Project, containerName string) (Oracle, error) {
+	if err := p.Validate(); err != nil {
+		return Oracle{}, err
+	}
 	rest := append([]string{"--dry-run", "--progress", "json"}, upArgs(p, false)...)
 	res, err := c.run.Run(ctx, c.cmd(p, rest...))
 	if err != nil {
@@ -86,6 +89,9 @@ func (c *Compose) DryRunUp(ctx context.Context, p Project, containerName string)
 }
 
 func (c *Compose) ConfigHash(ctx context.Context, p Project) (string, error) {
+	if err := p.Validate(); err != nil {
+		return "", err
+	}
 	res, err := c.run.Run(ctx, c.cmd(p, "config", "--hash="+p.Service))
 	if err != nil {
 		return "", err
@@ -94,6 +100,9 @@ func (c *Compose) ConfigHash(ctx context.Context, p Project) (string, error) {
 }
 
 func (c *Compose) PullPolicy(ctx context.Context, p Project) (string, error) {
+	if err := p.Validate(); err != nil {
+		return "", err
+	}
 	res, err := c.run.Run(ctx, c.cmd(p, "config", "--format", "json", "--no-env-resolution", p.Service))
 	if err != nil {
 		return "", err
@@ -102,11 +111,17 @@ func (c *Compose) PullPolicy(ctx context.Context, p Project) (string, error) {
 }
 
 func (c *Compose) Recreate(ctx context.Context, p Project) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
 	_, err := c.run.Run(ctx, c.cmd(p, upArgs(p, true)...))
 	return err
 }
 
 func (c *Compose) Up(ctx context.Context, p Project) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
 	_, err := c.run.Run(ctx, c.cmd(p, upArgs(p, false)...))
 	return err
 }
@@ -116,6 +131,9 @@ func (c *Compose) Up(ctx context.Context, p Project) error {
 // `compose pull` skip an image that is already present, and the rung would report "no newer image" for an image it never
 // looked up (upstream check, plan v3.8). The label whalenurse.heal.pull=true is the opt-in to exactly this.
 func (c *Compose) Pull(ctx context.Context, p Project) error {
+	if err := p.Validate(); err != nil {
+		return err
+	}
 	cmd := c.cmd(p, "pull", "--policy", "always", p.Service)
 	if c.authDir != "" {
 		// Compose reads the file itself on each pull, so it is checked again now: a file that went bad since startup is a

@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // Compose labels that hold what the original `up` was run with (plan §3.4).
@@ -31,7 +33,8 @@ type Project struct {
 }
 
 // ProjectFromLabels reads a container's compose labels. It fails when the project, service, working directory or config
-// files are missing, which is the "labels are missing" case of plan §3.4: rung 2 is then skipped.
+// files are missing, which is the "labels are missing" case of plan §3.4: rung 2 is then skipped. It also fails when the
+// project or the service is not a name compose could have written (Validate), since both end up on the command line.
 func ProjectFromLabels(labels map[string]string) (Project, error) {
 	p := Project{
 		Name:        labels[LabelProject],
@@ -56,7 +59,44 @@ func ProjectFromLabels(labels map[string]string) (Project, error) {
 	if len(missing) > 0 {
 		return Project{}, fmt.Errorf("not a compose container whalenurse can recreate: label(s) %s missing", strings.Join(missing, ", "))
 	}
+	if err := p.Validate(); err != nil {
+		return Project{}, err
+	}
 	return p, nil
+}
+
+// The names compose itself accepts (compose-go v2.16.1): a project name is what loader.NormalizeProjectName leaves, and
+// a service name is a key of `services` in the compose spec's schema. Neither can start with '-' or hold ',' or ':'.
+var (
+	projectName = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+	serviceName = regexp.MustCompile(`^[a-zA-Z0-9._][a-zA-Z0-9._-]*$`)
+)
+
+// ValidService reports whether s is a service name compose could have written.
+func ValidService(s string) bool { return serviceName.MatchString(s) }
+
+// Validate checks that the project and the service are names compose could have written. Both come from container
+// labels, which an image can ship (Docker copies an image's labels onto its containers), and both go onto the compose
+// command line: a service of `--dry-run=false` after `up` would override the drift guard's --dry-run and run a real up
+// (WN-001). Such a container is not one whalenurse can recreate; rungs 2 and 3 are then unavailable for it.
+func (p Project) Validate() error {
+	if !projectName.MatchString(p.Name) {
+		return fmt.Errorf("not a compose container whalenurse can recreate: label %s is %s, which is not a compose project name (lowercase letters, digits, '_' and '-', starting with a letter or digit)",
+			LabelProject, quoteLabel(p.Name))
+	}
+	if !serviceName.MatchString(p.Service) {
+		return fmt.Errorf("not a compose container whalenurse can recreate: label %s is %s, which is not a compose service name (letters, digits, '.', '_' and '-', not starting with '-')",
+			LabelService, quoteLabel(p.Service))
+	}
+	return nil
+}
+
+// quoteLabel quotes a label value for a message, cut to 64 runes.
+func quoteLabel(s string) string {
+	if utf8.RuneCountInString(s) > 64 {
+		s = string([]rune(s)[:64]) + "…"
+	}
+	return fmt.Sprintf("%q", s)
 }
 
 func splitList(s string) []string {
