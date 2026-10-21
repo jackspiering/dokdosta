@@ -17,7 +17,7 @@ the API show (see [security.md](security.md)). Put them in an env file that stay
 | `WHALENURSE_DRY_RUN` | `false` | Log (and notify, marked `[dry-run]`) what it would do; change nothing. The uptime ping (`WHALENURSE_HEARTBEAT_URL`) is still sent. Also `whalenurse run --dry-run`. A dry run stores nothing and needs no `/data`. |
 | `WHALENURSE_POLL_INTERVAL` | `60s` | The safety poll: it inspects every watched container, because events are only triggers (a failed restart emits no event, `health_status` fires once). |
 | `WHALENURSE_GRACE` | `30s` | How long to wait after a trigger before inspecting and deciding (Docker's event order is unreliable). |
-| `WHALENURSE_COOLDOWN` | `30s` | The wait after a rung before the re-inspect. It doubles per rung, capped at 5 minutes. A label can override it per container. |
+| `WHALENURSE_COOLDOWN` | `30s` | The wait after a rung before the re-inspect. It doubles per rung, capped at 5 minutes (a value above 5 minutes acts as 5 minutes). A label can override it per container. |
 | `WHALENURSE_RECOVERY_PERIOD` | `10m` | How long a container must stay recovered before its incident closes (and a crash loop clears). |
 | `WHALENURSE_FLAP_LIMIT` | `3` | More than this many incidents within `WHALENURSE_FLAP_WINDOW` SUSPENDS the container ("flapping"), even if every one recovered. A label can override it. |
 | `WHALENURSE_FLAP_WINDOW` | `24h` | The window of the flap limit. Closing an incident does not reset the count; only the window expiring does. |
@@ -41,7 +41,7 @@ the API show (see [security.md](security.md)). Put them in an env file that stay
 
 | Variable | Default | What it does |
 |---|---|---|
-| `WHALENURSE_NOTIFY_URLS` | — | **Secret.** One or more [Shoutrrr](https://nicholas-fedor.github.io/shoutrrr/) URLs (ntfy, Gotify, Discord, Telegram, Slack, Matrix, Pushover, a generic webhook and more), separated by whitespace or by a comma that is followed by `scheme://` (a comma inside a URL, as in `tags=warning,skull`, stays in it). An invalid URL is skipped and shown as `INVALID` in `status`. |
+| `WHALENURSE_NOTIFY_URLS` | — | **Secret.** One or more [Shoutrrr](https://nicholas-fedor.github.io/shoutrrr/) URLs (ntfy, Gotify, Discord, Telegram, Slack, Matrix, Pushover, a generic webhook and more), separated by whitespace or by a comma that is followed by `scheme://` (a comma inside a URL, as in `tags=warning,skull`, stays in it). Inside a URL, write a comma that is followed by `scheme://` as `%2C` (an ntfy `actions=view%2COpen%2Chttps://...` button) and a space as `%20`. An invalid URL is skipped and shown as `INVALID` in `status`. |
 | `WHALENURSE_NOTIFY_TIMEOUT` | `10s` | One delivery attempt, per URL (two retries follow, after 2 s and 10 s). |
 | `WHALENURSE_NOTIFY_RATE_LIMIT` | `20` | Messages per hour per URL. Routine messages may use half, important ones (giving up, flapping, drift blocked, upgraded) all of it; messages held back are counted and the next message says how many. |
 | `WHALENURSE_HEARTBEAT_URL` | — | **Secret.** An uptime-monitor push URL (healthchecks.io, Uptime Kuma). Called with a GET at once and then every interval, only while whalenurse is healthy: when it is not, the ping stays quiet so that the monitor alarms by the missing ping. A dry run sends it too: a second instance (a dry run on another host, say) needs its own URL or none, or it keeps the live instance's monitor green. (The name is historical; in code and docs it is the "uptime ping".) |
