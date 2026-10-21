@@ -63,5 +63,11 @@
       "skipped_unhealthy": 0,
       "interval_seconds": 300
     }
+  },
+  "pull_auth": {
+    "registries": [
+      "ghcr.io",
+      "registry.example.lan:5000"
+    ]
   }
 }

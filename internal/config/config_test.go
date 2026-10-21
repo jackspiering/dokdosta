@@ -280,3 +280,14 @@ func TestHTTPTrustedProxies(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+func TestRegistryAuthDirIsRead(t *testing.T) {
+	g, warns, err := FromEnv([]string{"WHALENURSE_REGISTRY_AUTH_DIR=/registry-auth"})
+	if err != nil || len(warns) != 0 || g.RegistryAuthDir != "/registry-auth" {
+		t.Fatalf("%q %v %v", g.RegistryAuthDir, warns, err)
+	}
+	g, _, err = FromEnv([]string{"WHALENURSE_REGISTRY_AUTH_DIR=  "})
+	if err != nil || g.RegistryAuthDir != "" {
+		t.Fatalf("%q %v", g.RegistryAuthDir, err)
+	}
+}

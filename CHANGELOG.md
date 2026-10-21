@@ -10,6 +10,17 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Added
+
+- **Private registries for the pull rung (R5).** `WHALENURSE_REGISTRY_AUTH_DIR` names a read-only directory holding a
+  `config.json` with inline `auths` and nothing else. It is given to `docker compose pull`, the pull rung's pull, as
+  `DOCKER_CONFIG`, and to no other command. Any other key (`credsStore`, `credHelpers`, `currentContext`, `proxies`, ...),
+  a `contexts` entry, an entry without an inline credential, or an empty `auths` stops `run` at startup; the file is checked
+  again before every pull. The credentials are redacted from logs, `status`, the API, the dashboard and notifications, and
+  `status`, `GET /api/v1/status` (`pull_auth.registries`) and the home page name the registries, never a user name or a
+  secret. The risk (credentials in a container that holds the Docker socket) and the advice (a pull-only token, mode
+  0440, a `:ro` mount) are in [docs/security.md](docs/security.md#private-registries).
+
 ## [0.1.1] - 2026-10-20
 
 A fix to how whalenurse starts compose.

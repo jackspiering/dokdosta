@@ -3,12 +3,15 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -36,9 +39,34 @@ const (
 	secPing     = "tok-PINGUUID-71119"
 	secHTTP     = "tok-HTTP-BEARER-71120"
 	secAttr     = "attr-SECRET-71121"
+
+	// The pull rung's registry credentials (M7): the user, the password, an identity token and the "auth" value (base64 of
+	// user:password) of a WHALENURSE_REGISTRY_AUTH_DIR file. The registry host is shown on purpose.
+	secRegUser  = "reguser-71122" // a user name is not a secret (it is often the image namespace), but status must not show it
+	secRegPass  = "regpass-SECRET-71123"
+	secRegToken = "regtoken-SECRET-71124"
+	regHost     = "registry.example.lan:5000"
 )
 
-var allSecrets = []string{secLabelA, secLabelB, secEnv, secUserinfo, secPath, secQuery, secPing, secHTTP, secAttr}
+var secRegAuth = base64.StdEncoding.EncodeToString([]byte(secRegUser + ":" + secRegPass))
+
+var allSecrets = []string{secLabelA, secLabelB, secEnv, secUserinfo, secPath, secQuery, secPing, secHTTP, secAttr,
+	secRegPass, secRegToken, secRegAuth}
+
+// registryAuthDir writes a credentials directory the way the docs say, and loads it the way main does.
+func registryAuthDir(t *testing.T) *compose.RegistryAuth {
+	t.Helper()
+	dir := t.TempDir()
+	cfg := `{"auths": {"` + regHost + `": {"auth": "` + secRegAuth + `"}, "ghcr.io": {"identitytoken": "` + secRegToken + `"}}}`
+	if err := os.WriteFile(filepath.Join(dir, "config.json"), []byte(cfg), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	a, err := compose.LoadRegistryAuth(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
 
 // leakyActor fails every restart with an error that quotes a notification URL and the HTTP token, as an HTTP client's
 // or a compose child's error text can.
@@ -55,7 +83,8 @@ func (leakyActor) Restart(_ context.Context, id string) error {
 			r.h.event(c, "start", "")
 		}
 	}
-	return errors.New("restart failed: Post \"generic://u:" + secUserinfo + "@host/hook/" + secPath + "?k=" + secQuery + "\": boom " + secHTTP)
+	return errors.New("restart failed: Post \"generic://u:" + secUserinfo + "@host/hook/" + secPath + "?k=" + secQuery + "\": boom " + secHTTP +
+		"; pull: unauthorized: user " + secRegUser + " password " + secRegPass + " auth " + secRegAuth + " token " + secRegToken)
 }
 
 // dashboardRig is the whole read path: a daemon on a fake Docker and a fake clock, a real SQLite store behind the
@@ -74,7 +103,8 @@ func newRig(t *testing.T, token string) *dashboardRig {
 	notifyURL := "generic://u:" + secUserinfo + "@127.0.0.1:9/hook/" + secPath + "?k=" + secQuery
 	ping := "http://127.0.0.1:9/ping/" + secPing
 	t.Setenv("DB_PASSWORD", secEnv) // an environment variable of the process: nothing may dump it
-	red := notify.NewRedactor(notifyURL, ping, token)
+	regAuth := registryAuthDir(t)
+	red := notify.NewRedactorWith(regAuth.Secrets, notifyURL, ping, token)
 
 	st, err := store.Open(t.TempDir(), nil)
 	if err != nil {
@@ -90,6 +120,7 @@ func newRig(t *testing.T, token string) *dashboardRig {
 		c.HTTPToken, c.NotifyURLs, c.PingURL, c.Metrics = token, []string{notifyURL}, ping, true
 	}, func(f *docker.Fake) docker.Actor { return leakyActor{f} }, func(o *Options) {
 		o.Persist, o.Meta, o.Version = st, st, "v-test"
+		o.PullAuthHosts = regAuth.Hosts
 		o.Bus.Seed(st.LastID())
 		o.Bus.Subscribe(st.RecordEvent)
 		o.Bus.Subscribe(hub.Notify)
@@ -220,10 +251,15 @@ func TestNoSecretReachesAnyPageEndpointOrStream(t *testing.T) {
 		}
 	}
 
+	// A user name is not redacted from messages (it is often the image namespace), but the status documents never carry one.
+	if strings.Contains(pages["/api/v1/status"], secRegUser) {
+		t.Error("/api/v1/status shows the registry user name")
+	}
+
 	// The positive controls: the checks above are not vacuous. The secrets were fed through real paths, the redactor
 	// masked them, and what is allowed is shown.
 	all := strings.Join(mapValues(pages), "\n")
-	for _, want := range []string{"p-web-1", "p-side-1", "restart failed", "***", "whalenurse.note", "visible-whalenurse-label", "com.docker.compose.project", "SUSPENDED", "PAUSED", "NeedsRecreate", "failed to fulfil mount request"} {
+	for _, want := range []string{"p-web-1", "p-side-1", "restart failed", "***", "whalenurse.note", "visible-whalenurse-label", "com.docker.compose.project", "SUSPENDED", "PAUSED", "NeedsRecreate", "failed to fulfil mount request", regHost, "ghcr.io", "Pull credentials"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("expected %q somewhere in the output", want)
 		}

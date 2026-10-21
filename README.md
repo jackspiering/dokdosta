@@ -69,7 +69,7 @@ Every setting is in [docs/configuration.md](docs/configuration.md) and every lab
 - To recreate from inside a container, whalenurse needs your stacks mounted read-only at the same path as on the host. See
   [docs/deployment.md](docs/deployment.md).
 - A host reboot or daemon restart isn't treated as a crash.
-- Private registries aren't supported yet, and one whalenurse watches one host.
+- The pull rung can log in to a private registry only through a read-only `config.json` of inline credentials ([security.md](docs/security.md#private-registries)), and one whalenurse watches one host.
 
 ## Documentation
 

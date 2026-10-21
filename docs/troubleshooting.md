@@ -110,6 +110,21 @@ Messages like `recreate skipped: compose inputs of project X are not readable fr
 7. Egress: the container must reach the service (DNS, firewall, a proxy). A hung URL delays nothing else; a failure is
    logged, counted and retried twice.
 
+## The pull fails on a private registry
+
+`pull failed` with `unauthorized`, `denied`, `pull access denied`, `no basic auth credentials` or `authentication required` in the reason:
+
+1. `whalenurse status` must list the registry under `pull credentials`. If it does not, `WHALENURSE_REGISTRY_AUTH_DIR` is not
+   set, or the key in `auths` is not the registry's name as the image reference writes it (`ghcr.io`, `registry.example.lan:5000`,
+   `https://index.docker.io/v1/` for Docker Hub).
+2. The token must be allowed to **read** that repository, and must not have expired. Test it from the host with
+   `docker login` using the same token.
+3. A startup error that names a key (`credsStore`, `currentContext`, ...) means the file holds more than `auths`: remove it.
+   Credential helpers do not exist in the image, so `auths` must carry the credential inline.
+4. The file is checked again before every pull; if it became unreadable or invalid since startup, the failed pull says so.
+
+Reasons are redacted: the credentials never appear in a log, `status`, the dashboard or a notification.
+
 ## Exit codes
 
 What a container's exit code (and `docker ps`'s `Exited (N)`) tells you, and what whalenurse does with it:
@@ -159,4 +174,5 @@ missing bind source, a port already allocated (`port is already allocated`), a b
 | The container is `unhealthy` right after start | The image's health check talks to the control socket in `/run`: give the container a `tmpfs: /run:uid=65532,gid=65532,mode=0700` (it is read-only otherwise). |
 | `whalenurse status` says it cannot connect | The CLI uses the unix socket (`WHALENURSE_CONTROL_SOCKET`); run it where the socket is (`docker exec`). Under systemd run it as the service user. |
 | A warning that the dashboard has no token | `WHALENURSE_HTTP_ADDR` is not loopback and no token is set. Set the token, or publish the port on `127.0.0.1`. |
+| `run` exits: `WHALENURSE_REGISTRY_AUTH_DIR: ...` | The credentials file is not valid: it must be a `config.json` with only `auths`, each entry with an inline credential ([deployment.md](deployment.md#private-registries-for-the-pull-rung)). The message names the problem and never a value. |
 | Unknown `WHALENURSE_...` variable | A typo; the warning names it. |

@@ -27,6 +27,16 @@ import (
 type testRegistry struct {
 	host string // 127.0.0.1:<port>
 	g    *Guard
+	// pushConfig, set for an authenticated registry (registry_auth_test.go), is the docker config directory that holds
+	// the test's login: pushes go through it.
+	pushConfig string
+}
+
+func (r *testRegistry) push(ctx context.Context, ref string) error {
+	if r.pushConfig != "" {
+		return r.g.PushWith(ctx, ref, r.pushConfig)
+	}
+	return r.g.Push(ctx, ref)
 }
 
 func startRegistry(t *testing.T, g *Guard, cli *docker.Moby) *testRegistry {
@@ -79,7 +89,7 @@ func (r *testRegistry) publish(t *testing.T, ref, marker string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = r.g.Untag(context.Background(), ref) })
-	if err := r.g.Push(ctx, ref); err != nil {
+	if err := r.push(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -104,7 +114,7 @@ func (r *testRegistry) publishNewer(t *testing.T, ref, marker string) {
 	if err := r.g.Tag(ctx, tmp, ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.g.Push(ctx, ref); err != nil {
+	if err := r.push(ctx, ref); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.g.Tag(ctx, before, ref); err != nil {

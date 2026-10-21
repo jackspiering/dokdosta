@@ -15,6 +15,9 @@ type Command struct {
 	Bin  string
 	Args []string
 	Dir  string
+	// ConfigDir, when set, is the DOCKER_CONFIG of this one command instead of the runner's. Only the pull rung's
+	// `compose pull` sets it, to WHALENURSE_REGISTRY_AUTH_DIR.
+	ConfigDir string
 }
 
 func (c Command) String() string { return c.Bin + " " + strings.Join(c.Args, " ") }
@@ -46,7 +49,11 @@ type ExecRunner struct {
 func (r ExecRunner) Run(ctx context.Context, c Command) (Result, error) {
 	cmd := exec.CommandContext(ctx, c.Bin, c.Args...)
 	cmd.Dir = c.Dir
-	cmd.Env = ChildEnv(os.Environ(), r.ConfigDir)
+	dir := r.ConfigDir
+	if c.ConfigDir != "" {
+		dir = c.ConfigDir
+	}
+	cmd.Env = ChildEnv(os.Environ(), dir)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()

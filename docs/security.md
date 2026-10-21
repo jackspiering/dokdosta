@@ -106,10 +106,25 @@ can use Docker (`docker compose config` shows it too).
 
 ## Private registries
 
-The pull rung cannot log in to a private registry, **on purpose for now**: the compose child process never reads a Docker
-config (its `DOCKER_CONFIG` is an empty directory whalenurse creates for itself, so `$HOME/.docker` is not read either;
-`DOCKER_AUTH_CONFIG` is removed) and the image carries no credentials. Putting registry credentials inside a container that has the Docker
-socket is a trade-off to make deliberately, so it is not on by default. It is on the post-v1 list.
+By default the pull rung cannot log in to a private registry: the compose child process never reads a Docker config (its
+`DOCKER_CONFIG` is an empty directory whalenurse creates for itself, so `$HOME/.docker` is not read either, and
+`DOCKER_AUTH_CONFIG` is removed) and the image carries no credentials.
+
+`WHALENURSE_REGISTRY_AUTH_DIR` turns it on, deliberately. **The risk:** the credentials then sit in a container that holds the
+Docker socket. The socket is root on the host, so whoever controls whalenurse already controls the host; what is added is that
+the registry credentials can be read inside the container, and by anyone who can read the directory on the host.
+
+- Use a **read-only, pull-only token** scoped to the repositories you need (a registry access token, a GitHub token with
+  `read:packages`), not a personal password and not your own `~/.docker/config.json`.
+- The file holds only `"auths"` with inline credentials (`auth`, `username` with `password`, or `identitytoken`). Credential
+  helpers do not exist in the image, and a `currentContext` or `proxies` key would apply to the pull too, so any other key stops
+  whalenurse at startup.
+- Mode `0400`/`0440` on the file, owned by uid 65532 (container) or by the `whalenurse` user (systemd); mount the directory
+  `:ro`. whalenurse warns at startup when it can write to the directory or the file.
+- The pull is the only command that gets it. The credentials are redacted from logs, `status`, the API, the dashboard and
+  notifications like the notification URLs are; `status`, the API and the home page name the registries (hosts), never a user
+  name or a secret.
+- Only the pull rung uses it, and only for a container with `whalenurse.heal.pull=true`. Nothing is pulled otherwise.
 
 ## Supply chain
 

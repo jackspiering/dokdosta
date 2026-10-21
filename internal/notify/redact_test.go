@@ -95,3 +95,28 @@ func TestRedactorLeavesShortPathWordsAlone(t *testing.T) {
 		t.Errorf("%q", got)
 	}
 }
+
+// The registry credentials of the pull rung are literal secrets, not URLs: each goes whole, and escaped.
+func TestRedactorRemovesRegistryCredentials(t *testing.T) {
+	r := NewRedactorWith([]string{"YWxpY2U6cDQ1NXcwcmQ=", "alice:p455w0rd", "p455 w0rd/x", "ab"}, "ntfy://ntfy.example.com/topic-SECRET-1")
+	in := "unauthorized: auth YWxpY2U6cDQ1NXcwcmQ= user:pass alice:p455w0rd q=p455+w0rd%2Fx p=p455%20w0rd%2Fx on topic-SECRET-1 ab"
+	out := r.Redact(in)
+	for _, s := range []string{"YWxpY2U6cDQ1NXcwcmQ=", "alice:p455w0rd", "p455+w0rd%2Fx", "p455%20w0rd%2Fx", "topic-SECRET-1"} {
+		if strings.Contains(out, s) {
+			t.Errorf("%q survived: %s", s, out)
+		}
+	}
+	if !strings.HasSuffix(out, " ab") || !strings.HasPrefix(out, "unauthorized:") {
+		t.Errorf("ordinary text was mangled: %s", out)
+	}
+}
+
+// A registry user name is usually the image namespace (ghcr.io/<user>/app): it is not a secret, and masking it would break
+// the image references and the pasteable rollback commands that whalenurse shows.
+func TestRedactorLeavesImageReferencesOfTheRegistryUserAlone(t *testing.T) {
+	r := NewRedactorWith([]string{"YWxpY2U6cDQ1NXcwcmQ=", "p455w0rd"}, "ntfy://ntfy.example.com/topic-SECRET-1")
+	in := "docker image tag sha256:0123456789ab ghcr.io/jackspiering/app:1 && docker compose -p stack up -d --no-deps --pull never app"
+	if got := r.Redact(in); got != in {
+		t.Errorf("an image reference was changed:\n%s\n%s", in, got)
+	}
+}

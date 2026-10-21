@@ -31,7 +31,11 @@ services:
       - whalenurse-data:/data
       - ${COMPOSE_PLUGIN:-/usr/libexec/docker/cli-plugins/docker-compose}:/host/docker-compose:ro
       - ${STACKS_DIR:?set STACKS_DIR in .env}:${STACKS_DIR}:ro # identical path on both sides
+      # Only for whalenurse.heal.pull=true containers whose image needs a login (docs/security.md#private-registries):
+      # a directory with a config.json holding nothing but "auths" with a pull-only token, mode 0440, owner 65532.
+      # - ./registry-auth:/registry-auth:ro
     environment:
+      # WHALENURSE_REGISTRY_AUTH_DIR: /registry-auth
       WHALENURSE_DRY_RUN: ${WHALENURSE_DRY_RUN:-true} # decisions are logged and notified, nothing is changed; set false in .env when they look right
       WHALENURSE_HTTP_ADDR: ":8484"
       WHALENURSE_HTTP_TOKEN: ${WHALENURSE_HTTP_TOKEN:?set WHALENURSE_HTTP_TOKEN in .env (openssl rand -hex 24)}

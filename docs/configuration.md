@@ -47,6 +47,12 @@ the API show (see [security.md](security.md)). Put them in an env file that stay
 | `WHALENURSE_HEARTBEAT_URL` | — | **Secret.** An uptime-monitor push URL (healthchecks.io, Uptime Kuma). Called with a GET at once and then every interval, only while whalenurse is healthy: when it is not, the ping stays quiet so that the monitor alarms by the missing ping. (The name is historical; in code and docs it is the "uptime ping".) |
 | `WHALENURSE_HEARTBEAT_INTERVAL` | `5m` | The uptime ping's interval. |
 
+## Private registries (the pull rung)
+
+| Variable | Default | What it does |
+|---|---|---|
+| `WHALENURSE_REGISTRY_AUTH_DIR` | — | **The file in it is a secret.** A directory holding a `config.json` with inline `auths` and nothing else, mounted read-only. It is given to `docker compose pull` (the pull rung's pull) as `DOCKER_CONFIG` and to no other command. Any other key in the file (`credsStore`, `credHelpers`, `currentContext`, `proxies`, ...), a `contexts` entry in the directory, an entry without an inline credential, or an empty `auths` stops `run` at startup with a message that names the problem and never a value. The file is checked again before every pull. See [security.md](security.md#private-registries) and [deployment.md](deployment.md#private-registries-for-the-pull-rung). |
+
 Check the setup with `docker exec whalenurse /whalenurse notify test`. See [troubleshooting.md](troubleshooting.md) if
 nothing arrives.
 

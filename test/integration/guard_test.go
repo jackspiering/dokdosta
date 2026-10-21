@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 
@@ -453,5 +454,47 @@ func TestRunRollbackRunsOnlyWhatARollbackIs(t *testing.T) {
 		if m := s2.mutations(); len(m) != 0 {
 			t.Errorf("%s: a refused rollback reached docker (not even its tag may run): %v", name, m)
 		}
+	}
+}
+
+// M7: only a pull, and only with the directory the test registered, may carry a DOCKER_CONFIG of its own.
+func TestComposeRunnerOnlyLetsAPullUseTheCredentialsDirectory(t *testing.T) {
+	rec := &recordingCompose{}
+	r := &ComposeRunner{Inner: rec}
+	r.AllowAuthDir("/tmp/whalenurse-test-auth-1")
+	pull := strings.Fields("-p whalenurse-test-a pull --policy always web")
+	ctx := context.Background()
+	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/tmp/whalenurse-test-auth-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/home/me/.docker"}); !errors.Is(err, ErrRefused) {
+		t.Fatalf("another directory: %v", err)
+	}
+	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: strings.Fields(goodUp), ConfigDir: "/tmp/whalenurse-test-auth-1"}); !errors.Is(err, ErrRefused) {
+		t.Fatalf("an up with the credentials: %v", err)
+	}
+	none := &ComposeRunner{Inner: rec}
+	if _, err := none.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/tmp/whalenurse-test-auth-1"}); !errors.Is(err, ErrRefused) {
+		t.Fatalf("no directory registered: %v", err)
+	}
+	if got := r.PullConfigDirs(); len(got) != 1 || got[0] != "/tmp/whalenurse-test-auth-1" {
+		t.Fatalf("%v", got)
+	}
+}
+
+func TestPushWithOnlyUsesTheTestsOwnDockerConfig(t *testing.T) {
+	s := &stub{}
+	g := &Guard{R: s}
+	ref := "127.0.0.1:5000/whalenurse-test/x:v1"
+	for _, dir := range []string{"/home/me/.docker", os.TempDir() + "/other-dir", os.TempDir() + "/" + DockerConfigPrefix + "1/sub", ""} {
+		if err := g.PushWith(context.Background(), ref, dir); !errors.Is(err, ErrRefused) {
+			t.Errorf("%q: %v", dir, err)
+		}
+	}
+	if err := g.PushWith(context.Background(), "ghcr.io/x/y:v1", os.TempDir()+"/"+DockerConfigPrefix+"1"); !errors.Is(err, ErrRefused) {
+		t.Errorf("a reference outside the test registry: %v", err)
+	}
+	if len(s.calls) != 0 {
+		t.Fatalf("a refusal ran docker: %v", s.calls)
 	}
 }

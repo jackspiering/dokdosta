@@ -124,6 +124,13 @@ func runCmd(args []string) error {
 		log.Warn("config", "detail", w)
 	}
 
+	// The credentials of the pull rung (M7): checked first, like the rest of the configuration, so a bad file stops `run`
+	// before it touches Docker, instead of failing the first pull.
+	regAuth, err := loadRegistryAuth(cfg, log)
+	if err != nil {
+		return err
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -184,7 +191,7 @@ func runCmd(args []string) error {
 	}
 	bus.Subscribe(hub.Notify) // after the event log's own subscriber: the event is readable when the streams wake
 
-	nt, red := setupNotify(cfg, log, bus, ledger)
+	nt, red := setupNotify(cfg, log, bus, ledger, regAuth.secrets())
 	defer nt.Shutdown(5 * time.Second) // the last message before a stop is often the one that matters
 
 	var actor docker.Actor = cli
@@ -194,6 +201,7 @@ func runCmd(args []string) error {
 	}
 	opts.Actor = actor
 	var removeConfigDir func()
+	opts.PullAuthHosts = regAuth.hosts()
 	opts.Compose, opts.ComposeActor, opts.ComposeNote, removeConfigDir = composeFor(ctx, cfg, log)
 	defer removeConfigDir()
 	var pinger *notify.Pinger
@@ -265,9 +273,9 @@ func runCmd(args []string) error {
 // notifyBackoff is the wait before each retry of a failed delivery; nil means the notifier's default. Tests shorten it.
 var notifyBackoff []time.Duration
 
-func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus, ledger notify.Ledger) (*notify.Notifier, *notify.Redactor) {
-	// The HTTP token is redacted from everything the API shows as well.
-	red := notify.NewRedactor(append(append([]string{}, cfg.NotifyURLs...), cfg.PingURL, cfg.HTTPToken)...)
+func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus, ledger notify.Ledger, secrets []string) (*notify.Notifier, *notify.Redactor) {
+	// The HTTP token and the registry credentials are redacted from everything the API shows as well.
+	red := notify.NewRedactorWith(secrets, append(append([]string{}, cfg.NotifyURLs...), cfg.PingURL, cfg.HTTPToken)...)
 	targets := notify.NewTargets(cfg.NotifyURLs, red, cfg.NotifyTimeout)
 	for _, t := range targets {
 		if t.Sender == nil {
@@ -311,7 +319,7 @@ func composeFor(ctx context.Context, cfg config.Global, log *slog.Logger) (compo
 		log.Warn("no private DOCKER_CONFIG directory for compose; compose before v5.6.0 then cannot dry-run and the drift guard uses config --hash",
 			"error", err.Error(), "docker_config", compose.NoDockerConfig)
 	}
-	c := compose.New(*bin, compose.ExecRunner{ConfigDir: dir})
+	c := compose.New(*bin, compose.ExecRunner{ConfigDir: dir}).WithRegistryAuth(cfg.RegistryAuthDir)
 	if cfg.DryRun {
 		return c, compose.DryRun{Would: func(verb string, p compose.Project) {
 			log.Info("dry-run: would run compose", "verb", verb, "project", p.Name, "service", p.Service)
@@ -491,6 +499,39 @@ func runNotifyTest(ctx context.Context, w io.Writer, cfg config.Global) error {
 	return nil
 }
 
+// regAuth is the checked WHALENURSE_REGISTRY_AUTH_DIR; the zero value (nil) is "off".
+type regAuth struct{ a *compose.RegistryAuth }
+
+func (r regAuth) secrets() []string {
+	if r.a == nil {
+		return nil
+	}
+	return r.a.Secrets
+}
+
+func (r regAuth) hosts() []string {
+	if r.a == nil {
+		return nil
+	}
+	return r.a.Hosts
+}
+
+// loadRegistryAuth checks WHALENURSE_REGISTRY_AUTH_DIR (plan v3.12 item 4). No message quotes the file's values.
+func loadRegistryAuth(cfg config.Global, log *slog.Logger) (regAuth, error) {
+	if cfg.RegistryAuthDir == "" {
+		return regAuth{}, nil
+	}
+	a, err := compose.LoadRegistryAuth(cfg.RegistryAuthDir)
+	if err != nil {
+		return regAuth{}, fmt.Errorf("WHALENURSE_REGISTRY_AUTH_DIR: %w", err)
+	}
+	for _, w := range a.Warnings {
+		log.Warn("WHALENURSE_REGISTRY_AUTH_DIR: " + w)
+	}
+	log.Info("registry credentials for the pull rung", "registries", strings.Join(a.Hosts, ", "))
+	return regAuth{a}, nil
+}
+
 func printNotify(w io.Writer, n notify.Status) {
 	fmt.Fprintf(w, "notifications: %s\n", n.Summary())
 	if p := n.Ping; p != nil {
@@ -532,6 +573,9 @@ func printStatus(w io.Writer, st daemon.Status) {
 	fmt.Fprintln(w, rate)
 	printCompose(w, st.Compose)
 	printNotify(w, st.Notify)
+	if len(st.PullAuth) > 0 {
+		fmt.Fprintf(w, "pull credentials: %s\n", strings.Join(st.PullAuth, ", "))
+	}
 	if !e.RestoreUntil.IsZero() {
 		fmt.Fprintf(w, "restore window open until %s: starts are restores, kills set no marker\n", e.RestoreUntil.Local().Format(time.TimeOnly))
 	}

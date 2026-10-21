@@ -56,6 +56,9 @@
     {{else}}<p class="muted">Off: WHALENURSE_NOTIFY_URLS is not set.</p>{{end}}
     {{with .UptimePing}}<p>Uptime ping: {{.Sent}} sent, {{.Failed}} failed, {{.SkippedUnhealthy}} skipped while unhealthy.</p>{{end}}
     {{end}}
+    <h2>Pull credentials</h2>
+    {{with .PullAuth.Registries}}<p>The pull rung can log in to: {{range $i, $r := .}}{{if $i}}, {{end}}<code>{{$r}}</code>{{end}}.</p>
+    {{else}}<p class="muted">None: the pull rung cannot pull from a private registry.</p>{{end}}
   </article>
 </section>
 

@@ -65,6 +65,29 @@ Without them whalenurse still restarts, says why the recreate rung is skipped, a
 Variables (`${VAR}`) in your stacks' compose files are resolved from the env files that compose recorded on each
 container, so keep them where they were.
 
+### Private registries for the pull rung
+
+Only if a container with `whalenurse.heal.pull=true` uses an image from a registry that needs a login. Read the risk first:
+[security.md](security.md#private-registries).
+
+1. Make a **pull-only** token for the registry, and write `config.json` next to your whalenurse stack, with nothing but `auths`
+   (get the `auth` value with `printf 'user:token' | base64 -w0`; Docker Hub's key is `https://index.docker.io/v1/`):
+   ```json
+   {"auths": {"ghcr.io": {"auth": "dXNlcjp0b2tlbg=="}}}
+   ```
+2. Mode `0440`, owner uid 65532 (container) or the `whalenurse` user (systemd), in a directory only they can read.
+3. Container: mount the **directory** read-only and set the variable (see the commented lines in
+   [examples/full](../examples/full/compose.yaml)):
+   ```yaml
+   volumes:
+     - ./registry-auth:/registry-auth:ro
+   environment:
+     WHALENURSE_REGISTRY_AUTH_DIR: /registry-auth
+   ```
+   Systemd: `Environment=WHALENURSE_REGISTRY_AUTH_DIR=/etc/whalenurse/registry-auth`, readable by the service user.
+4. `whalenurse status` then shows `pull credentials: ghcr.io`. A bad file stops `run` with the reason (a key that is not
+   allowed, an entry with no inline credential); no message shows a value.
+
 ### Compose project for whalenurse itself
 
 Put whalenurse in its own stack directory inside the stacks root, with its `.env` (`DOCKER_GID`, notification URLs, token). That

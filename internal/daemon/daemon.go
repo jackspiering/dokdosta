@@ -78,6 +78,10 @@ type Options struct {
 	ComposeNote  string
 	Stat         func(string) (os.FileInfo, error)
 
+	// PullAuthHosts are the registries named in WHALENURSE_REGISTRY_AUTH_DIR's "auths" (hosts only, M7); empty when the
+	// pull rung has no credentials.
+	PullAuthHosts []string
+
 	// NotifyStatus reports the notifications for `status`; nil when there is no notifier (tests).
 	NotifyStatus func() notify.Status
 
