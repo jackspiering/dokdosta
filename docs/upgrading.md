@@ -38,7 +38,7 @@ Systemd:
 
 ```sh
 systemctl stop whalenurse
-cp -a /var/lib/whalenurse /var/lib/whalenurse.bak
+rm -rf /var/lib/whalenurse.bak && cp -a /var/lib/whalenurse /var/lib/whalenurse.bak   # replaces an older backup
 ```
 
 **Restore**, also with whalenurse stopped: first remove every `whalenurse.db*` file in the data directory (a `-wal` left by
