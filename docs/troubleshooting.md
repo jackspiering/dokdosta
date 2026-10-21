@@ -112,7 +112,7 @@ Messages like `recreate skipped: compose inputs of project X are not readable fr
 
 ## The pull fails on a private registry
 
-`pull failed` with `unauthorized`, `denied` or `authentication required` in the reason:
+`pull failed` with `unauthorized`, `denied`, `pull access denied`, `no basic auth credentials` or `authentication required` in the reason:
 
 1. `whalenurse status` must list the registry under `pull credentials`. If it does not, `WHALENURSE_REGISTRY_AUTH_DIR` is not
    set, or the key in `auths` is not the registry's name as the image reference writes it (`ghcr.io`, `registry.example.lan:5000`,

@@ -2,8 +2,8 @@
 
 Decisions, deviations and open questions for milestone M7 (private registries for the pull rung, R5) of [PLAN.md](PLAN.md).
 The rules are in the plan as **v3.12**, approved by the maintainer on 21 Oct 2026. **Nothing was tagged or released.** The
-integration tests of this milestone were **written and compiled (`go vet -tags integration`) but not run**: they need a Docker
-host, and the maintainer has not confirmed one; they run in CI.
+integration tests were not run locally (they need a Docker host the maintainer has not confirmed); they ran in CI, see
+"First CI run".
 
 ## Upstream check
 
@@ -66,18 +66,27 @@ host, and the maintainer has not confirmed one; they run in CI.
    allowed through the Guard at all.
 6. **The Compose-side `Guard` (integration harness) refuses a `ConfigDir` on anything but the registered pull**, so a test that
    hands credentials to the wrong command fails closed.
-7. **CI durations**: the four new integration tests are not in `scripts/ci/integration-durations.txt`, so they count as 30 s
-   each when the shards are packed. Measure them on the first CI run and add them.
+7. **CI durations**: measured on the first CI run (classic and containerd store, compose 5.2.0 and 5.6.0) and added to
+   `scripts/ci/integration-durations.txt`: 45, 42, 26 and 1 s.
+
+## First CI run (21 Oct 2026, pull request #31)
+
+The four integration tests **passed on the first run, on all four legs that run** (two image stores, compose 5.2.0 and 5.6.0;
+the `compose latest` legs stop early while latest is a pinned release). The directory snapshot was identical after the pull on
+every leg. The login failure of the positive control, as compose 5.2.0 and 5.6.0 report it through the daemon:
+
+> `failed to resolve reference "127.0.0.1:<port>/whalenurse-test/auth-without:latest": pull access denied, repository does not
+> exist or may require authorization: authorization failed: no basic auth credentials`
+
+(`docs/troubleshooting.md` lists `unauthorized`, `denied` and `authentication required`; "pull access denied" and "no basic
+auth credentials" are what an anonymous pull gets from `registry:2`, so they are added there.)
 
 ## Uncertain
 
-- The integration tests have not run. Likeliest places to need a fix on the first run: the wait for the registry (it expects
-  401 without credentials), compose's login against an HTTP registry on 127.0.0.1 through the daemon (the Engine treats
-  127.0.0.0/8 as insecure; the M4 registry relies on the same), the exact wording of the login failure in test 1 (the
-  assertion accepts `unauthorized`, `no basic auth`, `denied`, `authentication`), and the time the image test needs (300 s).
-- The containerd image store: the M4 tests run on both stores, and these should behave the same; not seen.
-- Whether compose v5.2.0 to v5.6.0 write into `DOCKER_CONFIG` during a pull. #28's CI showed a pull passing with an uncreatable
-  directory on 5.2.0, which suggests not; test 2 and 3 assert it with the snapshot, on the whole matrix.
+- A real private registry (GHCR with a `read:packages` token, Docker Hub, a self-hosted one behind TLS) has not been tried;
+  only `registry:2` with htpasswd on loopback over plain HTTP has.
+- `Dockerfile.release` (the published image) has not been exercised with the credentials; the tests use the CI image, which
+  is the same base and the same user.
 
 ## Open for the maintainer
 
