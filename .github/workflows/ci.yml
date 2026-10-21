@@ -30,6 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 2
       - name: Documentation only? (pull requests only; any doubt means code)
         id: changes
@@ -58,13 +59,19 @@ jobs:
         id: compose
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/ci/compose-latest.sh .github/workflows/ci.yml | tee -a "$GITHUB_OUTPUT"
+        # pipefail: without it a failure of the script is hidden by tee (it fails only on a broken compose matrix; a lookup
+        # that fails prints pinned=false and exits 0).
+        run: |
+          set -o pipefail
+          scripts/ci/compose-latest.sh .github/workflows/ci.yml | tee -a "$GITHUB_OUTPUT"
 
   go:
     name: build, vet, unit tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -99,6 +106,8 @@ jobs:
     if: needs.scope.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: shellcheck -x scripts/ and test/
         run: |
           files=$( { grep -rIl --exclude-dir=testdata -E '^#!.*(ba)?sh' scripts test; find scripts test -name '*.sh'; } | sort -u)
@@ -132,6 +141,8 @@ jobs:
     if: needs.scope.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -153,6 +164,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
@@ -208,6 +220,8 @@ jobs:
     if: needs.scope.outputs.code == 'true'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -243,6 +257,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Build the image
         run: |
           for attempt in 1 2 3; do
@@ -270,6 +286,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: whalenurse-image
@@ -316,6 +334,8 @@ jobs:
         run: echo "::notice::compose latest is v$LATEST, which the v$LATEST legs test; this shard does not run."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.SKIP != 'true'
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: env.SKIP != 'true'
         with:
@@ -404,6 +424,8 @@ jobs:
         run: echo "Documentation only, no image-drift check needed."
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.RUN == 'true'
+        with:
+          persist-credentials: false
       - name: Install the latest Docker Engine 29.x and Compose 5.6.0, select the image store
         if: env.RUN == 'true'
         run: scripts/ci/setup-docker.sh "${{ matrix.store }}"
