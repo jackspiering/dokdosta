@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-
 # The release image, built by GoReleaser (dockers_v2, .goreleaser.yaml). GoReleaser compiles the binaries and puts them in the
 # build context as <os>/<arch>/whalenurse, so this file only copies. The development and CI image is ./Dockerfile, which
 # compiles from source; both must bundle the same compose release (scripts/ci/check-dockerfiles.sh compares them).

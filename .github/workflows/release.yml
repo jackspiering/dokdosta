@@ -52,7 +52,7 @@ jobs:
         run: |
           scripts/release/release-notes.sh --self-test
           scripts/release/verify.sh --self-test
-          scripts/ci/check-dockerfiles.sh
+          scripts/ci/check-dockerfiles.sh --self-test && scripts/ci/check-dockerfiles.sh
           scripts/ci/check-workflows.sh --self-test && scripts/ci/check-workflows.sh
 
   publish:
@@ -89,6 +89,10 @@ jobs:
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false # if buildx has to be downloaded, not from the Actions cache
+          # The BuildKit that builds the image, pinned (the default is the floating buildx-stable-1). Dependabot does not
+          # update it: docs/releasing.md says how. scripts/ci/check-workflows.sh checks both workflows run the same one.
+          driver-opts: |
+            image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
