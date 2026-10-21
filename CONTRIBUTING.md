@@ -34,7 +34,8 @@ A few rules from the plan that you will meet in review:
 - Add a line to the `[Unreleased]` section of [CHANGELOG.md](CHANGELOG.md) for anything a user would notice.
 - Update the docs (`docs/configuration.md`, `docs/labels.md`) when you add a variable or a label: a test fails if you add one and
   forget (`TestEveryVariableAndLabelIsDocumented`).
-- Workflows: every action pinned to a commit SHA with the version as a comment (`scripts/ci/check-pins.sh`); `actionlint` clean.
+- Workflows: every action pinned to a commit SHA with its release tag as a comment, steps in block style
+  (`scripts/ci/check-pins.sh`; CI also runs `--verify-remote`, which resolves each tag); `actionlint` clean.
 
 ## Running the tests
 

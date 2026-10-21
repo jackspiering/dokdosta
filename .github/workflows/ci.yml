@@ -150,8 +150,13 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Every action is pinned to a commit SHA
-        run: scripts/ci/check-pins.sh
+      # The offline check (also in make scripts-test), then each SHA against the tag its comment names (needs the network).
+      - name: Every action is pinned to the commit of its release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          scripts/ci/check-pins.sh --self-test
+          scripts/ci/check-pins.sh --verify-remote
       - name: What the workflows' steps must say (scripts/ci/check-workflows.sh)
         run: scripts/ci/check-workflows.sh --self-test && scripts/ci/check-workflows.sh
       - name: actionlint

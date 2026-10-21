@@ -14,7 +14,7 @@ test:
 # The self-tests of the shell tooling (no Docker, no network).
 scripts-test:
 	scripts/m0/selftest.sh && scripts/scrub-fixture --self-test && test/m0/run.sh selftest && test/m0/m0b/selftest.sh
-	scripts/release/release-notes.sh --self-test && scripts/release/verify.sh --self-test && scripts/ci/check-dockerfiles.sh --self-test && scripts/ci/check-dockerfiles.sh && scripts/ci/check-pins.sh && scripts/ci/shard-integration.sh --self-test
+	scripts/release/release-notes.sh --self-test && scripts/release/verify.sh --self-test && scripts/ci/check-dockerfiles.sh --self-test && scripts/ci/check-dockerfiles.sh && scripts/ci/check-pins.sh --self-test && scripts/ci/check-pins.sh && scripts/ci/shard-integration.sh --self-test
 	scripts/ci/changes.sh --self-test && scripts/ci/compose-latest.sh --self-test
 	scripts/ci/check-workflows.sh --self-test && scripts/ci/check-workflows.sh
 
