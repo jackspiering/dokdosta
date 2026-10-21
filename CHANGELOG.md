@@ -28,6 +28,14 @@ workflow refuses an undated section.
   secret. The risk (credentials in a container that holds the Docker socket) and the advice (a pull-only token, mode
   0440, a `:ro` mount) are in [docs/security.md](docs/security.md#private-registries).
 
+### Fixed
+
+- **A `docker compose run` container hid its service from healing and the dashboard (WN-004).** Compose writes no
+  container number on a one-off container, so it shared the state key of the service's first container and, being newer,
+  replaced it in the index: the service went unhealed for as long as the one-off container existed. A one-off or swarm-task
+  container no longer takes a key from a container whalenurse watches, and `com.docker.compose.oneoff` is read the same
+  case-insensitive way everywhere.
+
 ## [0.1.1] - 2026-10-20
 
 A fix to how whalenurse starts compose.
