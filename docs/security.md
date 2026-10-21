@@ -26,6 +26,15 @@ What whalenurse does with that power, so you can judge it:
   are reported as unavailable. In 0.1.0 and 0.1.1 a service label such as `--dry-run=false` was passed to compose as a flag
   and could turn the drift guard's dry-run into a real `up` of the project.
 
+- **The image's publisher is a second source of labels.** Docker puts an image's own labels on every container made from
+  it, for each key the container is not given itself, so the publisher of an image you run can set `whalenurse.*` labels as
+  well as you can: `whalenurse.enable=true` opts the container in under the default `WHALENURSE_MODE=label`,
+  `whalenurse.heal.pull=true` lets whalenurse pull a newer image for it, `whalenurse.heal-exited=always` starts it again after
+  a `docker stop`, and a high `whalenurse.flap-limit` lets it use more of the host-wide rate limit. whalenurse cannot tell
+  these from labels you wrote. The publisher already runs code in that container, so this adds little power, but it does mean
+  an image can opt itself in. Check what an image brings with `docker image inspect -f '{{json .Config.Labels}}' <image>`;
+  a label you set on the service wins (see [Labels from the image](labels.md#labels-from-the-image)).
+
 How to reduce the exposure:
 
 - Run the container with `read_only: true`, `cap_drop: [ALL]` and `security_opt: [no-new-privileges:true]` (the examples do).

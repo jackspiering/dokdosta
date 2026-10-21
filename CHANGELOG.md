@@ -36,6 +36,13 @@ workflow refuses an undated section.
   container no longer takes a key from a container whalenurse watches, and `com.docker.compose.oneoff` is read the same
   case-insensitive way everywhere.
 
+### Documentation
+
+- **Labels from the image (WN-005).** [docs/labels.md](docs/labels.md#labels-from-the-image) and
+  [docs/security.md](docs/security.md) now say that Docker copies an image's own labels onto its containers, so an image's
+  publisher can set `whalenurse.*` and compose labels too (an image can opt itself in), how to check an image, and how to
+  override a label. labels.md no longer says that a container compose did not make always gets only the restart rung.
+
 ## [0.1.1] - 2026-10-20
 
 A fix to how whalenurse starts compose.

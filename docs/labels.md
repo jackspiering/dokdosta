@@ -28,11 +28,31 @@ recreated. For an **opted-in** parent, whalenurse repairs such sidecars after it
 no `whalenurse.enable` label, unless they are labelled `whalenurse.enable=false`. Only that repair needs no opt-in: a sidecar
 that is unhealthy or exited *on its own* is healed only if it is opted in itself. See the README for what "repair" does.
 
+## Labels from the image
+
+whalenurse reads a container's labels, and Docker puts an image's own labels (its `LABEL` lines) on every container made
+from it, for each key the container is not given itself. So an image can carry `whalenurse.enable=true` and opt itself in
+under `WHALENURSE_MODE=label`, and it can set `whalenurse.heal.pull`, `whalenurse.heal-exited` (with `always`, a container you
+stopped by hand is started again), `whalenurse.flap-limit` or the compose labels below. whalenurse cannot tell these labels
+from the ones you wrote.
+
+To see what an image brings:
+
+```sh
+docker image inspect -f '{{json .Config.Labels}}' <image>
+```
+
+A label you set on the service wins over the image's, so to override one, set it yourself, for example
+`whalenurse.enable: "false"`.
+
 ## Labels whalenurse reads from compose
 
 The recreate rung uses the labels compose put on the container, not your current compose file: `com.docker.compose.project`,
 `.project.working_dir`, `.project.config_files`, `.project.environment_file`, `.service`, `.config-hash`, `.image` and
-`.version`. A container that compose did not make only gets the restart rung.
+`.version`. A container without them, normally one compose did not make, only gets the restart rung. A container can carry
+them without compose, though (from its image, see [Labels from the image](#labels-from-the-image), or set by hand), and then
+it is treated as a compose container. A project or service label that is not a name compose would write is refused, and
+that container gets the restart rung only.
 
 ## Per-container state, not labels
 
