@@ -39,6 +39,10 @@ workflow refuses an undated section.
 - **Go 1.27.3.** The binaries and the image are built with Go 1.27.3, which fixes GO-2026-6809 (`crypto/x509` trusted
   compromised intermediate certificates; whalenurse reaches it through the SMTP notifications). CI and the release now run
   `govulncheck`, and check that the Dockerfiles build with the Go of `go.mod`.
+- **Every action pin is checked against its tag.** CI resolves the release tag in each pinned action's comment and fails
+  if the SHA is not that tag's commit (a drifted comment, or a commit that exists only in a fork), and refuses `uses` keys
+  written in flow style or quoted, which the pin check could not see.
+
 ### Changed
 
 - **examples/full trusts its Tailscale proxy.** The `dashboard` network has a fixed subnet (`DASHBOARD_SUBNET`, default

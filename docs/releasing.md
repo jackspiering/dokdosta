@@ -36,7 +36,9 @@ Pull requests and `main` run `ci.yml`, which includes a **GoReleaser snapshot**:
 image are built from the commit, with `contents: read` only, no registry login, no cosign and no OIDC. Nothing is pushed or
 signed outside a tag.
 
-Every action in every workflow is pinned to a commit SHA (`scripts/ci/check-pins.sh` fails otherwise); Dependabot updates them,
+Every action in every workflow is pinned to a commit SHA with its release tag as a comment, in block style
+(`scripts/ci/check-pins.sh` fails otherwise; in CI, `--verify-remote` also checks that each SHA is the commit of the tag its
+comment names, which catches a drifted comment and a commit that exists only in a fork); Dependabot updates them,
 the Go modules, the Dockerfiles and the example images weekly, grouped.
 
 The BuildKit that builds the image is pinned too: `driver-opts: image=moby/buildkit:vX.Y.Z@sha256:...` on every
