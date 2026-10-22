@@ -10,26 +10,17 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-22
+
+A security fix (a compose label could put a flag on the compose command line), fixes from a code review, private
+registries for the pull rung, and a hardened release pipeline.
+
 ### Security
 
-- **A compose label could put a flag on the compose command line (WN-001).** The project and service labels, which an image
+- **A compose label could put a flag on the compose command line.** The project and service labels, which an image
   can ship, were passed to compose unchecked; a service of `--dry-run=false` overrode the drift guard's `--dry-run` and ran a
   real `up` of the project, in dry-run mode too. whalenurse now refuses a project or service that is not a name compose would
   write, and that container gets the restart rung only. 0.1.0 and 0.1.1 are affected.
-
-### Added
-
-- **Private registries for the pull rung (R5).** `WHALENURSE_REGISTRY_AUTH_DIR` names a read-only directory holding a
-  `config.json` with inline `auths` and nothing else. It is given to `docker compose pull`, the pull rung's pull, as
-  `DOCKER_CONFIG`, and to no other command. Any other key (`credsStore`, `credHelpers`, `currentContext`, `proxies`, ...),
-  a `contexts` entry, an entry without an inline credential, or an empty `auths` stops `run` at startup; the file is checked
-  again before every pull. The credentials are redacted from logs, `status`, the API, the dashboard and notifications, and
-  `status`, `GET /api/v1/status` (`pull_auth.registries`) and the home page name the registries, never a user name or a
-  secret. The risk (credentials in a container that holds the Docker socket) and the advice (a pull-only token, mode
-  0440, a `:ro` mount) are in [docs/security.md](docs/security.md#private-registries).
-
-### Security
-
 - **The release is built from an empty Go cache.** The release workflow no longer restores the Go build and module cache
   that `main`'s CI saves (`actions/setup-go` cached both by default), so nothing compiled in another run can reach the
   signed binaries and image. CI checkouts no longer keep the token in `.git/config`.
@@ -42,6 +33,17 @@ workflow refuses an undated section.
 - **Every action pin is checked against its tag.** CI resolves the release tag in each pinned action's comment and fails
   if the SHA is not that tag's commit (a drifted comment, or a commit that exists only in a fork), and refuses `uses` keys
   written in flow style or quoted, which the pin check could not see.
+
+### Added
+
+- **Private registries for the pull rung (R5).** `WHALENURSE_REGISTRY_AUTH_DIR` names a read-only directory holding a
+  `config.json` with inline `auths` and nothing else. It is given to `docker compose pull`, the pull rung's pull, as
+  `DOCKER_CONFIG`, and to no other command. Any other key (`credsStore`, `credHelpers`, `currentContext`, `proxies`, ...),
+  a `contexts` entry, an entry without an inline credential, or an empty `auths` stops `run` at startup; the file is checked
+  again before every pull. The credentials are redacted from logs, `status`, the API, the dashboard and notifications, and
+  `status`, `GET /api/v1/status` (`pull_auth.registries`) and the home page name the registries, never a user name or a
+  secret. The risk (credentials in a container that holds the Docker socket) and the advice (a pull-only token, mode
+  0440, a `:ro` mount) are in [docs/security.md](docs/security.md#private-registries).
 
 ### Changed
 
@@ -57,7 +59,7 @@ workflow refuses an undated section.
   `NOT VERIFIED` with "rejected" lines; it now says that `gh` is not logged in (`gh auth login` or `GH_TOKEN`), and every failed
   cosign or gh call shows the tool's own error. It prints the image digest it verified and checks the image's provenance
   for that digest, and the by-hand `gh attestation verify` commands in the docs pin the release workflow (`--signer-workflow`).
-- **A `docker compose run` container hid its service from healing and the dashboard (WN-004).** Compose writes no
+- **A `docker compose run` container hid its service from healing and the dashboard.** Compose writes no
   container number on a one-off container, so it shared the state key of the service's first container and, being newer,
   replaced it in the index: the service went unhealed for as long as the one-off container existed. A one-off or swarm-task
   container no longer takes a key from a container whalenurse watches, and `com.docker.compose.oneoff` is read the same
@@ -77,7 +79,7 @@ workflow refuses an undated section.
 
 ### Documentation
 
-- **Labels from the image (WN-005).** [docs/labels.md](docs/labels.md#labels-from-the-image) and
+- **Labels from the image.** [docs/labels.md](docs/labels.md#labels-from-the-image) and
   [docs/security.md](docs/security.md) now say that Docker copies an image's own labels onto its containers, so an image's
   publisher can set `whalenurse.*` and compose labels too (an image can opt itself in), how to check an image, and how to
   override a label. labels.md no longer says that a container compose did not make always gets only the restart rung.
@@ -166,7 +168,8 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0
 [0.1.0-rc.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0-rc.1
