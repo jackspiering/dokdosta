@@ -64,6 +64,39 @@ func TestParseEventSplitsActions(t *testing.T) {
 	}
 }
 
+// A `compose run` container shares its service's key (compose writes no container-number on it, plan §3.2 keeps the key),
+// so the key index must never let it, or a swarm task, take the key from a container rule 0 does not skip (WN-004).
+func TestPreferForKey(t *testing.T) {
+	t0 := time.Unix(1000, 0)
+	svc := Summary{ID: "a", Labels: map[string]string{LabelProject: "p", LabelService: "web", LabelNumber: "1", LabelOneOff: "False"}, Created: t0}
+	newer := svc
+	newer.ID, newer.Created = "b", t0.Add(time.Minute)
+	run := Summary{ID: "r", Labels: map[string]string{LabelProject: "p", LabelService: "web", LabelOneOff: "True"}, Created: t0.Add(time.Hour)}
+	lower := run
+	lower.Labels = map[string]string{LabelProject: "p", LabelService: "web", LabelOneOff: "true"}
+	task := Summary{ID: "t", Labels: map[string]string{LabelSwarmTaskID: "x"}, Created: t0.Add(time.Hour)}
+	for _, tc := range []struct {
+		name     string
+		old, new Summary
+		want     bool
+	}{
+		{"compose's rename: the newest wins", svc, newer, true},
+		{"an older one does not", newer, svc, false},
+		{"a newer one-off does not displace the service", svc, run, false},
+		{"lowercase oneoff too", svc, lower, false},
+		{"a newer swarm task does not either", svc, task, false},
+		{"the service displaces a one-off", run, svc, true},
+		{"between one-offs, the newest", run, Summary{ID: "r2", Labels: run.Labels, Created: run.Created.Add(time.Second)}, true},
+	} {
+		if got := PreferForKey(tc.old, tc.new); got != tc.want {
+			t.Errorf("%s: %v", tc.name, got)
+		}
+	}
+	if !IsOneOff(map[string]string{LabelOneOff: "TRUE"}) || IsOneOff(map[string]string{LabelOneOff: "False"}) || IsOneOff(nil) {
+		t.Fatal("IsOneOff")
+	}
+}
+
 func TestStateKey(t *testing.T) {
 	l := map[string]string{LabelProject: "media", LabelService: "web", LabelNumber: "2"}
 	if got := StateKey("box", "media-web-2", l); got != "box/media/web/2" {

@@ -150,7 +150,7 @@ func Classify(in Input) Decision {
 	switch {
 	case in.Self:
 		return skip(SkipSelf, "whalenurse's own container")
-	case strings.EqualFold(c.Labels[docker.LabelOneOff], "true"):
+	case docker.IsOneOff(c.Labels):
 		return skip(SkipOneOff, "compose run container")
 	case c.Labels[docker.LabelSwarmTaskID] != "":
 		return skip(SkipSwarm, "swarm task")
