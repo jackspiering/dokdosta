@@ -10,6 +10,14 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Security
+
+- **Compose's error output no longer reaches the dashboard, the API, the store or the log.** A compose load error can quote
+  a line of the stack's `.env` (an unterminated quote prints the value), and the drift guard put that text into its finding.
+  A failed compose command now reports only its exit status and the causes whalenurse knows by name (a port conflict, a
+  registry login failure, ...); run `docker compose config` in the stack to see the rest. Each output stream of a compose
+  command is also capped at 4 MiB.
+
 ## [0.1.2] - 2026-10-22
 
 A security fix (a compose label could put a flag on the compose command line), fixes from a code review, private

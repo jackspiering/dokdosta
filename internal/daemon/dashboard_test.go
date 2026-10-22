@@ -645,14 +645,20 @@ func TestCompanionNamesAreFinal(t *testing.T) {
 // refused because compose says it would recreate, so it is SUSPENDED for drift.
 func driftRig(t *testing.T) *dashboardRig {
 	t.Helper()
+	cf := compose.NewFake()
+	cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
+	return driftRigWith(t, cf)
+}
+
+// driftRigWith runs an unhealthy container through restart into a drift guard that blocks, with this compose.
+func driftRigWith(t *testing.T, cf *compose.Fake) *dashboardRig {
+	t.Helper()
 	st, err := store.Open(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
 	hub := api.NewHub()
-	cf := compose.NewFake()
-	cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
 	h := newCompose(t, nil, cf, docker.ServerInfo{}, func(o *Options) {
 		o.Persist, o.Meta, o.Version = st, st, "v-test"
 		o.Bus.Seed(st.LastID())
@@ -671,6 +677,34 @@ func driftRig(t *testing.T) *dashboardRig {
 	r.srv = httptest.NewServer(api.Handler(api.Options{Health: h.d, Service: r.svc, Web: web2(r.svc)}))
 	t.Cleanup(r.srv.Close)
 	return r
+}
+
+// Compose's stderr can quote a line of the stack's .env (a dotenv parse error does), and the drift guard puts the errors
+// of the oracle and of config --hash into its finding. The error compose.RunError builds, the one the real runner returns,
+// reaches no page, endpoint or the stream with the value in it.
+func TestComposeErrorTextReachesNoPageOrStream(t *testing.T) {
+	const planted = "hunter2-planted-71125"
+	cf := compose.NewFake()
+	fail := func(verb string) error {
+		cmd := compose.Command{Bin: "/usr/libexec/whalenurse/docker-compose", Args: []string{"-p", "p", verb}}
+		return compose.RunError(cmd, errors.New("exit status 15"), []byte("failed to read /srv/p/.env: line 3: unterminated quoted value \""+planted+"\n"))
+	}
+	cf.OracleFn = func(compose.Project, string) (compose.Oracle, error) { return compose.Oracle{}, fail("up") }
+	cf.HashFn = func(compose.Project) (string, error) { return "", fail("config") }
+	r := driftRigWith(t, cf)
+
+	pages := map[string]string{"SSE replay": r.readStream(t, "0", 400*time.Millisecond)}
+	for _, p := range []string{"/api/v1/events?since=0", "/api/v1/containers/h/p/web/1", "/containers/h/p/web/1", "/history", "/api/v1/incidents"} {
+		_, pages[p] = r.fetch(t, p, "")
+	}
+	for p, body := range pages {
+		if strings.Contains(body, planted) {
+			t.Errorf("%s shows the .env value", p)
+		}
+	}
+	if !strings.Contains(pages["/api/v1/events?since=0"], "cannot check the compose config for drift") {
+		t.Errorf("the guard's finding is not in the events (the check above proves nothing):\n%s", pages["/api/v1/events?since=0"])
+	}
 }
 
 func web2(s *api.Service) http.Handler { return web.Handler(s) }

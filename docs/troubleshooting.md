@@ -78,6 +78,14 @@ hash layout. It refuses rather than guess. Fix: **mount the host's plugin** (`do
 the container has no `com.docker.compose.config-hash` or `.image` label, or the dry run and `config --hash` both failed.
 The message says which.
 
+### What compose said
+
+When a compose command fails, whalenurse does not show compose's own output: compose can quote a line of the stack's `.env` or
+`env_file` in it (an unterminated quote, for one), and that would put a password on the dashboard. The message keeps the exit
+status and the causes whalenurse knows by name (`port is already allocated`, `no such service`, `network not found`,
+`pull access denied`, `unauthorized`, ...), as `compose reported: ...`. Otherwise it says
+"compose's output is not shown ...": run `docker compose config` in the stack yourself to see why.
+
 ## Recreate is skipped
 
 Messages like `recreate skipped: compose inputs of project X are not readable from here ...`:
