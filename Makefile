@@ -23,7 +23,8 @@ snapshot:
 	goreleaser release --snapshot --clean --skip=sign,docker,publish
 
 # Verify a published release: the cosign signatures (pinned to this repository's release workflow), the checksums of every
-# archive, and the build provenance. Needs cosign; gh is optional. See docs/verifying-releases.md.
+# archive, and the build provenance. Needs cosign; gh is optional (without it the provenance check is skipped), but if it is
+# installed it must be logged in (gh auth login, or GH_TOKEN). See docs/verifying-releases.md.
 #   make verify-release TAG=v0.1.0
 verify-release:
 	@test -n "$(TAG)" || { echo "usage: make verify-release TAG=v0.1.0" >&2; exit 2; }

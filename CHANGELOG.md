@@ -53,6 +53,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **`make verify-release` says why a check failed.** With `gh` installed but not logged in it reported a genuine release as
+  `NOT VERIFIED` with "rejected" lines; it now says that `gh` is not logged in (`gh auth login` or `GH_TOKEN`), and every failed
+  cosign or gh call shows the tool's own error. It prints the image digest it verified and checks the image's provenance
+  for that digest, and the by-hand `gh attestation verify` commands in the docs pin the release workflow (`--signer-workflow`).
 - **A `docker compose run` container hid its service from healing and the dashboard (WN-004).** Compose writes no
   container number on a one-off container, so it shared the state key of the service's first container and, being newer,
   replaced it in the index: the service went unhealed for as long as the one-off container existed. A one-off or swarm-task
