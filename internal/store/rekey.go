@@ -19,8 +19,8 @@ type RekeyMeta struct {
 // changes whenever whalenurse is recreated (an upgrade), and the state under the old ID would otherwise never match a
 // live container again.
 //
-// It covers the per-key state, the flap history, the incidents (open and closed), the notification dedupe and the meta
-// rows of m. When the current key already has records (whalenurse ran under this host ID before), the key whose records
+// It covers the per-key state, the flap history, the incidents (open and closed), the meta rows of m, and the
+// notification dedupe rows of every key it moves. When the current key already has state records (whalenurse ran under this host ID before), the key whose records
 // show the later activity wins and every record of the other is dropped; on a tie the current one wins. The event
 // history keeps the host it was written with. A key whose remainder is not <project>/<service>/<number> or <name> (a host
 // ID with a "/" in it) is left alone. It runs in one transaction and returns how many keys were moved.
@@ -110,7 +110,9 @@ func rekeyed(k, host string) (string, bool) {
 
 func persistedKeys(tx *sql.Tx, m RekeyMeta) (map[string]bool, error) {
 	keys := map[string]bool{}
-	for _, q := range []string{`SELECT key FROM key_state`, `SELECT DISTINCT key FROM flaps`, `SELECT DISTINCT key FROM incidents`, `SELECT DISTINCT key FROM notified`} {
+	// Not the notification dedupe: it also holds global messages keyed host/<scope> (a pause), which are not a
+	// container's state and must not decide a collision. Its rows move with their key (moveKey) or expire.
+	for _, q := range []string{`SELECT key FROM key_state`, `SELECT DISTINCT key FROM flaps`, `SELECT DISTINCT key FROM incidents`} {
 		if err := scanStrings(tx, q, func(k string) { keys[k] = true }); err != nil {
 			return nil, err
 		}
@@ -125,14 +127,14 @@ func persistedKeys(tx *sql.Tx, m RekeyMeta) (map[string]bool, error) {
 	return keys, nil
 }
 
-// activity is the latest time any record of k shows. Meta rows have no time; they decide nothing.
+// activity is the latest time any state record of k shows. Meta rows have no time, and the dedupe is not state; they
+// decide nothing.
 func activity(tx *sql.Tx, k string) (int64, error) {
 	var a sql.NullInt64
 	err := tx.QueryRow(`SELECT MAX(t) FROM (
 		SELECT updated_at AS t FROM key_state WHERE key = ?1
 		UNION ALL SELECT at FROM flaps WHERE key = ?1
-		UNION ALL SELECT MAX(opened_at, suspended_at, recovery_since, COALESCE(closed_at, 0)) FROM incidents WHERE key = ?1
-		UNION ALL SELECT at FROM notified WHERE key = ?1)`, k).Scan(&a)
+		UNION ALL SELECT MAX(opened_at, suspended_at, recovery_since, COALESCE(closed_at, 0)) FROM incidents WHERE key = ?1)`, k).Scan(&a)
 	if err != nil {
 		return 0, err
 	}
@@ -166,7 +168,8 @@ func moveKey(tx *sql.Tx, from, to string, m RekeyMeta) error {
 	}
 	for _, id := range ids {
 		nid := strings.Replace(id, "|"+from+"|", "|"+to+"|", 1)
-		if _, err := tx.Exec(`UPDATE notified SET id = ?, key = ? WHERE id = ?`, nid, to, id); err != nil {
+		// OR REPLACE: the same message may already be recorded under the new key.
+		if _, err := tx.Exec(`UPDATE OR REPLACE notified SET id = ?, key = ? WHERE id = ?`, nid, to, id); err != nil {
 			return err
 		}
 	}

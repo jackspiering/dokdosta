@@ -117,3 +117,34 @@ func TestRekeyKeepsTheLaterOnACollision(t *testing.T) {
 		}
 	}
 }
+
+// The notification dedupe also holds pause messages, keyed host/<scope>: a recent `pause p` under the current host must
+// not take the place of a non-compose container named p and drop its state.
+func TestRekeyIgnoresDedupeRowsThatAreNotState(t *testing.T) {
+	s := open(t, t.TempDir())
+	execAll(t, s,
+		`INSERT INTO key_state (key, name, marker_at, updated_at) VALUES ('old/p', 'p', 3, 10)`,
+		`INSERT INTO notified (id, type, key, at) VALUES ('Paused|new/p||', 'Paused', 'new/p', 100)`,
+	)
+	if _, err := s.Rekey("new", testMeta); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(t, s, `SELECT count(*) FROM key_state WHERE key = 'new/p' AND marker_at = 3`); got != 1 {
+		t.Fatalf("the container's state was dropped for a dedupe row: %d", got)
+	}
+}
+
+// A dedupe row that already exists under the new key does not stop the startup.
+func TestRekeyMergesADedupeRowThatExistsUnderTheNewKey(t *testing.T) {
+	s := open(t, t.TempDir())
+	execAll(t, s,
+		`INSERT INTO key_state (key, name, updated_at) VALUES ('old/p/web/1', 'w', 10)`,
+		`INSERT INTO notified (id, type, key, at) VALUES ('Suspended|old/p/web/1||x', 'Suspended', 'old/p/web/1', 9), ('Suspended|new/p/web/1||x', 'Suspended', 'new/p/web/1', 5)`,
+	)
+	if _, err := s.Rekey("new", testMeta); err != nil {
+		t.Fatal(err)
+	}
+	if got := count(t, s, `SELECT count(*) FROM notified WHERE id = 'Suspended|new/p/web/1||x' AND at = 9`); got != 1 {
+		t.Fatalf("dedupe rows: %d", got)
+	}
+}
