@@ -20,6 +20,12 @@ workflow refuses an undated section.
 - Under systemd, whalenurse no longer takes a container with `ipc: shareable` for its own container (it saw that
   container's `/dev/shm` mount in the host's mount table) and so no longer skips healing it. Its own container ID is read
   only from the `/etc/hostname`, `/etc/hosts` and `/etc/resolv.conf` binds.
+- **A stop of whalenurse no longer kills a heal halfway or spends its rung.** A restart, recreate or the `up` after a pull
+  in flight when whalenurse is stopped (an upgrade, `systemctl restart`, a reboot) may finish for up to 60 s; compose is
+  then stopped with SIGTERM, not SIGKILL. An action cut short is recorded as interrupted, not failed, and runs again after
+  the restart instead of the container being SUSPENDED. The examples set `stop_grace_period: 90s` and the systemd unit
+  `KillMode=mixed` and `TimeoutStopSec=90s`: existing installs should do the same (`systemctl daemon-reload` after
+  editing the unit).
 
 ### Changed
 
