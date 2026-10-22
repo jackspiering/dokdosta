@@ -132,7 +132,7 @@ jobs:
           scripts/ci/changes.sh --self-test
           scripts/ci/compose-latest.sh --self-test
       - name: Dockerfile and Dockerfile.release ship the same compose and the same base images
-        run: scripts/ci/check-dockerfiles.sh
+        run: scripts/ci/check-dockerfiles.sh --self-test && scripts/ci/check-dockerfiles.sh
 
   workflows:
     name: workflows (actionlint, actions pinned to SHAs)
@@ -173,6 +173,11 @@ jobs:
         with:
           syft-version: v1.55.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # The BuildKit that builds the image, pinned (the default is the floating buildx-stable-1). Dependabot does not
+          # update it: docs/releasing.md says how. scripts/ci/check-workflows.sh checks both workflows run the same one.
+          driver-opts: |
+            image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
       - name: goreleaser check
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:

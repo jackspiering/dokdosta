@@ -39,6 +39,13 @@ signed outside a tag.
 Every action in every workflow is pinned to a commit SHA (`scripts/ci/check-pins.sh` fails otherwise); Dependabot updates them,
 the Go modules, the Dockerfiles and the example images weekly, grouped.
 
+The BuildKit that builds the image is pinned too: `driver-opts: image=moby/buildkit:vX.Y.Z@sha256:...` on every
+`setup-buildx-action` step, the same in `ci.yml` and `release.yml` (`scripts/ci/check-workflows.sh`). The Dockerfiles carry no
+`# syntax=` directive, so the Dockerfile frontend is the one built into that BuildKit (`scripts/ci/check-dockerfiles.sh`
+refuses an unpinned one). **Dependabot does not update either**: to move BuildKit, take the release's index digest
+(`docker buildx imagetools inspect moby/buildkit:vX.Y.Z`, the `Digest:` line), change both workflows in one pull request, and
+let `release-snapshot` build both platforms with it.
+
 Verify a release yourself: [verifying-releases.md](verifying-releases.md).
 
 ## The release gate

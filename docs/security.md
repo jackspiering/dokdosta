@@ -149,8 +149,9 @@ the registry credentials can be read inside the container, and by anyone who can
 
 Every release is signed and carries provenance, so you can check that what you run was built by this repository's release
 workflow: [verifying-releases.md](verifying-releases.md). The image bundles a copy of the Docker Compose plugin, downloaded in
-the build and checked against a pinned sha256; the base images are pinned by digest. Dependabot proposes updates weekly; all
-GitHub Actions are pinned to commit SHAs.
+the build and checked against a pinned sha256; the base images and the BuildKit image that builds the release are pinned by
+digest, and the Dockerfiles name no external frontend (`# syntax=`). Dependabot proposes updates weekly; all GitHub Actions
+are pinned to commit SHAs.
 
 ## A checklist
 

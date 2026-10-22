@@ -7,6 +7,9 @@
 #     GOMODCACHE and GOCACHE, and a tag run restores the caches main's CI saved; go build trusts GOCACHE's compiled packages,
 #     go mod verify does not look at them), every docker/setup-buildx-action step has `cache-binary: false`, and there is no
 #     actions/cache step and no type=gha build cache.
+#   - every docker/setup-buildx-action step, in every workflow, runs a BuildKit image pinned by digest
+#     (`driver-opts: image=moby/buildkit:vX.Y.Z@sha256:...`), the same one everywhere: without it the builder is the floating
+#     moby/buildkit:buildx-stable-1, which builds the image that is signed. Dependabot does not update it (docs/releasing.md).
 #   - every actions/checkout step, in every workflow, has `persist-credentials: false`: no later step needs the token in
 #     .git/config, so it is not left there.
 #   scripts/ci/check-workflows.sh [workflow-dir]
@@ -77,9 +80,23 @@ check() { # check <workflow-dir>
     fail=1
   fi
   shopt -s nullglob
+  local builder="" img
   for f in "$dir"/*.yml "$dir"/*.yaml; do
     while IFS= read -r -d '' step; do
       n="${step%%$'\n'*}" text="${step#*$'\n'}"
+      if grep -Eq '^[[:space:]-]*uses:[[:space:]]*docker/setup-buildx-action@' <<<"$text"; then
+        img=$(sed -n 's/^[[:space:]]*\(driver-opts:[[:space:]]*\)\{0,1\}image=\([^[:space:]]*\)[[:space:]]*$/\2/p' <<<"$text" | head -n 1)
+        if ! grep -Eq '^[[:space:]]*driver-opts:' <<<"$text" || ! [[ "$img" =~ ^moby/buildkit:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]]; then
+          echo "FAIL $f:$n docker/setup-buildx-action must set driver-opts: image=moby/buildkit:vX.Y.Z@sha256:<digest> (got '${img:-none}')"
+          fail=1
+        elif [[ -n "$builder" && "$img" != "$builder" ]]; then
+          echo "FAIL $f:$n runs BuildKit $img, another step runs $builder"
+          fail=1
+        else
+          builder="$img"
+          echo "ok   $f:$n BuildKit $img"
+        fi
+      fi
       if grep -Eq '^[[:space:]-]*uses:[[:space:]]*actions/checkout@' <<<"$text" &&
         ! grep -Eq '^[[:space:]]*persist-credentials:[[:space:]]*false[[:space:]]*(#.*)?$' <<<"$text"; then
         echo "FAIL $f:$n actions/checkout must have persist-credentials: false"
@@ -126,6 +143,8 @@ self_test() {
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           cache-binary: false
+          driver-opts: |
+            image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
@@ -159,6 +178,18 @@ self_test() {
       - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0"
   t fail "a type=gha build cache" "type=gha" <<<"$good
       - run: docker buildx build --cache-from type=gha ."
+  local buildx_ci='jobs:
+  a:
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea'
+  CI_YML="$buildx_ci" t pass "the same pinned BuildKit in both workflows (block and plain driver-opts)" "" <<<"$good"
+  CI_YML="${buildx_ci/cec9f/aaaaa}" t fail "another BuildKit digest in the other workflow" "another step runs" <<<"$good"
+  CI_YML="${buildx_ci/@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea/}" t fail "a BuildKit pinned by tag only" "must set driver-opts" <<<"$good"
+  CI_YML="${buildx_ci/v0.33.1/buildx-stable-1}" t fail "a floating BuildKit tag with a digest" "must set driver-opts" <<<"$good"
+  t fail "setup-buildx-action without driver-opts" "must set driver-opts" <<<"$(grep -v 'driver-opts\|image=moby' <<<"$good")"
+  t fail "an image= that is not under driver-opts" "must set driver-opts" <<<"$(grep -v 'driver-opts' <<<"$good")"
   t fail "a checkout that keeps the credentials" "must have persist-credentials: false" <<<"$(grep -v 'persist-credentials' <<<"$good")"
   CI_YML='jobs:
   a:

@@ -33,6 +33,9 @@ workflow refuses an undated section.
 - **The release is built from an empty Go cache.** The release workflow no longer restores the Go build and module cache
   that `main`'s CI saves (`actions/setup-go` cached both by default), so nothing compiled in another run can reach the
   signed binaries and image. CI checkouts no longer keep the token in `.git/config`.
+- **The image's builder is pinned.** The BuildKit that builds the release image is pinned by digest
+  (`moby/buildkit:v0.33.1`, the release the floating `buildx-stable-1` named), and the Dockerfiles no longer fetch the
+  floating `docker/dockerfile:1` frontend; BuildKit's built-in one is used.
 ### Changed
 
 - **examples/full trusts its Tailscale proxy.** The `dashboard` network has a fixed subnet (`DASHBOARD_SUBNET`, default
