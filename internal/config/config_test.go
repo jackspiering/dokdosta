@@ -163,6 +163,9 @@ func TestSplitURLs(t *testing.T) {
 		{"telegram://tok@telegram?chats=@ops,@dev,generic://h/p?template=json", []string{"telegram://tok@telegram?chats=@ops,@dev", "generic://h/p?template=json"}},
 		{"generic+https://h/p,ntfy://x", []string{"generic+https://h/p", "ntfy://x"}},
 		{",,ntfy://a,,", []string{"ntfy://a"}},
+		// A comma followed by scheme:// splits, even inside a query value (an ntfy action button); %2C keeps it whole.
+		{"ntfy://h/t?actions=view,Open,https://x", []string{"ntfy://h/t?actions=view,Open", "https://x"}},
+		{"ntfy://h/t?actions=view%2COpen%2Chttps://x", []string{"ntfy://h/t?actions=view%2COpen%2Chttps://x"}},
 	}
 	for _, tc := range cases {
 		got := SplitURLs(tc.in)

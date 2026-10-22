@@ -101,11 +101,12 @@ func (d *Daemon) containerDocs() []api.ContainerDoc {
 	list, seen := d.view.snapshot()
 	ev := d.eng.View()
 
-	// Two containers can share a key while compose renames the old one: the newest wins, as in the loop's index.
+	// Two containers can share a key while compose renames the old one, and a `compose run` container shares its service's:
+	// docker.PreferForKey decides, as in the loop's index.
 	newest := map[string]docker.Summary{}
 	for _, s := range list {
 		k := d.keyOf(s)
-		if old, ok := newest[k]; !ok || s.Created.After(old.Created) {
+		if old, ok := newest[k]; !ok || docker.PreferForKey(old, s) {
 			newest[k] = s
 		}
 	}
