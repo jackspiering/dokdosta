@@ -526,6 +526,9 @@ func (s *Store) LastID() uint64 {
 	return uint64(n.Int64)
 }
 
+// placeholders is "?,?,...,?" for n > 0 values, built in linear time.
+func placeholders(n int) string { return strings.Repeat(",?", n)[1:] }
+
 // Query implements engine.EventLog.
 func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
 	limit := q.Limit
@@ -540,26 +543,16 @@ func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
 		where, args = append(where, "key = ?"), append(args, q.Key)
 	}
 	if len(q.Types) > 0 {
-		in := ""
-		for i, t := range q.Types {
-			if i > 0 {
-				in += ","
-			}
-			in += "?"
+		for _, t := range q.Types {
 			args = append(args, string(t))
 		}
-		where = append(where, "type IN ("+in+")")
+		where = append(where, "type IN ("+placeholders(len(q.Types))+")")
 	}
 	if len(q.ExcludeTypes) > 0 {
-		in := ""
-		for i, t := range q.ExcludeTypes {
-			if i > 0 {
-				in += ","
-			}
-			in += "?"
+		for _, t := range q.ExcludeTypes {
 			args = append(args, string(t))
 		}
-		where = append(where, "type NOT IN ("+in+")")
+		where = append(where, "type NOT IN ("+placeholders(len(q.ExcludeTypes))+")")
 	}
 	order := "ASC"
 	if q.Newest {

@@ -347,9 +347,10 @@ func (s *Service) incidents(key string, limit int) []IncidentDoc {
 
 // Incidents is GET /api/v1/incidents.
 func (s *Service) Incidents(key string, limit int) IncidentsDoc {
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 {
 		limit = 100
 	}
+	limit = min(limit, 500)
 	return IncidentsDoc{Host: s.Host, Incidents: s.incidents(key, limit)}
 }
 

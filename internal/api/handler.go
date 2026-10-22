@@ -72,10 +72,22 @@ func Handler(o Options) http.Handler {
 	return Secure(SecureOptions{Token: o.Token, AllowedHosts: o.AllowedHosts, TrustedProxies: o.TrustedProxies, Now: o.Now, OnBlock: o.OnBlock}, mux)
 }
 
-// ParseEventsQuery reads ?since=, ?limit=, ?key= and ?type= (repeatable or comma-separated).
+// Bounds of the events filter. There are fewer than 32 event types, and a key is host/project/service/number; each type
+// costs work in the store's query and in the dry run's ring scan, which holds the ring's lock (and so the engine's).
+const (
+	maxTypes   = 64
+	maxTypeLen = 64
+	maxKeyLen  = 512
+)
+
+// ParseEventsQuery reads ?since=, ?limit=, ?key= and ?type= (repeatable or comma-separated). The errors never quote the
+// input.
 func ParseEventsQuery(r *http.Request) (EventsQuery, error) {
 	v := r.URL.Query()
 	q := EventsQuery{Key: v.Get("key")}
+	if len(q.Key) > maxKeyLen {
+		return q, fmt.Errorf("key: longer than %d bytes", maxKeyLen)
+	}
 	if s := v.Get("since"); s != "" {
 		n, err := strconv.ParseUint(s, 10, 64)
 		if err != nil {
@@ -90,9 +102,20 @@ func ParseEventsQuery(r *http.Request) (EventsQuery, error) {
 		}
 		q.Limit = n
 	}
+	n, seen := 0, map[string]bool{}
 	for _, t := range v["type"] {
-		for _, p := range strings.Split(t, ",") {
-			if p = strings.TrimSpace(p); p != "" {
+		for p := range strings.SplitSeq(t, ",") {
+			if p = strings.TrimSpace(p); p == "" {
+				continue
+			}
+			if n++; n > maxTypes {
+				return q, fmt.Errorf("type: more than %d types", maxTypes)
+			}
+			if len(p) > maxTypeLen {
+				return q, fmt.Errorf("type: an entry longer than %d bytes", maxTypeLen)
+			}
+			if !seen[p] {
+				seen[p] = true
 				q.Types = append(q.Types, p)
 			}
 		}
