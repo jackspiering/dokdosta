@@ -28,6 +28,12 @@ workflow refuses an undated section.
   secret. The risk (credentials in a container that holds the Docker socket) and the advice (a pull-only token, mode
   0440, a `:ro` mount) are in [docs/security.md](docs/security.md#private-registries).
 
+### Fixed
+
+- **Docs: backing up the store.** [docs/upgrading.md](docs/upgrading.md#backing-up-and-restoring-the-store) now says to stop
+  whalenurse before copying its SQLite database (a copy of a running one may not open), and gives the backup and restore
+  commands for the container and systemd setups, including removing a newer version's `-wal`/`-shm` before a restore.
+
 ## [0.1.1] - 2026-10-20
 
 A fix to how whalenurse starts compose.
