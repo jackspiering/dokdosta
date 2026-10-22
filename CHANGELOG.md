@@ -35,6 +35,9 @@ workflow refuses an undated section.
   replaced it in the index: the service went unhealed for as long as the one-off container existed. A one-off or swarm-task
   container no longer takes a key from a container whalenurse watches, and `com.docker.compose.oneoff` is read the same
   case-insensitive way everywhere.
+- **Docs: backing up the store.** [docs/upgrading.md](docs/upgrading.md#backing-up-and-restoring-the-store) now says to stop
+  whalenurse before copying its SQLite database (a copy of a running one may not open), and gives the backup and restore
+  commands for the container and systemd setups, including removing a newer version's `-wal`/`-shm` before a restore.
 
 ## [0.1.1] - 2026-10-20
 
