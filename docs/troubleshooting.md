@@ -108,7 +108,7 @@ Messages like `recreate skipped: compose inputs of project X are not readable fr
    a second identical "restarted" within one incident is not news. A new incident is.
 4. **Rate limit.** `WHALENURSE_NOTIFY_RATE_LIMIT` messages an hour per URL (20); routine messages may use half. The next message
    that goes out says "N earlier messages were held back".
-5. **Dry-run sends**, marked `[dry-run]`; it is how you check the setup.
+5. **Dry-run sends**, marked `[dry-run]`; it is how you check the setup. (The uptime ping is sent in a dry run too.)
 6. Which events notify: an action taken, recovered, giving up / flapping, unsuspended, drift blocked, upgraded during heal,
    a recreate that cannot run, the rate limit reached (once an hour), the version-gate warning, pause and resume. Everything
    else is only in the logs and the dashboard.

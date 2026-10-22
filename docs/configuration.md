@@ -14,7 +14,7 @@ the API show (see [security.md](security.md)). Put them in an env file that stay
 | Variable | Default | What it does |
 |---|---|---|
 | `WHALENURSE_MODE` | `label` | `label`: only containers with `whalenurse.enable=true`. `all`: every container except those labelled `whalenurse.enable=false`. whalenurse never acts on itself, on `docker compose run` containers or on swarm tasks, whatever the mode. |
-| `WHALENURSE_DRY_RUN` | `false` | Log (and notify, marked `[dry-run]`) what it would do; change nothing. Also `whalenurse run --dry-run`. A dry run stores nothing and needs no `/data`. |
+| `WHALENURSE_DRY_RUN` | `false` | Log (and notify, marked `[dry-run]`) what it would do; change nothing. The uptime ping (`WHALENURSE_HEARTBEAT_URL`) is still sent. Also `whalenurse run --dry-run`. A dry run stores nothing and needs no `/data`. |
 | `WHALENURSE_POLL_INTERVAL` | `60s` | The safety poll: it inspects every watched container, because events are only triggers (a failed restart emits no event, `health_status` fires once). |
 | `WHALENURSE_GRACE` | `30s` | How long to wait after a trigger before inspecting and deciding (Docker's event order is unreliable). |
 | `WHALENURSE_COOLDOWN` | `30s` | The wait after a rung before the re-inspect. It doubles per rung, capped at 5 minutes. A label can override it per container. |
@@ -44,7 +44,7 @@ the API show (see [security.md](security.md)). Put them in an env file that stay
 | `WHALENURSE_NOTIFY_URLS` | — | **Secret.** One or more [Shoutrrr](https://nicholas-fedor.github.io/shoutrrr/) URLs (ntfy, Gotify, Discord, Telegram, Slack, Matrix, Pushover, a generic webhook and more), separated by whitespace or by a comma that is followed by `scheme://` (a comma inside a URL, as in `tags=warning,skull`, stays in it). An invalid URL is skipped and shown as `INVALID` in `status`. |
 | `WHALENURSE_NOTIFY_TIMEOUT` | `10s` | One delivery attempt, per URL (two retries follow, after 2 s and 10 s). |
 | `WHALENURSE_NOTIFY_RATE_LIMIT` | `20` | Messages per hour per URL. Routine messages may use half, important ones (giving up, flapping, drift blocked, upgraded) all of it; messages held back are counted and the next message says how many. |
-| `WHALENURSE_HEARTBEAT_URL` | — | **Secret.** An uptime-monitor push URL (healthchecks.io, Uptime Kuma). Called with a GET at once and then every interval, only while whalenurse is healthy: when it is not, the ping stays quiet so that the monitor alarms by the missing ping. (The name is historical; in code and docs it is the "uptime ping".) |
+| `WHALENURSE_HEARTBEAT_URL` | — | **Secret.** An uptime-monitor push URL (healthchecks.io, Uptime Kuma). Called with a GET at once and then every interval, only while whalenurse is healthy: when it is not, the ping stays quiet so that the monitor alarms by the missing ping. A dry run sends it too: a second instance (a dry run on another host, say) needs its own URL or none, or it keeps the live instance's monitor green. (The name is historical; in code and docs it is the "uptime ping".) |
 | `WHALENURSE_HEARTBEAT_INTERVAL` | `5m` | The uptime ping's interval. |
 
 ## Private registries (the pull rung)
