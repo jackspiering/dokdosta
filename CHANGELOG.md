@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Security
+
+- **A compose label could put a flag on the compose command line (WN-001).** The project and service labels, which an image
+  can ship, were passed to compose unchecked; a service of `--dry-run=false` overrode the drift guard's `--dry-run` and ran a
+  real `up` of the project, in dry-run mode too. whalenurse now refuses a project or service that is not a name compose would
+  write, and that container gets the restart rung only. 0.1.0 and 0.1.1 are affected.
+
 ### Added
 
 - **Private registries for the pull rung (R5).** `WHALENURSE_REGISTRY_AUTH_DIR` names a read-only directory holding a

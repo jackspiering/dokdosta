@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -110,6 +111,73 @@ func TestProjectFromLabels(t *testing.T) {
 	}
 }
 
+// WN-001: the project and service labels become arguments of the compose command line, so a value shaped like a flag
+// (an image can ship the label) must never get there. A service of --dry-run=false after `up` overrides the oracle's root
+// --dry-run (cobra and pflag: last one wins) and turns it into a real `up` of the whole project.
+func TestProjectFromLabelsRefusesFlagShapedIdentity(t *testing.T) {
+	good := map[string]string{
+		LabelProject: "p", LabelService: "web", LabelWorkingDir: "/opt/stacks/p",
+		LabelConfigFiles: "/opt/stacks/p/compose.yaml, /opt/stacks/p/o.yaml", LabelEnvFile: "/opt/stacks/p/.env",
+	}
+	for _, tc := range []struct{ key, value string }{
+		{LabelService, "--dry-run=false"}, {LabelService, "-o/tmp/x"}, {LabelService, "--pull=always"}, {LabelService, "-"},
+		{LabelService, "web,db"}, {LabelService, "web:1"}, {LabelService, "we b"}, {LabelService, "web\n"},
+		{LabelProject, "-x"}, {LabelProject, "_p"}, {LabelProject, "P"}, {LabelProject, "p.x"}, {LabelProject, "p q"},
+	} {
+		l := maps.Clone(good)
+		l[tc.key] = tc.value
+		p, err := ProjectFromLabels(l)
+		if err == nil {
+			t.Errorf("%s=%q: accepted as %+v", tc.key, tc.value, p)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("%s=%q: the error should name the label: %v", tc.key, tc.value, err)
+		}
+	}
+	// What compose itself accepts still passes: a normalized project name, a service name of the compose spec.
+	for _, tc := range []struct{ project, service string }{
+		{"p", "web"}, {"whalenurse-test-x", "web_1"}, {"0p_q-r", "Web.app-2"}, {"p", "_x"}, {"p", ".x"},
+	} {
+		l := maps.Clone(good)
+		l[LabelProject], l[LabelService] = tc.project, tc.service
+		if _, err := ProjectFromLabels(l); err != nil {
+			t.Errorf("%s/%s: %v", tc.project, tc.service, err)
+		}
+	}
+}
+
+// No compose command built here may carry a label value as a flag, whatever Project it is handed.
+func TestNoLabelValueReachesComposeAsAFlag(t *testing.T) {
+	const evil = "--dry-run=false"
+	for _, bad := range []func(*Project){
+		func(p *Project) { p.Service = evil },
+		func(p *Project) { p.Name = evil },
+	} {
+		r := &recRunner{}
+		c := New(Binary{Path: "/x"}, r)
+		p := proj()
+		bad(&p)
+		ctx := context.Background()
+		_, _ = c.DryRunUp(ctx, p, "c-web-1")
+		_, _ = c.ConfigHash(ctx, p)
+		_, _ = c.PullPolicy(ctx, p)
+		_ = c.Recreate(ctx, p)
+		_ = c.Up(ctx, p)
+		_ = c.Pull(ctx, p)
+		for _, cmd := range r.cmds {
+			for i, a := range cmd.Args {
+				if a == "--" {
+					break
+				}
+				if a == evil {
+					t.Errorf("argument %d of %q is the label value", i, cmd)
+				}
+			}
+		}
+	}
+}
+
 func TestReadableNamesTheIdenticalPathMount(t *testing.T) {
 	dir := t.TempDir()
 	f := dir + "/compose.yaml"
@@ -188,12 +256,12 @@ func TestCommandLines(t *testing.T) {
 			t.Errorf("an up without --no-deps --pull never --no-build: %s", cmd)
 		}
 	}
-	// Names with odd characters are single arguments, not shell text.
+	// A name compose could not have written never reaches the command line (WN-001); it would only ever have been one
+	// argument, never shell text, since nothing runs a shell.
 	p.Service = "we b;rm -rf /"
 	r.cmds = nil
-	_ = c.Recreate(ctx, p)
-	if !slices.Contains(r.cmds[0].Args, "we b;rm -rf /") {
-		t.Fatalf("%v", r.cmds[0].Args)
+	if err := c.Recreate(ctx, p); err == nil || len(r.cmds) != 0 {
+		t.Fatalf("%v %v", err, r.cmds)
 	}
 }
 
@@ -229,6 +297,11 @@ func TestRollbackCommandsAreExactAndQuoted(t *testing.T) {
 	p := Project{Name: "p", WorkingDir: "/opt/my stacks/it's", ConfigFiles: []string{"/opt/my stacks/it's/compose.yaml"}, Service: "web"}
 	_, up = RollbackCommands(p, "web:1", "sha256:x")
 	if !strings.Contains(up, `--project-directory '/opt/my stacks/it'\''s'`) {
+		t.Errorf("%s", up)
+	}
+	// A sidecar's service name comes from its label: one compose could not have written is left out, not pasted as a flag.
+	_, up = RollbackCommands(proj(), "web:1", "sha256:x", "vpn", "--build", "a b")
+	if !strings.HasSuffix(up, " web vpn") {
 		t.Errorf("%s", up)
 	}
 }

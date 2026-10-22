@@ -18,7 +18,13 @@ What whalenurse does with that power, so you can judge it:
   needed), `pull --policy always <service>` for the opt-in pull rung, `config` and dry-runs for the drift guard. The `compose`
   package cannot express `down`, `rm`, `build` or an `up` that could pull.
 - The compose files it runs are the ones **recorded on the container** (`com.docker.compose.project.config_files`), read from
-  the stacks you mount. Whoever can create a container can already do anything the socket allows; the labels add nothing to that.
+  the stacks you mount. Those labels are not only written by whoever creates the container: Docker also copies an image's
+  own labels onto its containers, so an image can ship compose labels too. The project and service names go onto the compose
+  command line, so whalenurse refuses a container whose `com.docker.compose.project` is not a name compose would write
+  (lowercase letters, digits, `_` and `-`, starting with a letter or digit) or whose `com.docker.compose.service` is not
+  (letters, digits, `.`, `_` and `-`, not starting with `-`): it gets the restart rung only, and the recreate and pull rungs
+  are reported as unavailable. In 0.1.0 and 0.1.1 a service label such as `--dry-run=false` was passed to compose as a flag
+  and could turn the drift guard's dry-run into a real `up` of the project.
 
 How to reduce the exposure:
 
