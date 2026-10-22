@@ -236,7 +236,9 @@ func TestFailedUpgradeStaysFailedUnderABooleanURLOption(t *testing.T) {
 			Attrs:   map[string]string{"ref": "x:latest", "old": "sha256:aaa", "new": "sha256:bbb", "ok": c.ok, "error": "exit status 1"}})
 		red := notify.NewRedactor(c.url)
 		// The redactor of before item 20, which also masked boolean words: the decision must not depend on it.
-		mask := func(v string) string { return strings.NewReplacer("false", "***", "true", "***").Replace(red.Redact(v)) }
+		mask := func(v string) string {
+			return strings.NewReplacer("false", "***", "true", "***").Replace(red.Redact(v))
+		}
 		for name, redact := range map[string]func(string) string{"redactor": red.Redact, "masking every boolean": mask} {
 			s := &Service{Host: "nas", Source: fixtureSource{}, Events: r, Redact: redact}
 			d, ok := s.Container("nas/media/vpn/1")
