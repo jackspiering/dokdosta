@@ -49,6 +49,7 @@ jobs:
           scripts/release/release-notes.sh --self-test
           scripts/release/verify.sh --self-test
           scripts/ci/check-dockerfiles.sh
+          scripts/ci/check-workflows.sh --self-test && scripts/ci/check-workflows.sh
 
   publish:
     name: publish (image, binaries, signatures, provenance)
@@ -94,6 +95,9 @@ jobs:
           args: release --clean --release-notes=${{ runner.temp }}/release-notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The tag this run is for. Otherwise GoReleaser takes the first tag on the commit, and an -rc tag on the same commit
+          # sorts first: the final release would be published as the -rc (scripts/ci/check-workflows.sh).
+          GORELEASER_CURRENT_TAG: ${{ github.ref_name }}
       - name: Build provenance of the archives and SBOMs
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:

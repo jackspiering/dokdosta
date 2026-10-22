@@ -9,16 +9,17 @@ services:
       whalenurse.enable: "true"
 ```
 
-An invalid value falls back to the default and logs one warning for that container; it never opts a container in or out by
+A boolean label accepts `1`, `t`, `T`, `TRUE`, `true`, `True` and `0`, `f`, `F`, `FALSE`, `false`, `False` (Go's
+`strconv.ParseBool`), with surrounding spaces ignored. An invalid value falls back to the default and logs one warning for that container; it never opts a container in or out by
 accident.
 
 | Label | Values | Default | What it does |
 |---|---|---|---|
 | `whalenurse.enable` | `true`, `false` | — | `true` opts the container in (with `WHALENURSE_MODE=label`, the default, nothing is watched without it). `false` leaves the container alone entirely, **also as the sidecar of an opted-in parent** (see below). |
 | `whalenurse.actions` | `restart`, `recreate`, or `restart,recreate` | `restart,recreate` | The rungs of the ladder, in order. `restart` alone never recreates the container: after a failed restart it is SUSPENDED. `pull` is not accepted here; use `whalenurse.heal.pull`. |
-| `whalenurse.heal.pull` | `true`, `false` | `false` | Appends rung 3: after restart and recreate failed, pull a newer image and recreate from it. **Needs `recreate` in `whalenurse.actions`** (else one warning and the pull stays off). Never runs for a service with `pull_policy: never` or `build`. Cannot log in to a private registry. It is the only thing in whalenurse that fetches an image. |
+| `whalenurse.heal.pull` | `true`, `false` | `false` | Appends rung 3: after restart and recreate failed, pull a newer image and recreate from it. **Needs `recreate` in `whalenurse.actions`** (else one warning and the pull stays off). Never runs for a service with `pull_policy: never` or `build`. A private registry needs `WHALENURSE_REGISTRY_AUTH_DIR` ([security.md](security.md#private-registries)). It is the only thing in whalenurse that fetches an image. |
 | `whalenurse.heal-exited` | `crashed`, `always`, `never` | `crashed` | What to do with a container that has *exited*. `crashed`: heal one that crashed (a non-zero exit other than 137/143, an OOM kill, a `die` nobody asked for); leave an intended exit (`restart: "no"`/`on-failure` with exit 0) and a stop by hand alone. `always`: heal any exited container, including one a host shutdown stopped and Docker's restart policy did not restore. `never`: notify only. |
-| `whalenurse.cooldown` | a positive duration | `WHALENURSE_COOLDOWN` | Overrides the base cooldown between rungs for this container (it still doubles per rung, capped at 5 minutes). |
+| `whalenurse.cooldown` | a positive duration | `WHALENURSE_COOLDOWN` | Overrides the base cooldown between rungs for this container (it still doubles per rung, capped at 5 minutes; a value above 5 minutes acts as 5 minutes). |
 | `whalenurse.flap-limit` | a positive integer | `WHALENURSE_FLAP_LIMIT` | Overrides the flap limit for this container. |
 
 ## Sidecars
@@ -53,6 +54,12 @@ The recreate rung uses the labels compose put on the container, not your current
 them without compose, though (from its image, see [Labels from the image](#labels-from-the-image), or set by hand), and then
 it is treated as a compose container. A project or service label that is not a name compose would write is refused, and
 that container gets the restart rung only.
+
+Also read: `com.docker.compose.container-number` (part of the state key `host/project/service/number`, which survives a
+recreate), `com.docker.compose.oneoff` (`True` for a `docker compose run` container, which is never touched),
+`com.docker.compose.depends_on` (a sidecar's parent services; compose empties it when it recreates a container with
+`up --no-deps`, so whalenurse remembers the parents it has seen instead of relying on it) and `com.docker.swarm.task.id` (a swarm
+task, never touched).
 
 ## Per-container state, not labels
 

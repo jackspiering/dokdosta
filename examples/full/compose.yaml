@@ -39,6 +39,9 @@ services:
       WHALENURSE_DRY_RUN: ${WHALENURSE_DRY_RUN:-true} # decisions are logged and notified, nothing is changed; set false in .env when they look right
       WHALENURSE_HTTP_ADDR: ":8484"
       WHALENURSE_HTTP_TOKEN: ${WHALENURSE_HTTP_TOKEN:?set WHALENURSE_HTTP_TOKEN in .env (openssl rand -hex 24)}
+      # tailscale serve is a reverse proxy: trust the "dashboard" network so the wrong-token limit counts per tailnet client
+      # (Serve sets X-Forwarded-For to the client's tailnet address) instead of one budget for everyone (docs/security.md).
+      WHALENURSE_HTTP_TRUSTED_PROXIES: ${DASHBOARD_SUBNET:-10.84.248.0/29}
       # Notification URLs and the uptime ping are secrets: they come from .env, which stays out of git. Check them with
       #   docker compose exec whalenurse /whalenurse notify test
       WHALENURSE_NOTIFY_URLS: ${WHALENURSE_NOTIFY_URLS:-}
@@ -59,7 +62,10 @@ services:
       - ./tailscale:/config:ro
 
 networks:
-  dashboard: {} # a normal bridge network, shared by these two services only
+  dashboard: # a normal bridge network, shared by these two services only
+    ipam:
+      config:
+        - subnet: ${DASHBOARD_SUBNET:-10.84.248.0/29} # fixed, so whalenurse can trust it; outside Docker's default pools
 
 volumes:
   whalenurse-data: {}

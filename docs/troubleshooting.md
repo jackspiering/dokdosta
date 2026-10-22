@@ -108,7 +108,7 @@ Messages like `recreate skipped: compose inputs of project X are not readable fr
    a second identical "restarted" within one incident is not news. A new incident is.
 4. **Rate limit.** `WHALENURSE_NOTIFY_RATE_LIMIT` messages an hour per URL (20); routine messages may use half. The next message
    that goes out says "N earlier messages were held back".
-5. **Dry-run sends**, marked `[dry-run]`; it is how you check the setup.
+5. **Dry-run sends**, marked `[dry-run]`; it is how you check the setup. (The uptime ping is sent in a dry run too.)
 6. Which events notify: an action taken, recovered, giving up / flapping, unsuspended, drift blocked, upgraded during heal,
    a recreate that cannot run, the rate limit reached (once an hour), the version-gate warning, pause and resume. Everything
    else is only in the logs and the dashboard.
@@ -175,7 +175,7 @@ missing bind source, a port already allocated (`port is already allocated`), a b
 | Symptom | Cause and fix |
 |---|---|
 | `permission denied while trying to connect to the docker API` | The image runs as uid 65532, which cannot read the socket. Add `group_add: ["<gid>"]` with `stat -c %g /var/run/docker.sock`. |
-| `whalenurse run` exits: cannot open the store | `/data` is not writable by uid 65532. A named volume is fine (the image prepares it); a bind mount needs `chown 65532:65532`. Under systemd use `StateDirectory=`. |
+| `whalenurse run` exits: cannot open the store | `/data` is not writable by uid 65532. A named volume is fine (the image prepares it); a bind mount needs `chown 65532:65532`. Under systemd use `StateDirectory=`. Running the container as root (`user: "0"`) with `cap_drop: [ALL]` fails the same way: root without `CAP_DAC_OVERRIDE` cannot write a directory owned by 65532. Use `group_add` for the socket instead. |
 | The container is `unhealthy` right after start | The image's health check talks to the control socket in `/run`: give the container a `tmpfs: /run:uid=65532,gid=65532,mode=0700` (it is read-only otherwise). |
 | `whalenurse status` says it cannot connect | The CLI uses the unix socket (`WHALENURSE_CONTROL_SOCKET`); run it where the socket is (`docker exec`). Under systemd run it as the service user. |
 | A warning that the dashboard has no token | `WHALENURSE_HTTP_ADDR` is not loopback and no token is set. Set the token, or publish the port on `127.0.0.1`. |

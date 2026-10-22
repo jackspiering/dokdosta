@@ -137,6 +137,8 @@ jobs:
           go-version-file: go.mod
       - name: Every action is pinned to a commit SHA
         run: scripts/ci/check-pins.sh
+      - name: What the workflows' steps must say (scripts/ci/check-workflows.sh)
+        run: scripts/ci/check-workflows.sh --self-test && scripts/ci/check-workflows.sh
       - name: actionlint
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
