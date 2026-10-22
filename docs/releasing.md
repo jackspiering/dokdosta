@@ -27,6 +27,11 @@ An agent never tags on its own initiative, as a side effect of another task, or 
 3. `actions/attest` stores build provenance for the archives and SBOMs (from `checksums.txt`) and the image (from `digests.txt`).
 4. `scripts/release/verify.sh` runs against what was just published, so a pipeline that signed nothing fails loudly.
 
+Both jobs build from an **empty Go cache** (`cache: false` on `actions/setup-go`, `cache-binary: false` on
+`setup-buildx-action`, no `actions/cache`): a tag run could otherwise restore the cache that `main`'s CI saved, and `go build`
+trusts the compiled packages in it. `scripts/ci/check-workflows.sh` enforces this, and that every checkout has
+`persist-credentials: false`.
+
 Pull requests and `main` run `ci.yml`, which includes a **GoReleaser snapshot**: the same archives, checksums, SBOMs and
 image are built from the commit, with `contents: read` only, no registry login, no cosign and no OIDC. Nothing is pushed or
 signed outside a tag.

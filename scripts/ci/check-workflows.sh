@@ -3,6 +3,12 @@
 #   - the GoReleaser release step of release.yml names the tag it releases: GORELEASER_CURRENT_TAG: ${{ github.ref_name }}.
 #     Without it GoReleaser takes the first of `git tag --points-at HEAD`, and an -rc tag on the same commit sorts first, so
 #     the final release would be built and published as the -rc. No other workflow sets it.
+#   - release.yml restores nothing another run saved: every actions/setup-go step has `cache: false` (its default caches
+#     GOMODCACHE and GOCACHE, and a tag run restores the caches main's CI saved; go build trusts GOCACHE's compiled packages,
+#     go mod verify does not look at them), every docker/setup-buildx-action step has `cache-binary: false`, and there is no
+#     actions/cache step and no type=gha build cache.
+#   - every actions/checkout step, in every workflow, has `persist-credentials: false`: no later step needs the token in
+#     .git/config, so it is not left there.
 #   scripts/ci/check-workflows.sh [workflow-dir]
 #   scripts/ci/check-workflows.sh --self-test
 # The steps must be written in block style (check-pins.sh refuses the other forms). A rule that finds none of the steps it is
@@ -42,8 +48,44 @@ check() { # check <workflow-dir>
     fi
   done < <(steps "$release")
   if [[ $found -eq 0 ]]; then echo "FAIL $release has no GoReleaser release step"; fail=1; fi
+
+  local setup_go=0
+  while IFS= read -r -d '' step; do
+    n="${step%%$'\n'*}" text="${step#*$'\n'}"
+    if grep -Eq '^[[:space:]-]*uses:[[:space:]]*actions/setup-go@' <<<"$text"; then
+      setup_go=1
+      if grep -Eq '^[[:space:]]*cache:[[:space:]]*false[[:space:]]*(#.*)?$' <<<"$text"; then
+        echo "ok   $release:$n setup-go restores no cache"
+      else
+        echo "FAIL $release:$n actions/setup-go must have cache: false (a tag run would restore the Go cache main's CI saved)"
+        fail=1
+      fi
+    fi
+    if grep -Eq '^[[:space:]-]*uses:[[:space:]]*docker/setup-buildx-action@' <<<"$text" &&
+      ! grep -Eq '^[[:space:]]*cache-binary:[[:space:]]*false[[:space:]]*(#.*)?$' <<<"$text"; then
+      echo "FAIL $release:$n docker/setup-buildx-action must have cache-binary: false"
+      fail=1
+    fi
+  done < <(steps "$release")
+  if [[ $setup_go -eq 0 ]]; then echo "FAIL $release has no actions/setup-go step"; fail=1; fi
+  if n=$(grep -nE '^[[:space:]-]*uses:[[:space:]]*actions/cache(/[a-z]+)?@' "$release"); then
+    echo "FAIL $release:${n%%:*} uses actions/cache; the release builds from nothing another run saved"
+    fail=1
+  fi
+  if n=$(grep -nE 'type=gha' "$release"); then
+    echo "FAIL $release:${n%%:*} uses the GitHub Actions build cache (type=gha)"
+    fail=1
+  fi
   shopt -s nullglob
   for f in "$dir"/*.yml "$dir"/*.yaml; do
+    while IFS= read -r -d '' step; do
+      n="${step%%$'\n'*}" text="${step#*$'\n'}"
+      if grep -Eq '^[[:space:]-]*uses:[[:space:]]*actions/checkout@' <<<"$text" &&
+        ! grep -Eq '^[[:space:]]*persist-credentials:[[:space:]]*false[[:space:]]*(#.*)?$' <<<"$text"; then
+        echo "FAIL $f:$n actions/checkout must have persist-credentials: false"
+        fail=1
+      fi
+    done < <(steps "$f")
     [[ "$f" == "$release" ]] && continue
     if n=$(grep -n 'GORELEASER_CURRENT_TAG' "$f"); then
       echo "FAIL $f:${n%%:*} sets GORELEASER_CURRENT_TAG; only the release workflow may"
@@ -75,6 +117,15 @@ self_test() {
   publish:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          cache-binary: false
       - name: GoReleaser
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
@@ -95,6 +146,26 @@ self_test() {
           GORELEASER_CURRENT_TAG: \${{ github.ref_name }}
         run: true"
   t pass "steps indented at the level of steps: too" "" <<<"$(sed 's/^      -/    -/; s/^        /      /' <<<"$good")"
+  t fail "setup-go without cache: false" "must have cache: false" <<<"$(grep -v 'cache: false' <<<"$good")"
+  t fail "setup-go with cache: true" "must have cache: false" <<<"${good/cache: false/cache: true}"
+  t fail "cache: false on the next step does not count" "must have cache: false" <<<"$(sed '/^          cache: false/d; s/^          cache-binary: false/          cache-binary: false\n          cache: false/' <<<"$good")"
+  t fail "a second setup-go without cache: false" "must have cache: false" <<<"$good
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0"
+  t fail "no setup-go step at all" "has no actions/setup-go step" <<<"$(sed '/setup-go@/,/cache: false/d' <<<"$good")"
+  t fail "setup-buildx-action without cache-binary: false" "must have cache-binary: false" <<<"$(grep -v 'cache-binary' <<<"$good")"
+  t fail "an actions/cache step" "uses actions/cache" <<<"$good
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0"
+  t fail "an actions/cache/restore step" "uses actions/cache" <<<"$good
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0"
+  t fail "a type=gha build cache" "type=gha" <<<"$good
+      - run: docker buildx build --cache-from type=gha ."
+  t fail "a checkout that keeps the credentials" "must have persist-credentials: false" <<<"$(grep -v 'persist-credentials' <<<"$good")"
+  CI_YML='jobs:
+  a:
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0' t fail "a checkout in another workflow that keeps the credentials" "ci.yml:4 actions/checkout must have persist-credentials" <<<"$good"
   t fail "no GoReleaser release step at all" "has no GoReleaser release step" <<<'jobs:
   publish:
     steps:

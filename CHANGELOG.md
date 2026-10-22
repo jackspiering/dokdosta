@@ -28,6 +28,11 @@ workflow refuses an undated section.
   secret. The risk (credentials in a container that holds the Docker socket) and the advice (a pull-only token, mode
   0440, a `:ro` mount) are in [docs/security.md](docs/security.md#private-registries).
 
+### Security
+
+- **The release is built from an empty Go cache.** The release workflow no longer restores the Go build and module cache
+  that `main`'s CI saves (`actions/setup-go` cached both by default), so nothing compiled in another run can reach the
+  signed binaries and image. CI checkouts no longer keep the token in `.git/config`.
 ### Changed
 
 - **examples/full trusts its Tailscale proxy.** The `dashboard` network has a fixed subnet (`DASHBOARD_SUBNET`, default
