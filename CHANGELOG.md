@@ -38,6 +38,11 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A `docker compose run` container hid its service from healing and the dashboard (WN-004).** Compose writes no
+  container number on a one-off container, so it shared the state key of the service's first container and, being newer,
+  replaced it in the index: the service went unhealed for as long as the one-off container existed. A one-off or swarm-task
+  container no longer takes a key from a container whalenurse watches, and `com.docker.compose.oneoff` is read the same
+  case-insensitive way everywhere.
 - **A final release tagged on the same commit as its `-rc` is released as itself.** The release workflow now tells
   GoReleaser the tag it is releasing; before, GoReleaser took the first tag on the commit, the `-rc`, and would have
   re-published the `-rc` image tag and failed to create the release.

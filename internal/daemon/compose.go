@@ -188,7 +188,7 @@ func (d *Daemon) staleParentRefusal(c docker.Container) string {
 	}
 	for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
 		for _, s := range d.idx.all {
-			if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || s.Labels[docker.LabelOneOff] == "True" {
+			if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || docker.IsOneOff(s.Labels) {
 				continue
 			}
 			if s.State != "running" {
@@ -249,7 +249,7 @@ func (d *Daemon) parentOptedIn(c docker.Container) bool {
 		project := c.Labels[docker.LabelProject]
 		for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
 			for _, s := range d.idx.all {
-				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || s.Labels[docker.LabelOneOff] == "True" {
+				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || docker.IsOneOff(s.Labels) {
 					continue
 				}
 				if pc, _ := config.ParseLabels(s.Labels, d.cfg.Mode); pc.OptedIn {

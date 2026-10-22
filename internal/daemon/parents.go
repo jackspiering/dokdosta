@@ -68,7 +68,7 @@ func (d *Daemon) learnParents(key string, c docker.Container) {
 			}
 			for _, s := range d.idx.all {
 				svc := s.Labels[docker.LabelService]
-				if svc == "" || s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelOneOff] == "True" || !docker.MatchesRef(s.ID, s.Name, ref) {
+				if svc == "" || s.Labels[docker.LabelProject] != project || docker.IsOneOff(s.Labels) || !docker.MatchesRef(s.ID, s.Name, ref) {
 					continue
 				}
 				if !slices.Contains(next, svc) {
