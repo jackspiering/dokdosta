@@ -36,6 +36,9 @@ workflow refuses an undated section.
 - **The image's builder is pinned.** The BuildKit that builds the release image is pinned by digest
   (`moby/buildkit:v0.33.1`, the release the floating `buildx-stable-1` named), and the Dockerfiles no longer fetch the
   floating `docker/dockerfile:1` frontend; BuildKit's built-in one is used.
+- **Go 1.27.3.** The binaries and the image are built with Go 1.27.3, which fixes GO-2026-6809 (`crypto/x509` trusted
+  compromised intermediate certificates; whalenurse reaches it through the SMTP notifications). CI and the release now run
+  `govulncheck`, and check that the Dockerfiles build with the Go of `go.mod`.
 ### Changed
 
 - **examples/full trusts its Tailscale proxy.** The `dashboard` network has a fixed subnet (`DASHBOARD_SUBNET`, default
