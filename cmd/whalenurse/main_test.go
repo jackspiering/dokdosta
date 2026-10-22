@@ -223,7 +223,7 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	outputs := map[string]string{
 		"logs": logs.String(), "notify test": test.String(), "status text": text.String(), "status json": string(js),
 		"healthz": healthz.Body.String(), "socket status": sockStatus.Body.String(),
-		"401 body":      denied.Body.String() + fmt.Sprint(denied.Header()),
+		"401 body": denied.Body.String() + fmt.Sprint(denied.Header()),
 		// A generic:// URL's own "$k=" value is a field of the payload sent to that same service (Shoutrrr's design, not a
 		// leak); the rest of every body is checked.
 		"sent messages": strings.ReplaceAll(sent.String(), `"k":"tok-QUERY-90421"`, ""),
