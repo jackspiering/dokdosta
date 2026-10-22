@@ -120,3 +120,15 @@ func TestRedactorLeavesImageReferencesOfTheRegistryUserAlone(t *testing.T) {
 		t.Errorf("an image reference was changed:\n%s\n%s", in, got)
 	}
 }
+
+// A boolean option value of a notification URL (Telegram's preview=false, SMTP's usehtml=true) is no secret, and masking
+// it turned whalenurse's own ok=false into ok=*** (plan v3.13 item 20). Every other value is still masked.
+func TestRedactorKeepsBooleanOptionValues(t *testing.T) {
+	r := NewRedactor("telegram://123456789:AAEhBP0-tok@telegram?channels=@ops&preview=false&x=TRUE&y=yes,Off,secret-piece&notify=on")
+	if got := r.Redact("ok=false dry_run=true TRUE yes off"); got != "ok=false dry_run=true TRUE yes off" {
+		t.Errorf("boolean words were masked: %q", got)
+	}
+	if got := r.Redact("token AAEhBP0-tok channel @ops piece secret-piece"); strings.Contains(got, "AAEhBP0") || strings.Contains(got, "@ops") || strings.Contains(got, "secret-piece") {
+		t.Errorf("a secret survived: %q", got)
+	}
+}
