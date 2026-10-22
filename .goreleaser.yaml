@@ -5,6 +5,11 @@
 version: 2
 project_name: whalenurse
 
+# The release workflow names the tag (GORELEASER_CURRENT_TAG). Without it (a local `make snapshot`) GoReleaser takes the first
+# tag on the commit, and this makes v0.2.0 sort before v0.2.0-rc.1 on the same commit.
+git:
+  prerelease_suffix: "-"
+
 before:
   hooks:
     - go mod verify

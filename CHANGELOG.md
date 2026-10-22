@@ -30,6 +30,9 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A final release tagged on the same commit as its `-rc` is released as itself.** The release workflow now tells
+  GoReleaser the tag it is releasing; before, GoReleaser took the first tag on the commit, the `-rc`, and would have
+  re-published the `-rc` image tag and failed to create the release.
 - **Docs: backing up the store.** [docs/upgrading.md](docs/upgrading.md#backing-up-and-restoring-the-store) now says to stop
   whalenurse before copying its SQLite database (a copy of a running one may not open), and gives the backup and restore
   commands for the container and systemd setups, including removing a newer version's `-wal`/`-shm` before a restore.

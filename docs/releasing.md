@@ -99,7 +99,8 @@ The first push creates `ghcr.io/jackspiering/whalenurse` as a **private** packag
    pre-release. Run `make verify-release TAG=v0.1.0-rc.1`. If a step fails, fix it on `main` and tag `rc.2`: **a tag that
    was published is never reused** (immutable releases would refuse it anyway).
 3. Tag the real release the same way (`v0.1.0`), push it, watch the workflow, run `make verify-release TAG=v0.1.0`, do the
-   anonymous pull above.
+   anonymous pull above. The final tag may point at the same commit as the `-rc`: the workflow tells GoReleaser which tag
+   it is releasing (`GORELEASER_CURRENT_TAG`, checked by `scripts/ci/check-workflows.sh`), so it is never built as the `-rc`.
 4. Announce.
 
 Steps 2 and 3 can be delegated: tell an agent which tag to make ("tag and push v0.1.1"). It makes that tag and no other, from
