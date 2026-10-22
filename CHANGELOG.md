@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Security
+
+- **A compose label could put a flag on the compose command line (WN-001).** The project and service labels, which an image
+  can ship, were passed to compose unchecked; a service of `--dry-run=false` overrode the drift guard's `--dry-run` and ran a
+  real `up` of the project, in dry-run mode too. whalenurse now refuses a project or service that is not a name compose would
+  write, and that container gets the restart rung only. 0.1.0 and 0.1.1 are affected.
+
 ### Added
 
 - **Private registries for the pull rung (R5).** `WHALENURSE_REGISTRY_AUTH_DIR` names a read-only directory holding a
@@ -26,6 +33,9 @@ workflow refuses an undated section.
 - **A final release tagged on the same commit as its `-rc` is released as itself.** The release workflow now tells
   GoReleaser the tag it is releasing; before, GoReleaser took the first tag on the commit, the `-rc`, and would have
   re-published the `-rc` image tag and failed to create the release.
+- **Docs: backing up the store.** [docs/upgrading.md](docs/upgrading.md#backing-up-and-restoring-the-store) now says to stop
+  whalenurse before copying its SQLite database (a copy of a running one may not open), and gives the backup and restore
+  commands for the container and systemd setups, including removing a newer version's `-wal`/`-shm` before a restore.
 
 ## [0.1.1] - 2026-10-20
 

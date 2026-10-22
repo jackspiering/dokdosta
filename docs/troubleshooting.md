@@ -88,6 +88,11 @@ Messages like `recreate skipped: compose inputs of project X are not readable fr
   files, file-based `secrets:` and `configs:`.
 - The directory and all its parents must be readable (traversable) by uid 65532.
 - A container that compose did not create (`docker run`) has no labels to recreate from and only gets the restart rung.
+- `label com.docker.compose.service is "...", which is not a compose service name` (or the same for
+  `com.docker.compose.project`): the label holds something compose would never write, such as a value starting with `-`, a
+  `,` or a `:`. whalenurse does not pass it to compose, so the container gets the restart rung only. Compose writes these
+  labels itself; a value like this usually comes from the image's own labels or from a container made by hand. Check with
+  `docker inspect -f '{{json .Config.Labels}}' <container>` and `docker image inspect -f '{{json .Config.Labels}}' <image>`.
 - Engine below 28.1 or compose below v5.2.0: rungs 2 and 3 are disabled at startup, with one warning that names the versions.
   `status` shows it.
 
