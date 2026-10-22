@@ -271,6 +271,16 @@ func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "streaming is not available")
 		return
 	}
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Accel-Buffering", "no") // nginx: do not buffer
+	if r.Method == http.MethodHead {
+		// The headers only. net/http discards a HEAD's body, so no write would ever fail and the loop below would hold a
+		// slot until shutdown, even after the client has gone.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	wake, cancel, ok := s.Hub.Subscribe()
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "too many streams")
@@ -290,10 +300,6 @@ func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	key := r.URL.Query().Get("key")
 
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-store")
-	h.Set("X-Accel-Buffering", "no") // nginx: do not buffer
 	fmt.Fprint(w, "retry: 3000\n: connected\n\n")
 	fl.Flush()
 

@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -236,7 +238,9 @@ func TestFailedUpgradeStaysFailedUnderABooleanURLOption(t *testing.T) {
 			Attrs:   map[string]string{"ref": "x:latest", "old": "sha256:aaa", "new": "sha256:bbb", "ok": c.ok, "error": "exit status 1"}})
 		red := notify.NewRedactor(c.url)
 		// The redactor of before item 20, which also masked boolean words: the decision must not depend on it.
-		mask := func(v string) string { return strings.NewReplacer("false", "***", "true", "***").Replace(red.Redact(v)) }
+		mask := func(v string) string {
+			return strings.NewReplacer("false", "***", "true", "***").Replace(red.Redact(v))
+		}
 		for name, redact := range map[string]func(string) string{"redactor": red.Redact, "masking every boolean": mask} {
 			s := &Service{Host: "nas", Source: fixtureSource{}, Events: r, Redact: redact}
 			d, ok := s.Container("nas/media/vpn/1")
@@ -299,6 +303,87 @@ func (m manyHistory) History(string) ([]engine.ClosedIncident, error) {
 		out[i] = engine.ClosedIncident{Key: "nas/media/vpn/1", Opened: t0.Add(time.Duration(i) * time.Minute), Closed: t0.Add(time.Duration(i)*time.Minute + time.Second)}
 	}
 	return out, nil
+}
+
+// HEAD on the stream answers the headers and returns: net/http discards a HEAD's body, so a streaming handler would never
+// see a write fail, and held one of the MaxStreams slots until shutdown.
+func TestHEADOnTheStreamReturnsAtOnceAndHoldsNoSlot(t *testing.T) {
+	svc := fixtureService()
+	t.Cleanup(svc.Hub.Close)
+	h := Handler(Options{Health: okChecker{}, Service: svc})
+	req := httptest.NewRequest("HEAD", "/api/v1/stream", nil)
+	req.Host = "127.0.0.1:8484"
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { h.ServeHTTP(rec, req); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HEAD /api/v1/stream did not return")
+	}
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/event-stream" || svc.Hub.Clients() != 0 {
+		t.Fatalf("code %d, type %q, clients %d", rec.Code, rec.Header().Get("Content-Type"), svc.Hub.Clients())
+	}
+}
+
+// No route holds a HEAD request open (a future long-lived GET handler would have the stream's problem).
+func TestHEADOnEveryRouteReturns(t *testing.T) {
+	svc := fixtureService()
+	t.Cleanup(svc.Hub.Close)
+	h := Handler(Options{Health: okChecker{}, Service: svc})
+	for _, path := range allRoutes {
+		req := httptest.NewRequest("HEAD", path, nil)
+		req.Host = "127.0.0.1:8484"
+		done := make(chan struct{})
+		go func() { h.ServeHTTP(httptest.NewRecorder(), req); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("HEAD %s did not return", path)
+		}
+	}
+}
+
+// The real leak: a client that reuses the keep-alive connection after a HEAD and then closes it. No stream is held, and
+// after MaxStreams of them a GET still streams.
+func TestHEADOnAReusedConnectionHoldsNoStream(t *testing.T) {
+	svc := fixtureService()
+	srv := httptest.NewServer(Handler(Options{Health: okChecker{}, Service: svc}))
+	defer srv.Close()
+	defer svc.Hub.Close()
+	for range MaxStreams {
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		br := bufio.NewReader(conn)
+		fmt.Fprint(conn, "HEAD /api/v1/stream HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				t.Fatalf("reading the HEAD answer: %v", err)
+			}
+			if line == "\r\n" {
+				break
+			}
+		}
+		fmt.Fprint(conn, "GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+		time.Sleep(20 * time.Millisecond)
+		conn.Close()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for svc.Hub.Clients() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := svc.Hub.Clients(); n != 0 {
+		t.Fatalf("%d streams held after HEAD requests", n)
+	}
+	c := connect(t, srv.URL+"/api/v1/stream")
+	defer c.close()
+	if c.resp.StatusCode != 200 {
+		t.Fatalf("a GET stream after the HEADs: %d", c.resp.StatusCode)
+	}
 }
 
 // ---- security -------------------------------------------------------------------------------------------
