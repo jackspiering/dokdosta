@@ -30,9 +30,11 @@ const actionTimeout = 2 * time.Minute
 
 // shutdownGrace is how long an action in flight may still run once whalenurse is told to stop (SIGTERM, SIGINT). The
 // loop is synchronous, so Run returns right after the action. It must stay below the stop timeout the deployment gives
-// whalenurse (stop_grace_period in the compose examples, TimeoutStopSec in the systemd unit), or the action is killed
-// with the process; a compose command that is stopped gets compose.StopDelay more before it is killed.
-const shutdownGrace = 60 * time.Second
+// whalenurse (stop_grace_period in the compose examples, TimeoutStopSec in the systemd unit, both 60 s), or the action
+// is killed with the process; a compose command that is stopped gets compose.StopDelay more before it is killed. It is
+// kept short because dockerd's own shutdown waits for the longest stop_grace_period plus 5 s, inside docker.service's
+// stop timeout (systemd's default, 90 s).
+const shutdownGrace = 30 * time.Second
 
 // MetaBootID is the store key the kernel boot id is kept under.
 const MetaBootID = "boot_id"
