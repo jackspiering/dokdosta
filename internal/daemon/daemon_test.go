@@ -555,6 +555,61 @@ func TestSkips(t *testing.T) {
 	h.wantCalls()
 }
 
+// WN-004: compose writes no container-number on a `docker compose run` container (compose's createContainer gets -1, and
+// "one-off containers are not indexed"), so it falls back to the service's key. Being newer, it must still not take that
+// key from the service's real container, in the loop or on the dashboard.
+func TestComposeRunContainerDoesNotHideItsService(t *testing.T) {
+	for _, tc := range []struct{ name, number, oneoff string }{
+		{"no container-number", "", "True"}, {"container-number 1", "1", "True"}, {"lowercase oneoff", "", "true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, nil, nil)
+			a := h.running(hexID("a1"), "p", "web")
+			l := map[string]string{docker.LabelProject: "p", docker.LabelService: "web", docker.LabelOneOff: tc.oneoff, config.LabelEnable: "true"}
+			if tc.number != "" {
+				l[docker.LabelNumber] = tc.number
+			}
+			run := docker.Container{ID: hexID("b1"), Name: "p-web-run-1a2b3c", Status: "exited", Labels: l,
+				Created: h.clk.Now(), RestartPolicy: "no", NetworkMode: "p_default"}
+			h.fake.Put(run)
+			h.tick()
+			c := h.set(a.ID, unhealthy)
+			h.event(c, "health_status", "unhealthy")
+			h.advance(2 * time.Minute)
+			h.wantCalls("restart " + a.ID)
+			found := false
+			for _, d := range h.d.containerDocs() {
+				if d.Key == "h/p/web/1" {
+					found = true
+					if d.Name != a.Name {
+						t.Fatalf("dashboard key shows %s, want the real container", d.Name)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("no dashboard row for h/p/web/1")
+			}
+		})
+	}
+}
+
+// A key whose only container is a one-off container still resolves to it, and it is skipped.
+func TestComposeRunContainerAloneIsShownAndSkipped(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	run := docker.Container{ID: hexID("b1"), Name: "p-web-run-1a2b3c", Status: "running", Running: true,
+		Labels:  map[string]string{docker.LabelProject: "p", docker.LabelService: "web", docker.LabelOneOff: "True", config.LabelEnable: "true"},
+		Created: h.clk.Now(), RestartPolicy: "no", NetworkMode: "p_default"}
+	h.fake.Put(run)
+	h.tick()
+	h.set(run.ID, unhealthy)
+	h.advance(5 * time.Minute)
+	h.wantCalls()
+	docs := h.d.containerDocs()
+	if len(docs) != 1 || docs[0].Name != run.Name {
+		t.Fatalf("%+v", docs)
+	}
+}
+
 func TestNonComposeContainerIsHealedByName(t *testing.T) {
 	h := newHarness(t, nil, nil)
 	c := docker.Container{ID: hexID("a1"), Name: "plain", Labels: map[string]string{config.LabelEnable: "true"}, Status: "running", Running: true}

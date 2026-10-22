@@ -145,6 +145,27 @@ func ComposeKeyParts(labels map[string]string) (project, service, number string,
 	return project, service, number, project != "" && service != ""
 }
 
+// IsOneOff reports whether the labels are those of a `docker compose run` container. Compose writes "True"; the test is
+// case-insensitive, like every other place that reads the label.
+func IsOneOff(labels map[string]string) bool {
+	return strings.EqualFold(labels[LabelOneOff], "true")
+}
+
+// PreferForKey reports whether s should hold a state key that old holds now. Two containers share a key while compose
+// renames the old one during a recreate, and the newest wins. A one-off or swarm-task container, which rule 0 always
+// skips, never takes the key from one that is not skipped: compose writes no container-number on a `compose run`
+// container, so it shares the key of its service's first container (WN-004).
+func PreferForKey(old, s Summary) bool {
+	if o, n := skippedForKey(old.Labels), skippedForKey(s.Labels); o != n {
+		return o
+	}
+	return s.Created.After(old.Created)
+}
+
+func skippedForKey(labels map[string]string) bool {
+	return IsOneOff(labels) || labels[LabelSwarmTaskID] != ""
+}
+
 // StateKey builds the state key host/project/service/container-number from
 // compose labels, never from the container ID because a recreate changes it.
 // Containers without compose labels fall back to host/name.

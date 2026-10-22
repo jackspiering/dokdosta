@@ -8,12 +8,17 @@ import "strings"
 // the container was created with, so they are exact.
 //
 // alsoServices are sidecars of the same project that run the same image and were recreated with it (plan v3.8): the one
-// `up` names them after the service, so a single paste puts them all back.
+// `up` names them after the service, so a single paste puts them all back. A name compose could not have written (it comes
+// from a label, see Project.Validate) is left out rather than pasted into a shell as a flag.
 func RollbackCommands(p Project, ref, oldImage string, alsoServices ...string) (tag, up string) {
 	tag = "docker image tag " + oldImage + " " + shellWord(ref)
 	args := append([]string{"docker", "compose"}, p.baseArgs()...)
 	args = append(args, "up", "-d", "--no-deps", "--pull", "never", p.Service)
-	args = append(args, alsoServices...)
+	for _, s := range alsoServices {
+		if ValidService(s) {
+			args = append(args, s)
+		}
+	}
 	for i, a := range args {
 		args[i] = shellWord(a)
 	}

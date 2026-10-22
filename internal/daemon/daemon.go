@@ -506,7 +506,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, ev docker.Event) {
 		return
 	}
 	cfg, _ := config.ParseLabels(ev.Labels, d.cfg.Mode)
-	if !cfg.OptedIn || ev.Labels[docker.LabelOneOff] == "True" || ev.Labels[docker.LabelSwarmTaskID] != "" {
+	if !cfg.OptedIn || docker.IsOneOff(ev.Labels) || ev.Labels[docker.LabelSwarmTaskID] != "" {
 		return
 	}
 	t := engine.Target{Key: docker.StateKey(d.cfg.HostID, ev.Name, ev.Labels), ID: ev.ID, Name: ev.Name}
@@ -810,7 +810,7 @@ func (d *Daemon) refresh(ctx context.Context) error {
 	for _, s := range list {
 		idx.byID[s.ID] = s
 		k := d.keyOf(s)
-		if old, ok := idx.byKey[k]; !ok || s.Created.After(old.Created) {
+		if old, ok := idx.byKey[k]; !ok || docker.PreferForKey(old, s) {
 			idx.byKey[k] = s
 		}
 	}

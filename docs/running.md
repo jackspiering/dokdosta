@@ -2,7 +2,7 @@
 
 This is the detailed behaviour reference (what each rung does, the drift guard, sidecars, shutdown handling, the dashboard's paths). For how to install and run it see [deployment.md](deployment.md); every variable and label is in [configuration.md](configuration.md) and [labels.md](labels.md); [troubleshooting.md](troubleshooting.md) answers "why is it SUSPENDED?".
 
-whalenurse watches Docker, and for opted-in containers that go unhealthy, crash-loop, or stop unexpectedly it runs rung 1 (a Docker API `restart` or `start`), then rung 2 (recreate from the stack's own compose files, behind a drift guard), and repairs `network_mode` sidecars that depend on a container it restarted or recreated. M2a added the persisted state, the full ladder (cooldown, recovery period, flap limit, SUSPENDED, PAUSED), the CLI and shutdown handling; M2b adds compose. M3 added notifications and M4 adds the opt-in pull rung (rung 3).
+whalenurse watches Docker, and for opted-in containers that go unhealthy, crash-loop, or stop unexpectedly it runs rung 1 (a Docker API `restart` or `start`), then rung 2 (recreate from the stack's own compose files, behind a drift guard), then, for a container that opts in, rung 3 (pull a newer image and recreate), and it repairs `network_mode` sidecars that depend on a container it restarted or recreated. Around that ladder: a persisted state store, cooldowns, a flap limit, SUSPENDED and PAUSED, the CLI, shutdown handling, notifications and an optional read-only dashboard, each described below.
 
 ## Recreate: two read-only mounts, and the versions it needs
 
@@ -64,17 +64,14 @@ Labels read: `whalenurse.enable`, `whalenurse.actions` (`restart`, `recreate`; d
 ```
 docker run --rm --read-only --group-add "$(stat -c %g /var/run/docker.sock)" \
   --tmpfs /run:uid=65532,gid=65532,mode=0700 \
-  -v /var/run/docker.sock:/var/run/docker.sock whalenurse run --dry-run
+  -v /var/run/docker.sock:/var/run/docker.sock ghcr.io/jackspiering/whalenurse:<tag> run --dry-run
 ```
 
-Every decision is a JSON log line on stderr with a `type` such as `IncidentOpened`, `ActionResult` (with `attr.dry_run=true`), `Suspended`, `DriftBlocked`, `NeedsRecreate`, `WaitingForParent` or `NotifyOnly`. In dry-run the healer holds no-op actors for Docker and for compose, so it cannot change a container (the drift guard still runs, because it only reads: compose's own `--dry-run`, `config --hash`, an image inspect), **and it stores nothing**: incidents, SUSPENDED and pauses of a dry run live in memory only, so they are not there for the next real run to find. A dry run does not need `/data`.
+Every decision is a JSON log line on stderr with a `type` such as `IncidentOpened`, `ActionResult` (with `attr.dry_run=true`), `Suspended`, `DriftBlocked`, `NeedsRecreate`, `WaitingForParent` or `NotifyOnly`. In dry-run the healer holds no-op actors for Docker and for compose, so it cannot change a container (the drift guard still runs, because it only reads: compose's own `--dry-run`, `config --hash`, an image inspect), **and it stores nothing**: incidents, SUSPENDED and pauses of a dry run live in memory only, so they are not there for the next real run to find. A dry run does not need `/data`. For the same reason a dry run keeps no boot id, `last_seen` or manual-stop markers across its own restarts, so it cannot always tell a host shutdown from a crash: after a reboot or a Docker restart it may say it would start a container that a real run leaves down (for example a `restart: "no"` app that exited non-zero, other than 137 or 143, when the host stopped it).
 
 ## Docker socket access
 
-Mounting `docker.sock` is **root-equivalent on the host**. The image is `gcr.io/distroless/static:nonroot` (uid 65532, no shell), so it cannot open the socket by default and fails with `permission denied while trying to connect to the docker API`. Give it the socket's group:
-
-- container: `group_add: ["<gid>"]` where `<gid>` is `stat -c %g /var/run/docker.sock`; or
-- run as root with `user: "0"` if you accept that.
+Mounting `docker.sock` is **root-equivalent on the host**. The image is `gcr.io/distroless/static:nonroot` (uid 65532, no shell), so it cannot open the socket by default and fails with `permission denied while trying to connect to the docker API`. Give it the socket's group: `group_add: ["<gid>"]` where `<gid>` is `stat -c %g /var/run/docker.sock`. Do not run it as root instead: with the recommended `cap_drop: [ALL]`, uid 0 has no `CAP_DAC_OVERRIDE` and can write neither `/data` nor the `/run` tmpfs (both belong to uid 65532), so `whalenurse run` exits with "cannot open the state store".
 
 Run it with a read-only root filesystem. Writable paths: `/run` (a tmpfs for the control socket) and **`/data`, a volume for the state store**. The image creates `/data` owned by uid 65532 and declares it a volume, so a fresh named volume (`data:/data`) is writable by the nonroot user. A bind mount keeps the host directory's owner: `chown 65532:65532` it. `whalenurse run` (not dry-run) refuses to start if it cannot open the store.
 
@@ -100,7 +97,7 @@ There are no write endpoints on the TCP listener (`WHALENURSE_HTTP_ADDR`): it se
 
 ## Notifications
 
-Set `WHALENURSE_NOTIFY_URLS` to one or more [Shoutrrr](https://github.com/nicholas-fedor/shoutrrr) URLs (ntfy, Gotify, Discord, Telegram, Slack, Matrix, Pushover, a generic webhook and [many more](https://nicholas-fedor.github.io/shoutrrr/)), separated by whitespace or by a comma that is followed by `scheme://` (a comma inside a URL, as in `ntfy://ntfy.sh/topic?tags=warning,skull`, is part of it):
+Set `WHALENURSE_NOTIFY_URLS` to one or more [Shoutrrr](https://github.com/nicholas-fedor/shoutrrr) URLs (ntfy, Gotify, Discord, Telegram, Slack, Matrix, Pushover, a generic webhook and [many more](https://nicholas-fedor.github.io/shoutrrr/)), separated by whitespace or by a comma that is followed by `scheme://` (a comma inside a URL, as in `ntfy://ntfy.sh/topic?tags=warning,skull`, is part of it). So inside a URL, write a comma that is followed by `scheme://` as `%2C` and a space as `%20`, as in an ntfy button `actions=view%2COpen%2Chttps://example.com`:
 
 ```yaml
 environment:
@@ -115,7 +112,7 @@ Check the setup first: `docker exec whalenurse /whalenurse notify test` sends on
 
 What is sent: an action taken (`restarted`, `recreated`, or the failure), recovered, **giving up (SUSPENDED) with the cause** (including "the pull found no newer image"), **upgraded during heal** (the pull rung, with the rollback), unsuspended again (with the reason), whalenurse's own action rate limit reached (at most once an hour per URL), flapping, **a recreate blocked by the drift guard** (with the reason and what to do), a container that is left down by policy (a `restart: "no"` parent stopped by a host shutdown, with its dependents), a needed recreate that is not available, the version-gate warning, and pause and resume. Each message names the host and the container key, and fits a phone push (title 72, body 360 characters). The same event for the same container is sent once per incident, and that is remembered across restarts (the state store keeps it, 24 h; a dry run keeps it in memory only). Each URL has its own limit (`WHALENURSE_NOTIFY_RATE_LIMIT`, default 20 an hour; the important messages may use all of it, the routine ones half) and its own queue: a slow or dead URL never delays healing or another URL. Failures are logged by position and scheme, counted, and shown in `status`.
 
-**Uptime ping.** With `WHALENURSE_HEARTBEAT_URL` (a healthchecks.io or Uptime Kuma push URL) whalenurse sends a GET every `WHALENURSE_HEARTBEAT_INTERVAL` (default 5m) while it is healthy. When it is not (the events stream has been down too long), it stays quiet, so the monitor raises the alarm by the missing ping.
+**Uptime ping.** With `WHALENURSE_HEARTBEAT_URL` (a healthchecks.io or Uptime Kuma push URL) whalenurse sends a GET every `WHALENURSE_HEARTBEAT_INTERVAL` (default 5m) while it is healthy. When it is not (the events stream has been down too long), it stays quiet, so the monitor raises the alarm by the missing ping. A dry run sends the uptime ping too, unmarked: give a second instance (for example a dry run on another host) its own URL or none, or it keeps the live instance's monitor green.
 
 Decisions and open points: [m3-notes.md](m3-notes.md).
 
