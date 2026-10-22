@@ -14,11 +14,27 @@ What whalenurse does with that power, so you can judge it:
 - It acts only on containers that are opted in (`whalenurse.enable=true`, or every container with `WHALENURSE_MODE=all`
   minus those labelled `false`), and never on itself, on `docker compose run` containers or on swarm tasks.
 - Its own Docker API calls are reads (`ping`, `list`, `inspect`, `events`, `version`, `image inspect`) and two actions, `restart` and `start`. Recreates and pulls go through the `docker compose`
-  binary with a fixed set of commands: `up -d --no-deps --pull never --no-build <service>` (with `--force-recreate` when
-  needed), `pull --policy always <service>` for the opt-in pull rung, `config` and dry-runs for the drift guard. The `compose`
+  binary with a fixed set of commands: `up -d --no-deps --pull never --no-build <service>` (always with `--force-recreate`
+  for rung 2; for the pull rung and a sidecar's repair only when a post-check finds the old container still there),
+  `pull --policy always <service>` for the opt-in pull rung, `config` and dry-runs for the drift guard. The `compose`
   package cannot express `down`, `rm`, `build` or an `up` that could pull.
 - The compose files it runs are the ones **recorded on the container** (`com.docker.compose.project.config_files`), read from
-  the stacks you mount. Whoever can create a container can already do anything the socket allows; the labels add nothing to that.
+  the stacks you mount. Those labels are not only written by whoever creates the container: Docker also copies an image's
+  own labels onto its containers, so an image can ship compose labels too. The project and service names go onto the compose
+  command line, so whalenurse refuses a container whose `com.docker.compose.project` is not a name compose would write
+  (lowercase letters, digits, `_` and `-`, starting with a letter or digit) or whose `com.docker.compose.service` is not
+  (letters, digits, `.`, `_` and `-`, not starting with `-`): it gets the restart rung only, and the recreate and pull rungs
+  are reported as unavailable. In 0.1.0 and 0.1.1 a service label such as `--dry-run=false` was passed to compose as a flag
+  and could turn the drift guard's dry-run into a real `up` of the project.
+
+- **The image's publisher is a second source of labels.** Docker puts an image's own labels on every container made from
+  it, for each key the container is not given itself, so the publisher of an image you run can set `whalenurse.*` labels as
+  well as you can: `whalenurse.enable=true` opts the container in under the default `WHALENURSE_MODE=label`,
+  `whalenurse.heal.pull=true` lets whalenurse pull a newer image for it, `whalenurse.heal-exited=always` starts it again after
+  a `docker stop`, and a high `whalenurse.flap-limit` lets it use more of the host-wide rate limit. whalenurse cannot tell
+  these from labels you wrote. The publisher already runs code in that container, so this adds little power, but it does mean
+  an image can opt itself in. Check what an image brings with `docker image inspect -f '{{json .Config.Labels}}' <image>`;
+  a label you set on the service wins (see [Labels from the image](labels.md#labels-from-the-image)).
 
 How to reduce the exposure:
 
@@ -26,7 +42,9 @@ How to reduce the exposure:
   The image is `distroless/static:nonroot` (uid 65532, no shell); give it the socket's group with `group_add` instead of
   running it as root.
 - Mount the stacks and the compose plugin **read-only** (`:ro`): recreate works with read-only mounts.
-- Keep `/data` as its own volume: it holds the store, which is the only thing whalenurse writes.
+- Keep `/data` as its own volume: it holds the store. Besides the store, whalenurse writes its control socket and an empty
+  private directory it gives compose as `DOCKER_CONFIG` (compose v5.2.0 to v5.5.x write buildx state there during the drift
+  guard's dry-run); in the container both are on the `/run` tmpfs.
 - A socket proxy that allows only what whalenurse needs is on the roadmap but adds little today: compose itself needs broad
   API access to recreate.
 
@@ -45,7 +63,8 @@ names and the event history, so keep it off the open network.
    set and `WHALENURSE_HTTP_TRUSTED_PROXIES` set to the proxy's network.
 3. **A Tailscale container on a shared bridge network** that forwards with `tailscale serve` (see
    [examples/full](../examples/full/compose.yaml)). whalenurse publishes no port at all and is reachable over HTTPS on your
-   tailnet only. **Never `network_mode: service:tailscale`**: whalenurse would become a dependent of a container it may heal,
+   tailnet only. Serve is a reverse proxy too: set `WHALENURSE_HTTP_TRUSTED_PROXIES` to the shared network (the example
+   gives it a fixed subnet for this). **Never `network_mode: service:tailscale`**: whalenurse would become a dependent of a container it may heal,
    and the sidecar machinery would then restart or recreate it with its parent.
 
 Never publish the port on `0.0.0.0` of a machine on an untrusted network. whalenurse warns at startup when the listener is
