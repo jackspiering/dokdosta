@@ -146,7 +146,7 @@ func New(o Options) *Notifier {
 	}
 	n := &Notifier{
 		o: o, clk: o.Clock, log: o.Log,
-		in:      make(chan engine.Event, o.QueueSize),
+		in:       make(chan engine.Event, o.QueueSize),
 		sent:     map[string]time.Time{},
 		reasons:  map[string]string{},
 		foldNext: map[string]string{},
