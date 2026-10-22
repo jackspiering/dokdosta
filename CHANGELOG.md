@@ -35,9 +35,15 @@ workflow refuses an undated section.
   replaced it in the index: the service went unhealed for as long as the one-off container existed. A one-off or swarm-task
   container no longer takes a key from a container whalenurse watches, and `com.docker.compose.oneoff` is read the same
   case-insensitive way everywhere.
+- **A final release tagged on the same commit as its `-rc` is released as itself.** The release workflow now tells
+  GoReleaser the tag it is releasing; before, GoReleaser took the first tag on the commit, the `-rc`, and would have
+  re-published the `-rc` image tag and failed to create the release.
 - **Docs: backing up the store.** [docs/upgrading.md](docs/upgrading.md#backing-up-and-restoring-the-store) now says to stop
   whalenurse before copying its SQLite database (a copy of a running one may not open), and gives the backup and restore
   commands for the container and systemd setups, including removing a newer version's `-wal`/`-shm` before a restore.
+- **Docs: no root alternative for the socket.** [docs/running.md](docs/running.md#docker-socket-access) offered `user: "0"`
+  instead of `group_add`, which cannot start with the documented hardening (`cap_drop: [ALL]`: root cannot write `/data` or the
+  `/run` tmpfs, both owned by uid 65532). `group_add` is now the only way given, and troubleshooting explains the failure.
 
 ## [0.1.1] - 2026-10-20
 
