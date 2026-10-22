@@ -9,7 +9,7 @@
       <dt>Docker events</dt><dd>{{if .EventsUp}}connected{{else}}<strong>stream down</strong>{{end}}</dd>
       <dt>Startup sweep</dt><dd>{{if .Settled}}done{{else}}waiting for the startup settle{{end}}</dd>
       <dt>Mode</dt><dd>{{.Mode}}{{if .DryRun}}, dry run{{end}}</dd>
-      <dt>State kept</dt><dd>{{if .Persistent}}in the store (survives restarts){{else}}in memory only{{end}}</dd>
+      <dt>State kept</dt><dd>{{if and .Store .Store.Errors}}<strong>in memory: {{.Store.Errors}} store operations failed</strong> (last: {{.Store.LastErrorOp}}, {{timeTag .Store.LastErrorAt}}), so the state may not survive a restart{{else if .Persistent}}in the store (survives restarts){{else}}in memory only{{end}}</dd>
       <dt>Started</dt><dd>{{timeTag .StartedAt}}</dd>
       {{if not .RestoreUntil.IsZero}}<dt>Restore window</dt><dd>open, {{expiry .RestoreUntil}}: starts are restores, not people</dd>{{end}}
     </dl>

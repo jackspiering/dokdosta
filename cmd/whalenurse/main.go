@@ -560,6 +560,10 @@ func printStatus(w io.Writer, st daemon.Status) {
 	if !st.Settled {
 		flags = append(flags, "still in the startup settle period")
 	}
+	if st.Store != nil && st.Store.Errors > 0 {
+		flags = append(flags, fmt.Sprintf("STORE: %d operations failed, the last (%s) at %s: state may not survive a restart",
+			st.Store.Errors, st.Store.LastErrorOp, st.Store.LastErrorAt.Local().Format(time.TimeOnly)))
+	}
 	fmt.Fprintf(w, "host %s, mode %s", st.Host, st.Mode)
 	if len(flags) > 0 {
 		fmt.Fprintf(w, " [%s]", strings.Join(flags, "; "))

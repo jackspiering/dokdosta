@@ -78,6 +78,7 @@ func TestPrintStatus(t *testing.T) {
 	var b bytes.Buffer
 	printStatus(&b, daemon.Status{
 		Host: "h", Mode: "label", Healthy: true, EventsUp: true, Settled: true,
+		Store: &api.StoreDoc{Errors: 3, LastErrorOp: "write pause", LastErrorAt: time.Now()},
 		Engine: engine.Status{
 			RateLimit: 10, ActionsLastH: 2,
 			Pauses: []engine.Pause{{Scope: "p/web"}},
@@ -85,7 +86,7 @@ func TestPrintStatus(t *testing.T) {
 		},
 	})
 	out := b.String()
-	for _, want := range []string{"host h", "2 actions in the last hour (limit 10)", "PAUSED", "p/web  until resume", "h/p/web/1", "SUSPENDED", "suspended: ladder", "rung 2 done"} {
+	for _, want := range []string{"host h", "2 actions in the last hour (limit 10)", "PAUSED", "p/web  until resume", "h/p/web/1", "STORE: 3 operations failed, the last (write pause)", "SUSPENDED", "suspended: ladder", "rung 2 done"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output lacks %q:\n%s", want, out)
 		}

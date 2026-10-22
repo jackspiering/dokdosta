@@ -10,6 +10,15 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Added
+
+- **Store failures are visible.** When `/data` is full or read-only, healing carries on from memory as before, but now
+  `whalenurse status`, `/api/v1/status` (a new `store` object: the error count, the time and kind of the last failure),
+  `/metrics` (`whalenurse_store_errors_total`) and the overview page say that the state may not survive a restart.
+  `/healthz` is unchanged. A failed read of the store is no longer taken for an absent value: an unreadable boot id is
+  not overwritten at startup. The event IDs are seeded from the highest one stored, and `run` refuses a store whose event
+  sequence cannot be read. A data directory with `?`, `#` or `%` in its path now opens the database at that path.
+
 ### Security
 
 - **Compose's error output no longer reaches the dashboard, the API, the store or the log.** A compose load error can quote
