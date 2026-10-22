@@ -422,6 +422,33 @@ func TestUnusableComposeInputsSkipRung2WithTheMountHint(t *testing.T) {
 	}
 }
 
+// WN-001: a service label shaped like a flag (an image can ship one) makes rungs 2 and 3 unavailable, live and in a dry
+// run alike, and compose is never run for it: not even the drift guard's oracle, which it would turn into a real up.
+func TestFlagShapedServiceLabelNeverReachesCompose(t *testing.T) {
+	for _, dry := range []bool{true, false} {
+		t.Run(fmt.Sprintf("dry-run=%v", dry), func(t *testing.T) {
+			h := newCompose(t, func(c *config.Global) { c.DryRun = dry }, nil, docker.ServerInfo{})
+			web := h.svc(hexID("a1"), "p", "web", compose.LabelService, "--dry-run=false", config.LabelHealPull, "true")
+			h.tick()
+			h.set(web.ID, unhealthy)
+			h.advance(10 * time.Minute)
+			if calls := h.cf.Calls(); len(calls) != 0 {
+				t.Fatalf("compose ran: %s", h.verbs())
+			}
+			rungs := map[string]bool{}
+			for _, e := range h.events(engine.RungUnavailable) {
+				if !strings.Contains(e.Message, compose.LabelService) {
+					t.Errorf("the refusal should name the label: %q", e.Message)
+				}
+				rungs[e.Attrs["rung"]] = true
+			}
+			if !rungs[config.RungRecreate] || !rungs[config.RungPull] || h.count(engine.Suspended) != 1 {
+				t.Fatalf("rungs 2 and 3 should be unavailable, then SUSPENDED: %v %v", rungs, h.rec.Types())
+			}
+		})
+	}
+}
+
 func TestNonComposeContainerGetsRung1Only(t *testing.T) {
 	h := newCompose(t, nil, nil, docker.ServerInfo{})
 	c := docker.Container{ID: hexID("a1"), Name: "plain", Labels: map[string]string{config.LabelEnable: "true"}, Status: "running", Running: true}

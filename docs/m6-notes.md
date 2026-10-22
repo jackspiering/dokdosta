@@ -4,6 +4,11 @@ Decisions, deviations and open questions for milestone M6 (polish and public rel
 the plan as **v3.10** (written by this build; it awaits the maintainer's review). **Nothing was tagged, released or pushed to
 GHCR.**
 
+**Since then** (added 22 Oct 2026; the rest of this file is as written for the build): v3.10 was approved on 20 Oct 2026, and
+`v0.1.0-rc.1`, `v0.1.0` and `v0.1.1` were tagged on the maintainer's instruction on 20 Oct 2026. The release workflow passed on
+all three, so the signing and attestation steps under "Not verified" have run, and `make verify-release TAG=v0.1.0` verified
+the release. Of the open questions below, 3 and 4 are settled: `v0.1.0-rc.1` came first, and R5 became M7 (plan v3.12).
+
 ## Upstream check (19 and 20 Oct 2026)
 
 Versions read from the GitHub releases API and the registries on 19 Oct 2026, and the docs and source of GoReleaser at `main`
@@ -192,7 +197,7 @@ The debug log said `skip: not opted in`. The sidecar had been recreated by whale
 
 ## Not verified
 
-- **The signing and attestation steps have never run.** They need the OIDC token of the publish job, which only a `v*` tag
+- **The signing and attestation steps have never run** (they have since; see the top). They need the OIDC token of the publish job, which only a `v*` tag
   run has, so nothing here can exercise them: not CI, not a laptop. The configuration follows GoReleaser's and cosign's
   documentation and the flags were checked against a local cosign, and `verify.sh` runs at the end of the release and would
   fail it. **Rehearse with a `v0.1.0-rc.1` tag first** ([releasing.md](releasing.md#cutting-a-release-maintainer)); an `-rc` tag

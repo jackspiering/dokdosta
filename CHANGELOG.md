@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Security
+
+- **A compose label could put a flag on the compose command line (WN-001).** The project and service labels, which an image
+  can ship, were passed to compose unchecked; a service of `--dry-run=false` overrode the drift guard's `--dry-run` and ran a
+  real `up` of the project, in dry-run mode too. whalenurse now refuses a project or service that is not a name compose would
+  write, and that container gets the restart rung only. 0.1.0 and 0.1.1 are affected.
+
 ### Added
 
 - **Private registries for the pull rung (R5).** `WHALENURSE_REGISTRY_AUTH_DIR` names a read-only directory holding a
@@ -26,12 +33,28 @@ workflow refuses an undated section.
 - **The release is built from an empty Go cache.** The release workflow no longer restores the Go build and module cache
   that `main`'s CI saves (`actions/setup-go` cached both by default), so nothing compiled in another run can reach the
   signed binaries and image. CI checkouts no longer keep the token in `.git/config`.
+### Changed
+
+- **examples/full trusts its Tailscale proxy.** The `dashboard` network has a fixed subnet (`DASHBOARD_SUBNET`, default
+  `10.84.248.0/29`) set as `WHALENURSE_HTTP_TRUSTED_PROXIES`, so the wrong-token limit counts per tailnet client instead of
+  one budget shared by everyone behind Tailscale Serve. **If you run this example already**, `docker compose up -d` has to
+  give the existing `dashboard` network the new subnet; if compose refuses, run `docker compose down` for this example's own
+  stack (whalenurse and its Tailscale container only), then `up -d`.
 
 ### Fixed
 
 - **A final release tagged on the same commit as its `-rc` is released as itself.** The release workflow now tells
   GoReleaser the tag it is releasing; before, GoReleaser took the first tag on the commit, the `-rc`, and would have
   re-published the `-rc` image tag and failed to create the release.
+- **Docs: backing up the store.** [docs/upgrading.md](docs/upgrading.md#backing-up-and-restoring-the-store) now says to stop
+  whalenurse before copying its SQLite database (a copy of a running one may not open), and gives the backup and restore
+  commands for the container and systemd setups, including removing a newer version's `-wal`/`-shm` before a restore.
+- **Docs: no root alternative for the socket.** [docs/running.md](docs/running.md#docker-socket-access) offered `user: "0"`
+  instead of `group_add`, which cannot start with the documented hardening (`cap_drop: [ALL]`: root cannot write `/data` or the
+  `/run` tmpfs, both owned by uid 65532). `group_add` is now the only way given, and troubleshooting explains the failure.
+- **Docs corrections:** the boolean spellings, the cooldown cap and the compose labels read (labels.md); what whalenurse
+  writes and when it forces a recreate (security.md); `%2C` for a comma in a notification URL; what a dry run cannot know
+  after a reboot (running.md).
 
 ## [0.1.1] - 2026-10-20
 
