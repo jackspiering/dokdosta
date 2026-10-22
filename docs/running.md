@@ -149,7 +149,7 @@ services:
 | `/metrics` | Prometheus text, only with `WHALENURSE_METRICS=true` |
 | `/healthz` | `ok` or `not ok` (503), never a reason; no token and no Host check. The reason is in `/api/v1/status` and `whalenurse status` |
 
-What is never shown: environment variables, commands, mounts, labels outside `com.docker.compose.*` and `whalenurse.*`, notification and uptime-ping URLs, the token. Event text and error text are passed through the same redactor as the notifications. A **dry run** serves the last 5,000 events from memory and its history is lost on a restart; with the store, events are kept for `WHALENURSE_HISTORY_RETENTION` (at most 100,000).
+What is never shown: environment variables, commands, mounts, labels outside `com.docker.compose.*` and `whalenurse.*`, notification and uptime-ping URLs, the token. Event text and error text are passed through the same redactor as the notifications. A **dry run** serves the last 5,000 events from memory and its history is lost on a restart; with the store, events are kept for `WHALENURSE_HISTORY_RETENTION`, and those of an incident still open for as long as it is open (at most 100,000 rows; the cap removes the events of open incidents last).
 
 ## Settings
 

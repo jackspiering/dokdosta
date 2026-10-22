@@ -537,14 +537,57 @@ func (s *Store) Prune(now time.Time, retention, flapWindow time.Duration) (int64
 // MaxEvents caps the events table whatever the retention says: a flapping container can emit a lot.
 const MaxEvents = 100_000
 
-// pruneEvents deletes events older than the retention, and the oldest beyond MaxEvents. AUTOINCREMENT keeps the ID
-// counter, so the deletion never makes an ID come back.
+// pruneEvents deletes events older than the retention, except those of an incident that is still open, and then the
+// oldest beyond MaxEvents: first events of closed incidents and events without one, those of open incidents only as the
+// last resort (plan v3.13 item 21). AUTOINCREMENT keeps the ID counter, so the deletion never makes an ID come back.
 func (s *Store) pruneEvents(now time.Time, retention time.Duration) error {
-	if _, err := s.db.Exec(`DELETE FROM events WHERE at < ?`, tn(now.Add(-retention))); err != nil {
+	return s.pruneEventsMax(now, retention, MaxEvents)
+}
+
+func (s *Store) pruneEventsMax(now time.Time, retention time.Duration, max int) error {
+	open, args, err := s.openIncidentEvents()
+	if err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)`, MaxEvents)
+	if _, err := s.db.Exec(`DELETE FROM events WHERE at < ? AND NOT `+open, append([]any{tn(now.Add(-retention))}, args...)...); err != nil {
+		return err
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil || n <= max {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM events WHERE id IN (SELECT id FROM events WHERE NOT `+open+` ORDER BY id LIMIT ?)`,
+		append(args, n-max)...); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)`, max)
 	return err
+}
+
+// openIncidentEvents is an SQL condition, with its arguments, that holds for the events of an incident still open: the
+// event's key and its incident attribute (engine.AttrIncident, the opening time) match an incident without closed_at.
+func (s *Store) openIncidentEvents() (string, []any, error) {
+	rows, err := s.db.Query(`SELECT key, opened_at FROM incidents WHERE closed_at IS NULL`)
+	if err != nil {
+		return "", nil, err
+	}
+	var args []any
+	for rows.Next() {
+		var k string
+		var opened int64
+		if err := rows.Scan(&k, &opened); err != nil {
+			rows.Close()
+			return "", nil, err
+		}
+		args = append(args, k+"\x00"+fn(opened).Format(time.RFC3339Nano))
+	}
+	if err := closeRows(rows); err != nil {
+		return "", nil, err
+	}
+	if len(args) == 0 {
+		return "0", nil, nil
+	}
+	return `(key || char(0) || COALESCE(json_extract(attrs, '$.` + engine.AttrIncident + `'), '') IN (` + placeholders(len(args)) + `))`, args, nil
 }
 
 // ---- events (the API's log) ----------------------------------------------------------------------------

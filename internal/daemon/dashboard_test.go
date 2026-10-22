@@ -782,6 +782,26 @@ func TestComposeErrorTextReachesNoPageOrStream(t *testing.T) {
 	}
 }
 
+// Retention keeps the events of an incident still open (plan v3.13 item 21): the engine's incident attribute and the
+// store's open incident match, so a SUSPENDED container keeps its drift findings however old they are.
+func TestRetentionKeepsASuspendedContainersCause(t *testing.T) {
+	r := driftRig(t)
+	if _, err := r.st.Prune(r.h.clk.Now().Add(400*24*time.Hour), time.Hour, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := r.st.Query(engine.EventQuery{Key: "h/p/web/1", Types: []engine.EventType{engine.DriftBlocked, engine.Suspended}})
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("the open incident's cause was pruned: %v %v", evs, err)
+	}
+	r.h.d.Engine().Unsuspend("p/web")
+	if _, err := r.st.Prune(r.h.clk.Now().Add(400*24*time.Hour), time.Hour, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if evs, _ := r.st.Query(engine.EventQuery{Key: "h/p/web/1", Types: []engine.EventType{engine.DriftBlocked}}); len(evs) != 0 {
+		t.Fatalf("once the incident closed its events age out: %v", evs)
+	}
+}
+
 func web2(s *api.Service) http.Handler { return web.Handler(s) }
 
 func TestADriftSuspensionReadsInPlainLanguage(t *testing.T) {
