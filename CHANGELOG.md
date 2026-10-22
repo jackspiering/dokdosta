@@ -28,6 +28,14 @@ workflow refuses an undated section.
   secret. The risk (credentials in a container that holds the Docker socket) and the advice (a pull-only token, mode
   0440, a `:ro` mount) are in [docs/security.md](docs/security.md#private-registries).
 
+### Changed
+
+- **examples/full trusts its Tailscale proxy.** The `dashboard` network has a fixed subnet (`DASHBOARD_SUBNET`, default
+  `10.84.248.0/29`) set as `WHALENURSE_HTTP_TRUSTED_PROXIES`, so the wrong-token limit counts per tailnet client instead of
+  one budget shared by everyone behind Tailscale Serve. **If you run this example already**, `docker compose up -d` has to
+  give the existing `dashboard` network the new subnet; if compose refuses, run `docker compose down` for this example's own
+  stack (whalenurse and its Tailscale container only), then `up -d`.
+
 ### Fixed
 
 - **A final release tagged on the same commit as its `-rc` is released as itself.** The release workflow now tells
@@ -39,6 +47,9 @@ workflow refuses an undated section.
 - **Docs: no root alternative for the socket.** [docs/running.md](docs/running.md#docker-socket-access) offered `user: "0"`
   instead of `group_add`, which cannot start with the documented hardening (`cap_drop: [ALL]`: root cannot write `/data` or the
   `/run` tmpfs, both owned by uid 65532). `group_add` is now the only way given, and troubleshooting explains the failure.
+- **Docs corrections:** the boolean spellings, the cooldown cap and the compose labels read (labels.md); what whalenurse
+  writes and when it forces a recreate (security.md); `%2C` for a comma in a notification URL; what a dry run cannot know
+  after a reboot (running.md).
 
 ## [0.1.1] - 2026-10-20
 

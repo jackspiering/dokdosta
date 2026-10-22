@@ -14,8 +14,9 @@ What whalenurse does with that power, so you can judge it:
 - It acts only on containers that are opted in (`whalenurse.enable=true`, or every container with `WHALENURSE_MODE=all`
   minus those labelled `false`), and never on itself, on `docker compose run` containers or on swarm tasks.
 - Its own Docker API calls are reads (`ping`, `list`, `inspect`, `events`, `version`, `image inspect`) and two actions, `restart` and `start`. Recreates and pulls go through the `docker compose`
-  binary with a fixed set of commands: `up -d --no-deps --pull never --no-build <service>` (with `--force-recreate` when
-  needed), `pull --policy always <service>` for the opt-in pull rung, `config` and dry-runs for the drift guard. The `compose`
+  binary with a fixed set of commands: `up -d --no-deps --pull never --no-build <service>` (always with `--force-recreate`
+  for rung 2; for the pull rung and a sidecar's repair only when a post-check finds the old container still there),
+  `pull --policy always <service>` for the opt-in pull rung, `config` and dry-runs for the drift guard. The `compose`
   package cannot express `down`, `rm`, `build` or an `up` that could pull.
 - The compose files it runs are the ones **recorded on the container** (`com.docker.compose.project.config_files`), read from
   the stacks you mount. Those labels are not only written by whoever creates the container: Docker also copies an image's
@@ -32,7 +33,9 @@ How to reduce the exposure:
   The image is `distroless/static:nonroot` (uid 65532, no shell); give it the socket's group with `group_add` instead of
   running it as root.
 - Mount the stacks and the compose plugin **read-only** (`:ro`): recreate works with read-only mounts.
-- Keep `/data` as its own volume: it holds the store, which is the only thing whalenurse writes.
+- Keep `/data` as its own volume: it holds the store. Besides the store, whalenurse writes its control socket and an empty
+  private directory it gives compose as `DOCKER_CONFIG` (compose v5.2.0 to v5.5.x write buildx state there during the drift
+  guard's dry-run); in the container both are on the `/run` tmpfs.
 - A socket proxy that allows only what whalenurse needs is on the roadmap but adds little today: compose itself needs broad
   API access to recreate.
 
@@ -51,7 +54,8 @@ names and the event history, so keep it off the open network.
    set and `WHALENURSE_HTTP_TRUSTED_PROXIES` set to the proxy's network.
 3. **A Tailscale container on a shared bridge network** that forwards with `tailscale serve` (see
    [examples/full](../examples/full/compose.yaml)). whalenurse publishes no port at all and is reachable over HTTPS on your
-   tailnet only. **Never `network_mode: service:tailscale`**: whalenurse would become a dependent of a container it may heal,
+   tailnet only. Serve is a reverse proxy too: set `WHALENURSE_HTTP_TRUSTED_PROXIES` to the shared network (the example
+   gives it a fixed subnet for this). **Never `network_mode: service:tailscale`**: whalenurse would become a dependent of a container it may heal,
    and the sidecar machinery would then restart or recreate it with its parent.
 
 Never publish the port on `0.0.0.0` of a machine on an untrusted network. whalenurse warns at startup when the listener is
