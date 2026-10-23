@@ -21,6 +21,13 @@ workflow refuses an undated section.
   `State.Error`, and the dashboard and `/api/v1/containers` showed it unredacted next to the masked start error. It is now
   redacted and cut to 600 characters; a long `State.Error` is cut on a character, not inside one.
 
+### Fixed
+
+- **A failed "upgraded during heal" no longer shows as a success.** A notification URL with a boolean option
+  (`preview=false`, `usehtml=true`) made the redactor mask every `true`/`false`, so the API carried `"ok": "***"` and the
+  dashboard read a failed upgrade as done. Boolean option values are no longer masked, and the last upgrade's result is
+  read before redaction.
+
 ## [0.1.2] - 2026-10-22
 
 A security fix (a compose label could put a flag on the compose command line), fixes from a code review, private

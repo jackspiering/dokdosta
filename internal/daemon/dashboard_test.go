@@ -100,7 +100,8 @@ type dashboardRig struct {
 
 func newRig(t *testing.T, token string) *dashboardRig {
 	t.Helper()
-	notifyURL := "generic://u:" + secUserinfo + "@127.0.0.1:9/hook/" + secPath + "?k=" + secQuery
+	// usehtml=true: a boolean option is no secret, so whalenurse's own "ok": "true" must survive (plan v3.13 item 20).
+	notifyURL := "generic://u:" + secUserinfo + "@127.0.0.1:9/hook/" + secPath + "?k=" + secQuery + "&usehtml=true"
 	ping := "http://127.0.0.1:9/ping/" + secPing
 	t.Setenv("DB_PASSWORD", secEnv) // an environment variable of the process: nothing may dump it
 	regAuth := registryAuthDir(t)
@@ -269,7 +270,7 @@ func TestNoSecretReachesAnyPageEndpointOrStream(t *testing.T) {
 	}
 	// The attribute the engine never emits was dropped; the allowed one ("reason") stayed, redacted.
 	_, ev := r.fetch(t, "/api/v1/events?limit=1000", secHTTP)
-	if strings.Contains(ev, `"labels"`) || strings.Contains(ev, `"env"`) || !strings.Contains(ev, `"reason": "x ***"`) {
+	if strings.Contains(ev, `"labels"`) || strings.Contains(ev, `"env"`) || !strings.Contains(ev, `"reason": "x ***"`) || !strings.Contains(ev, `"ok": "true"`) {
 		t.Errorf("event attributes: allow-list not applied:\n%s", ev)
 	}
 }

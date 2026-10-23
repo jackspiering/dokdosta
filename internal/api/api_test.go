@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/notify"
 )
 
 func get(t *testing.T, h http.Handler, path string, hdr ...string) *httptest.ResponseRecorder {
@@ -216,6 +217,40 @@ func TestDecisionReasonIsRedacted(t *testing.T) {
 	}
 	if !strings.Contains(orig.Reason, "SECRET") {
 		t.Error("clean changed the document it was given")
+	}
+}
+
+// The "last upgrade" decides ok from the raw event: a redactor that masks a boolean word (a notification URL with
+// preview=false) must not turn a failed upgrade into a successful one (plan v3.13 item 20).
+func TestFailedUpgradeStaysFailedUnderABooleanURLOption(t *testing.T) {
+	for _, c := range []struct {
+		url, ok string
+		want    bool
+	}{
+		{"telegram://123456789:AAEhBP0-tok@telegram?channels=@ops&preview=false", "false", false},
+		{"smtp://u:p@h:587/?usehtml=true", "true", true},
+	} {
+		r := engine.NewRing(10)
+		r.Record(engine.Event{ID: 1, Time: t0, Host: "nas", Key: "nas/media/vpn/1", Container: "media-vpn-1", Type: engine.TagMoved,
+			Message: "x:latest: aaa moved to bbb; the recreate failed: exit status 1",
+			Attrs:   map[string]string{"ref": "x:latest", "old": "sha256:aaa", "new": "sha256:bbb", "ok": c.ok, "error": "exit status 1"}})
+		red := notify.NewRedactor(c.url)
+		// The redactor of before item 20, which also masked boolean words: the decision must not depend on it.
+		mask := func(v string) string {
+			return strings.NewReplacer("false", "***", "true", "***").Replace(red.Redact(v))
+		}
+		for name, redact := range map[string]func(string) string{"redactor": red.Redact, "masking every boolean": mask} {
+			s := &Service{Host: "nas", Source: fixtureSource{}, Events: r, Redact: redact}
+			d, ok := s.Container("nas/media/vpn/1")
+			if !ok || d.LastUpgrade == nil || d.LastUpgrade.OK != c.want {
+				t.Errorf("%s, %s: ok=%s should read as %v: %+v", c.url, name, c.ok, c.want, d.LastUpgrade)
+			}
+		}
+		evs, _ := r.Query(engine.EventQuery{Limit: 1})
+		e := (&Service{Redact: red.Redact}).EventDoc(evs[0])
+		if e.Attrs["ok"] != c.ok {
+			t.Errorf("%s: the ok attribute reads %q", c.url, e.Attrs["ok"])
+		}
 	}
 }
 

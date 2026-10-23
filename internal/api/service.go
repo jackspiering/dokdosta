@@ -249,14 +249,22 @@ func (s *Service) ContainerOpts(key string, debug bool) (ContainerDetailDoc, boo
 
 // lastOf returns the newest event of the type for the key; the zero document for none.
 func (s *Service) lastOf(key string, types ...engine.EventType) EventDoc {
+	if e, ok := s.lastRaw(key, types...); ok {
+		return s.EventDoc(e)
+	}
+	return EventDoc{}
+}
+
+// lastRaw is the newest event of the type for the key as the engine emitted it, before the output rules.
+func (s *Service) lastRaw(key string, types ...engine.EventType) (engine.Event, bool) {
 	if s.Events == nil {
-		return EventDoc{}
+		return engine.Event{}, false
 	}
 	evs, err := s.Events.Query(engine.EventQuery{Key: key, Types: types, Newest: true, Limit: 1})
 	if err != nil || len(evs) == 0 {
-		return EventDoc{}
+		return engine.Event{}, false
 	}
-	return s.EventDoc(evs[0])
+	return evs[0], true
 }
 
 const driftNote = "The drift guard runs right before a recreate, not on a timer: this is what it found the last time."
@@ -283,14 +291,16 @@ func (s *Service) drift(key string, h HealerDoc) DriftDoc {
 }
 
 func (s *Service) lastUpgrade(key string) *UpgradeDoc {
-	e := s.lastOf(key, engine.TagMoved, engine.Upgraded)
-	if e.ID == 0 {
+	raw, found := s.lastRaw(key, engine.TagMoved, engine.Upgraded)
+	if !found {
 		return nil
 	}
+	e := s.EventDoc(raw)
 	a := e.Attrs
 	u := &UpgradeDoc{
 		EventID: e.ID, Kind: e.Type, At: e.Time, Ref: a["ref"], OldImage: firstNonEmpty(a["old_image"], a["old"]), NewImage: a["new"],
-		OK: a["ok"] != "false", Error: a["error"], RollbackTag: a["rollback_tag"], RollbackUp: a["rollback_up"], Message: e.Message,
+		// From the raw event: the redactor works on text and must not decide a boolean. Only the bool leaves.
+		OK: raw.Attrs["ok"] != "false", Error: a["error"], RollbackTag: a["rollback_tag"], RollbackUp: a["rollback_up"], Message: e.Message,
 	}
 	if a["sidecars"] != "" {
 		u.Sidecars = strings.Split(a["sidecars"], ",")
