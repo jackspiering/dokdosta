@@ -32,6 +32,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **Retention keeps the events of an incident that is still open.** A container SUSPENDED for longer than
+  `WHALENURSE_HISTORY_RETENTION` lost its cause, its drift findings and its rollback from the dashboard and the API. Those
+  events now stay while the incident is open; the 100,000-row cap removes them last.
+
 - **A failed "upgraded during heal" no longer shows as a success.** A notification URL with a boolean option
   (`preview=false`, `usehtml=true`) made the redactor mask every `true`/`false`, so the API carried `"ok": "***"` and the
   dashboard read a failed upgrade as done. Boolean option values are no longer masked, and the last upgrade's result is
