@@ -76,7 +76,7 @@ func (d *Daemon) moveOf(ref string) (tagMove, bool) {
 		return m, true
 	}
 	if d.o.Meta != nil {
-		if v, ok := d.o.Meta.Meta(metaTagMoved + ref); ok {
+		if v, ok, _ := d.o.Meta.Meta(metaTagMoved + ref); ok { // a read error is counted and logged by the store
 			var m tagMove
 			if json.Unmarshal([]byte(v), &m) == nil && m.Ref == ref {
 				return m, true

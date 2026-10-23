@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -314,6 +315,37 @@ func TestHistoryTypeFilterIsBounded(t *testing.T) {
 	}
 	if code, _ := r.fetch(t, "/history?type=ActionResult,Suspended", ""); code != 200 {
 		t.Errorf("a two-type filter: %d", code)
+	}
+}
+
+// A store that fails (a full or read-only /data) does not stop healing, but it is no longer silent: /api/v1/status, the
+// CLI status, /metrics and the overview say so, with a count, a time and a fixed operation name (never a key).
+func TestStoreWriteFailuresAreVisible(t *testing.T) {
+	r := newRig(t, "")
+	r.h.tick()
+	_, before := r.fetch(t, "/api/v1/status", "")
+	if !strings.Contains(before, `"store": {`) || !strings.Contains(before, `"errors": 0`) {
+		t.Errorf("a healthy store reports zero errors:\n%s", before)
+	}
+	r.st.Close() // every later write fails, and is counted
+	if _, err := r.h.d.Engine().Pause("p/other", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	_, status := r.fetch(t, "/api/v1/status", "")
+	_, metrics := r.fetch(t, "/metrics", "")
+	_, overview := r.fetch(t, "/", "")
+	cli, _ := json.Marshal(r.h.d.Status())
+	if !regexp.MustCompile(`"errors": [1-9]`).MatchString(status) || !regexp.MustCompile(`"last_error_op": "(write pause|write event|read events)"`).MatchString(status) || !strings.Contains(status, `"last_error_at"`) {
+		t.Errorf("/api/v1/status:\n%s", status)
+	}
+	if !regexp.MustCompile(`(?m)^whalenurse_store_errors_total [1-9]`).MatchString(metrics) {
+		t.Errorf("/metrics has no store error count")
+	}
+	if strings.Contains(overview, "survives restarts") || !strings.Contains(overview, "may not survive a restart") {
+		t.Errorf("the overview still says the state survives restarts")
+	}
+	if !regexp.MustCompile(`"errors":[1-9]`).MatchString(string(cli)) {
+		t.Errorf("CLI status: %s", cli)
 	}
 }
 

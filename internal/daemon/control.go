@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackspiering/whalenurse/internal/api"
 	"github.com/jackspiering/whalenurse/internal/control"
 	"github.com/jackspiering/whalenurse/internal/engine"
 	"github.com/jackspiering/whalenurse/internal/notify"
@@ -24,6 +25,7 @@ type Status struct {
 	Engine       engine.Status `json:"engine"`
 	Notify       notify.Status `json:"notify"`    // counts per URL by position and scheme; never a URL
 	PullAuth     []string      `json:"pull_auth"` // registry hosts the pull rung has credentials for; never a user name or a secret
+	Store        *api.StoreDoc `json:"store,omitempty"`
 }
 
 // Status snapshots the daemon for the CLI.
@@ -32,12 +34,22 @@ func (d *Daemon) Status() any {
 	st := Status{
 		Host: d.cfg.HostID, Mode: string(d.cfg.Mode), DryRun: d.cfg.DryRun, Persistent: d.o.Persist != nil,
 		EventsUp: d.eventsUp.Load(), Settled: d.settledFlag.Load(), Healthy: ok, HealthDetail: detail,
-		Compose: d.composeStatus(), Engine: d.eng.Status(), PullAuth: pullAuthHosts(d.o.PullAuthHosts),
+		Compose: d.composeStatus(), Engine: d.eng.Status(), PullAuth: pullAuthHosts(d.o.PullAuthHosts), Store: d.storeDoc(),
 	}
 	if d.o.NotifyStatus != nil {
 		st.Notify = d.o.NotifyStatus()
 	}
 	return st
+}
+
+// storeDoc is the store's health, or nil when nothing is stored (a dry run) or the store cannot tell.
+func (d *Daemon) storeDoc() *api.StoreDoc {
+	h, ok := d.o.Persist.(StoreHealth)
+	if !ok {
+		return nil
+	}
+	n, at, op := h.Health()
+	return &api.StoreDoc{Errors: n, LastErrorAt: at, LastErrorOp: op}
 }
 
 var _ control.Backend = (*Daemon)(nil)

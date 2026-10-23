@@ -45,10 +45,17 @@ const shutdownSpan = 5 * time.Minute
 // BootIDPath is where Linux publishes the boot id (the same value on the host and in a container).
 const BootIDPath = "/proc/sys/kernel/random/boot_id"
 
-// Meta is the key-value part of the store: the persisted boot id.
+// Meta is the key-value part of the store: the persisted boot id. Meta's ok is false for a value that is not there;
+// err is set when it could not be read, which is not the same.
 type Meta interface {
-	Meta(key string) (string, bool)
+	Meta(key string) (value string, ok bool, err error)
 	SetMeta(key, value string)
+}
+
+// StoreHealth is implemented by a Persist that can fail without stopping healing (internal/store): its error count, the
+// time of the last failure and its kind (a fixed word, never a key), for status, the API and /metrics.
+type StoreHealth interface {
+	Health() (errors int64, lastAt time.Time, lastOp string)
 }
 
 // Options are the daemon's dependencies.
@@ -183,8 +190,14 @@ func (d *Daemon) checkStartup() {
 	}
 	bootChanged := false
 	if id := strings.TrimSpace(read()); id != "" {
-		prev, had := d.o.Meta.Meta(MetaBootID)
-		d.o.Meta.SetMeta(MetaBootID, id)
+		prev, had, err := d.o.Meta.Meta(MetaBootID)
+		if err != nil {
+			// Not "no boot id yet": the stored one is kept for the next start to compare with, and this start cannot tell
+			// whether the host rebooted.
+			d.log.Warn("cannot read the persisted boot id: a reboot cannot be told from a restart this time", "error", err.Error())
+		} else {
+			d.o.Meta.SetMeta(MetaBootID, id)
+		}
 		if had && prev != id {
 			bootChanged = true
 			d.log.Info("new boot id: dropping manual-stop markers", "previous", prev, "current", id)
@@ -192,7 +205,11 @@ func (d *Daemon) checkStartup() {
 			d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "new boot id")
 		}
 	}
-	if v, ok := d.o.Meta.Meta(MetaLastSeen); ok {
+	v, ok, err := d.o.Meta.Meta(MetaLastSeen)
+	if err != nil {
+		d.log.Warn("cannot read the persisted last_seen: the previous run's end is unknown, so no shutdown window is opened", "error", err.Error())
+	}
+	if ok {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			seen := time.Unix(0, n)
 			gap := now.Sub(seen)
