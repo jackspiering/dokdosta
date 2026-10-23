@@ -144,7 +144,7 @@ services:
 | `/containers`, `/containers?all=1` | the watched containers (opted in, or sidecars of an opted-in one), or every container |
 | `/containers/<key>` | inspect summary, ladder and incident, SUSPENDED/PAUSED with reason and expiry, the drift guard's last verdict, parent and dependents, last upgrade with the rollback commands, timeline |
 | `/history` | incidents and events, filterable. The noisy `EventAttributed` events (a Docker event during a whalenurse action) are hidden; "Debug (everything)" or `?debug=1` shows them, and so does `?debug=1` on a container page |
-| `/api/v1/status`, `/containers`, `/containers/<key>`, `/events?since=<id>&limit=&key=&type=`, `/incidents` | JSON. Every record has `host`, times are UTC, `events` ids are monotonic per host and survive restarts; `next` is the cursor to ask for next, `reset: true` means the cursor was ahead of this host (start over) |
+| `/api/v1/status`, `/containers`, `/containers/<key>`, `/events?since=<id>&limit=&key=&type=`, `/incidents` | JSON. Every record has `host`, times are UTC, `events` ids are monotonic per host and survive restarts; `next` is the cursor to ask for next, `reset: true` means the cursor was ahead of this host (start over). `events`: `limit` at most 1000, `type` at most 64 entries (repeated or comma-separated) of 64 bytes, `key` at most 512 bytes, else 400; `incidents?limit=` at most 500 |
 | `/api/v1/stream` | server-sent events; resume with `Last-Event-ID` or `?since=` |
 | `/metrics` | Prometheus text, only with `WHALENURSE_METRICS=true` |
 | `/healthz` | `ok` or `not ok` (503), never a reason; no token and no Host check. The reason is in `/api/v1/status` and `whalenurse status` |

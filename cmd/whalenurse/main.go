@@ -242,7 +242,7 @@ func runCmd(args []string) error {
 			log.Warn("dashboard", "detail", w)
 		}
 		// No WriteTimeout: the event stream is open for as long as a browser tab is.
-		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute}
+		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 32 << 10}
 		srv.RegisterOnShutdown(hub.Close)
 		go func() {
 			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics, "extra_hosts_without_token", len(cfg.HTTPAllowedHosts), "trusted_proxies", len(cfg.HTTPTrustedProxies))

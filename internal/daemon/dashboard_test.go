@@ -305,6 +305,18 @@ func TestDecisionReasonReachesNoPageWithASecret(t *testing.T) {
 	}
 }
 
+// The history page shares the events filter's bounds: too many types is a 400 that does not echo them.
+func TestHistoryTypeFilterIsBounded(t *testing.T) {
+	r := newRig(t, "")
+	code, body := r.fetch(t, "/history?type="+strings.TrimSuffix(strings.Repeat("ActionResult,", 1000), ","), "")
+	if code != 400 || strings.Contains(body, "ActionResult") {
+		t.Errorf("%d %.300s", code, body)
+	}
+	if code, _ := r.fetch(t, "/history?type=ActionResult,Suspended", ""); code != 200 {
+		t.Errorf("a two-type filter: %d", code)
+	}
+}
+
 func mapValues(m map[string]string) []string {
 	var out []string
 	for _, v := range m {

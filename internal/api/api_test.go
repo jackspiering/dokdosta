@@ -254,6 +254,55 @@ func TestFailedUpgradeStaysFailedUnderABooleanURLOption(t *testing.T) {
 	}
 }
 
+// The type filter is bounded: a comma list is not limited by net/http's parameter count, and each entry costs work in
+// the store's query and the dry run's ring scan. Too many entries, or a long entry or key, is a 400 that does not echo
+// the input; the history page's two-type filter still works.
+func TestEventsTypeFilterIsBounded(t *testing.T) {
+	h := handler(t, "")
+	for name, path := range map[string]string{
+		"1000 types":   "/api/v1/events?type=" + strings.TrimSuffix(strings.Repeat("ActionResult,", 1000), ","),
+		"65 type args": "/api/v1/events" + "?type=a" + strings.Repeat("&type=a", 64),
+		"a long type":  "/api/v1/events?type=" + strings.Repeat("Z", 200),
+		"a long key":   "/api/v1/events?key=" + strings.Repeat("Z", 2000),
+	} {
+		rec := get(t, h, path)
+		if rec.Code != 400 || strings.Contains(rec.Body.String(), "ZZZ") || strings.Contains(rec.Body.String(), "ActionResult") {
+			t.Errorf("%s: %d %.200s", name, rec.Code, rec.Body.String())
+		}
+	}
+	for _, path := range []string{"/api/v1/events?type=ActionResult,ActionStarted", "/api/v1/events?type=" + strings.TrimSuffix(strings.Repeat("ActionResult,", 64), ",")} {
+		if rec := get(t, h, path); rec.Code != 200 {
+			t.Errorf("%.80s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	q, err := ParseEventsQuery(httptest.NewRequest("GET", "/api/v1/events?type=Suspended,Suspended&type=Recovered,Suspended", nil))
+	if err != nil || strings.Join(q.Types, ",") != "Suspended,Recovered" {
+		t.Errorf("types are deduplicated in order: %v %v", q.Types, err)
+	}
+}
+
+// ?limit= on /incidents caps at 500 like /events caps at 1000, instead of falling back to the default.
+func TestIncidentsLimitCaps(t *testing.T) {
+	s := fixtureService()
+	s.History = manyHistory{n: 700}
+	if got := len(s.Incidents("", 600).Incidents); got != 500 {
+		t.Errorf("limit=600 gave %d incidents, want 500", got)
+	}
+	if got := len(s.Incidents("", 0).Incidents); got != 100 {
+		t.Errorf("no limit gave %d incidents, want 100", got)
+	}
+}
+
+type manyHistory struct{ n int }
+
+func (m manyHistory) History(string) ([]engine.ClosedIncident, error) {
+	out := make([]engine.ClosedIncident, m.n)
+	for i := range out {
+		out[i] = engine.ClosedIncident{Key: "nas/media/vpn/1", Opened: t0.Add(time.Duration(i) * time.Minute), Closed: t0.Add(time.Duration(i)*time.Minute + time.Second)}
+	}
+	return out, nil
+}
+
 // ---- security -------------------------------------------------------------------------------------------
 
 var allRoutes = []string{
