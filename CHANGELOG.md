@@ -31,6 +31,8 @@ workflow refuses an undated section.
   over 64 bytes or a key over 512 bytes with a 400, so a crafted `type=` list can no longer burn a CPU (or, in a dry run, stall
   the healing loop); the request header is capped at 32 KiB; `/api/v1/incidents?limit=` above 500 now gives 500 instead of
   the default 100.
+- **HEAD on `/api/v1/stream` answers at once.** It used to hold one of the 32 stream slots until whalenurse stopped, so a
+  monitor sending HEAD requests could stop the dashboard's live updates for everyone.
 
 ## [0.1.2] - 2026-10-22
 
