@@ -17,6 +17,9 @@ workflow refuses an undated section.
   A failed compose command now reports only its exit status and the causes whalenurse knows by name (a port conflict, a
   registry login failure, ...); run `docker compose config` in the stack to see the rest. Each output stream of a compose
   command is also capped at 4 MiB.
+- **The last decision's reason is redacted like the start error.** For a failed start it quotes the container's
+  `State.Error`, and the dashboard and `/api/v1/containers` showed it unredacted next to the masked start error. It is now
+  redacted and cut to 600 characters; a long `State.Error` is cut on a character, not inside one.
 
 ## [0.1.2] - 2026-10-22
 

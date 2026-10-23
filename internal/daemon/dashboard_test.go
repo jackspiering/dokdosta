@@ -274,6 +274,36 @@ func TestNoSecretReachesAnyPageEndpointOrStream(t *testing.T) {
 	}
 }
 
+// A failed start's decision quotes State.Error (rule 1): an exec-form command that holds a webhook URL puts it there. The
+// last decision is redacted like the start error, on the JSON endpoints and the container page.
+func TestDecisionReasonReachesNoPageWithASecret(t *testing.T) {
+	r := newRig(t, secHTTP)
+	h := r.h
+	c := h.running(hexID("d4"), "p", "job")
+	h.tick()
+	dead := h.set(c.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode = "exited", false, 127
+		c.Error = `failed to create task for container: exec: "curl generic://u:` + secUserinfo + `@127.0.0.1:9/hook/` + secPath + `": stat: no such file or directory`
+	})
+	h.event(dead, "die", "")
+	h.advance(45 * time.Second)
+	key := "nas/p/job/1"
+	pages := map[string]string{}
+	for _, p := range []string{"/api/v1/containers?all=1", "/api/v1/containers/" + key, "/containers/" + key} {
+		_, pages[p] = r.fetch(t, p, secHTTP)
+	}
+	for p, body := range pages {
+		for _, s := range []string{secUserinfo, secPath} {
+			if strings.Contains(body, s) {
+				t.Errorf("%s leaks %q", p, s)
+			}
+		}
+	}
+	if !strings.Contains(pages["/api/v1/containers/"+key], `"reason": "failed start (`) {
+		t.Errorf("no failed-start decision to check (the test proves nothing):\n%s", pages["/api/v1/containers/"+key])
+	}
+}
+
 func mapValues(m map[string]string) []string {
 	var out []string
 	for _, v := range m {

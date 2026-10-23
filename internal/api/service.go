@@ -122,6 +122,12 @@ func (s *Service) eventDocs(evs []engine.Event) []EventDoc {
 func (s *Service) clean(c ContainerDoc) ContainerDoc {
 	c.Name = finalName(c.Name)
 	c.StartError = s.text(c.StartError, maxErrorText)
+	if c.Decision != nil {
+		// A failed start's reason quotes State.Error. A copy: the document points into the daemon's view.
+		d := *c.Decision
+		d.Reason, d.Skip = s.text(d.Reason, maxErrorText), s.text(d.Skip, maxText)
+		c.Decision = &d
+	}
 	if c.Host == "" {
 		c.Host = s.Host
 	}

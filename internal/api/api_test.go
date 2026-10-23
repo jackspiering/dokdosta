@@ -203,6 +203,22 @@ func TestRedactionAndLengthCaps(t *testing.T) {
 	}
 }
 
+// The last decision's reason quotes State.Error for a failed start (rules rule 1), so it is redacted and cut like the
+// start error itself; the view's own decision is not changed.
+func TestDecisionReasonIsRedacted(t *testing.T) {
+	s := fixtureService()
+	s.Redact = func(v string) string { return strings.ReplaceAll(v, "SECRET-TOKEN-1234", "***") }
+	orig := &DecisionDoc{Class: "start-failed", Action: "start", Skip: "x SECRET-TOKEN-1234",
+		Reason: "failed start (other): exec: \"curl SECRET-TOKEN-1234\": not found " + strings.Repeat("x", 5000)}
+	c := s.clean(ContainerDoc{Decision: orig})
+	if strings.Contains(c.Decision.Reason, "SECRET") || len([]rune(c.Decision.Reason)) > maxErrorText || strings.Contains(c.Decision.Skip, "SECRET") {
+		t.Errorf("decision not cleaned: %.120q / %q", c.Decision.Reason, c.Decision.Skip)
+	}
+	if !strings.Contains(orig.Reason, "SECRET") {
+		t.Error("clean changed the document it was given")
+	}
+}
+
 // ---- security -------------------------------------------------------------------------------------------
 
 var allRoutes = []string{
