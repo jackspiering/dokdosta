@@ -10,6 +10,12 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/static/` is a 404, not a directory listing.** The dashboard's embedded asset directory could be listed.
+- **A container whose name has a `.` or `..` part gets no dashboard link** instead of a link the server would clean into
+  another page. A multi-byte first letter in a reason is no longer cut in half.
+
 ## [0.1.3] - 2026-10-26
 
 Fixes from the code review of 21 Oct 2026 and the decisions of plan v3.13: compose's error output and event text no
