@@ -57,8 +57,11 @@ The rule, enforced in code and not by convention: **they act only on compose pro
 on `whalenurse-m0-*`). Every method of the test `Guard` that changes anything checks the project name of its target against
 `^whalenurse-test-[a-z0-9][a-z0-9_-]*$` and **fails closed**: no match, no action. The guard cannot express `down` for another
 project, pulls only the base images it lists, tags and pushes only under `whalenurse-test/` or the local test registry on
-`127.0.0.1`, and wraps whalenurse's own Docker and compose actors so that the healer under test cannot touch anything else
-either. The guard has its own unit tests that need no Docker. If you add a new thing the tests do to Docker, it goes through
+`127.0.0.1`, and wraps whalenurse's own Docker and compose actors so that the in-process healer under test cannot touch
+anything else either. The tests that run the built binary or the published image cannot be wrapped: for those, the guard's
+preflight is the protection. It refuses to start while any container outside a `whalenurse-test-*` project carries a
+`whalenurse.enable` value that whalenurse reads as an opt-in (`true`, `1`, `t`, `T`, `TRUE`, `True`, with or without spaces), and
+it refuses `WHALENURSE_MODE=all`. The guard has its own unit tests that need no Docker. If you add a new thing the tests do to Docker, it goes through
 the guard, with a test that it refuses the wrong project.
 
 The scripts follow the same rule (`scripts/ci/setup-docker.sh` and `test/demo/run.sh` refuse to run outside GitHub Actions).
