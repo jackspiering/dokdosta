@@ -12,6 +12,7 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- Whether a sidecar without its own opt-in is repaired after its parent was recreated is decided by the service its `network_mode`/`ipc`/`pid` names, no longer by any opted-in service in its `depends_on`.
 - A sidecar is repaired after every change of its parent, also when the parent is restarted or recreated again within `RECOVERY_PERIOD` of the previous repair; it used to be sent to `--force-recreate` and then SUSPENDED, left without a network.
 - A sidecar stopped by hand is no longer started again by the dependents step when its parent is recreated, also when the sidecar has no `whalenurse.enable` label of its own.
 - The store no longer grows an empty `parents:<key>` row for every removed container: forgetting a dependent deletes its row, other keys write none, and empty rows left by earlier versions are removed when the database is opened.

@@ -145,6 +145,7 @@ type Daemon struct {
 	stopGrace   time.Duration                // how long an action in flight may run on after the stop (shutdownGrace)
 	view        *view                        // what the API reads
 	parents     map[string][]string          // per key: the services a dependent depends on, learned (also kept in the store's meta; parents.go)
+	nsParents   map[string][]string          // per key: the services its container: references resolved to (also kept in the store's meta; parents.go)
 	parentsGone map[string]time.Time         // keys that were not in the last list, and since when
 	refs        map[string][]string          // per container ID: its container: references (network_mode, ipc, pid) as the last inspect showed them
 	refsRetry   map[string]time.Time         // IDs whose inspect for refs failed, and when learnRefs may try again
@@ -177,7 +178,7 @@ func New(o Options) *Daemon {
 		stopGrace: shutdownGrace,
 		pend:      map[string]pending{},
 		warned:    map[string]bool{},
-		parents:   map[string][]string{}, parentsGone: map[string]time.Time{},
+		parents:   map[string][]string{}, nsParents: map[string][]string{}, parentsGone: map[string]time.Time{},
 		refs: map[string][]string{}, refsRetry: map[string]time.Time{},
 		depGate: map[string]depGate{},
 		view:    newView(),
