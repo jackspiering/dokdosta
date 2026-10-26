@@ -351,3 +351,20 @@ func TestGuardSkewBlocksAReferenceHolderOnTheBundledCompose(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// What the docs say about a sidecar: the compose-edit check is not made for a reference holder, so an edit that the oracle
+// would report is deployed by its repair (README, docs/labels.md#sidecars). Pinned so that a change here changes the docs.
+func TestGuardDoesNotCheckAReferenceHoldersOwnComposeEdit(t *testing.T) {
+	f := NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	f.HashFn = func(Project) (string, error) { return "edited", nil }
+	g := Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgOld}}
+	for name, in := range map[string]GuardInput{"recreate": guardIn(true), "image move allowed": pullIn(true)} {
+		if got := g.Check(context.Background(), in); len(got) != 0 {
+			t.Fatalf("%s: an edit to a reference holder's own definition is not checked: %v", name, got)
+		}
+	}
+	if f.Count("dry-run")+f.Count("hash") != 0 {
+		t.Fatal("neither the oracle nor the hash may run for a reference holder")
+	}
+}

@@ -29,6 +29,16 @@ recreated. For an **opted-in** parent, whalenurse repairs such sidecars after it
 no `whalenurse.enable` label, unless they are labelled `whalenurse.enable=false`. Only that repair needs no opt-in: a sidecar
 that is unhealthy or exited *on its own* is healed only if it is opted in itself. See the README for what "repair" does.
 
+**What the drift guard checks for a sidecar.** Compose hashes a `network_mode`, `ipc`, `pid` or `volumes_from` reference after
+resolving it to a container, so the check that asks compose whether the service's own definition changed (the dry run, or
+`config --hash`) cannot be used for it. A sidecar's repair, and its own recreate when it is opted in, therefore check only the
+image (the tag still resolves to the image it was created from) and, when the bundled compose is in use, the compose release
+that made it. **An edit to the sidecar's own definition** (its command, environment, volumes, an `image:` that names another
+local image) **that you have not deployed is deployed when whalenurse repairs it**, for example after you recreate only its
+parent by hand. Deploy such edits yourself before they matter. When a recreate may take a moved image tag on purpose (a
+container with `whalenurse.heal.pull=true`, or a sidecar taking the tag its parent's pull just moved), the guard raises no
+image and no config finding for a sidecar; the version check still applies with the bundled compose.
+
 ## Labels from the image
 
 whalenurse reads a container's labels, and Docker puts an image's own labels (its `LABEL` lines) on every container made

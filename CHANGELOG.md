@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Changed
+
+- **The documentation says what the drift guard checks for a sidecar.** A service that shares another container's network,
+  ipc or pid namespace, or uses `volumes_from`, gets only the image check and (with the bundled compose) the version check,
+  not the compose-edit check; an edit to its own definition that was not deployed is deployed when whalenurse repairs it.
+  The README, `docs/configuration.md`, `docs/troubleshooting.md` and `docs/labels.md` now say so. No behaviour changes.
+
 ### Fixed
 
 - **The bundled compose's version skew now blocks a sidecar's recreate.** A `network_mode`/`ipc`/`pid` or `volumes_from`
