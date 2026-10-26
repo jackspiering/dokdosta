@@ -461,6 +461,7 @@ func (e *Engine) ObserveDockerEvent(t Target, ev docker.Event) (attributed bool)
 	restoring := e.clk.Now().Before(e.restoreUntil)
 	if restoring && ev.Action == "kill" {
 		// The daemon is restoring or has just been: this is not a person.
+		st.tracker.IgnoreKill() // the die after it is a stop, not a crash
 		e.emit(t, RestoreEvent, "kill inside the restore window: no manual-stop marker", map[string]string{"action": ev.Action})
 		return false
 	}

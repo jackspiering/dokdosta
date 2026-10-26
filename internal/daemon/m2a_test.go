@@ -956,3 +956,36 @@ func TestAnUnreadableBootIDIsNotOverwritten(t *testing.T) {
 		t.Fatal("the rest of the startup ran (last_seen is written)")
 	}
 }
+
+// A stop by hand inside the restore window: the kill sets no marker, but it did precede the die, so the die is not a crash
+// either. The container is judged without evidence (a signal exit is notify-only), not started again.
+func TestAStopByHandInsideTheRestoreWindowIsNotHealed(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	a := h.running(hexID("a1"), "p", "web")
+	h.advance(time.Second)
+	h.d.Engine().OpenRestoreWindow(2*time.Minute, "test")
+	h.event(a, "kill", "")
+	h.set(a.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.FinishedAt = "exited", false, 143, h.clk.Now()
+	})
+	h.event(a, "die", "")
+	h.advance(time.Minute)
+	h.wantCalls()
+	if ev := h.d.Engine().Evidence(key("p", "web")); ev.Crashed || ev.ManualStop {
+		t.Fatalf("a kill then a die is neither a crash nor a marker in the window: %+v", ev)
+	}
+}
+
+// The positive control: a die with no kill before it inside the window is still a crash and is healed.
+func TestACrashInsideTheRestoreWindowIsStillHealed(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	a := h.running(hexID("a1"), "p", "web")
+	h.advance(time.Second)
+	h.d.Engine().OpenRestoreWindow(2*time.Minute, "test")
+	h.set(a.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.FinishedAt = "exited", false, 1, h.clk.Now()
+	})
+	h.event(a, "die", "")
+	h.advance(time.Minute)
+	h.wantCalls("start " + a.ID)
+}

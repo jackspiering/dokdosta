@@ -44,6 +44,7 @@ type Tracker struct {
 	ev          Evidence
 	markedAt    time.Time // when the manual-stop marker was set; zero if none or unknown
 	quarantined bool      // a marker was discarded by a stream loss and no start has followed
+	killIgnored bool      // a kill was seen in the restore window (no marker), so the die after it is not a crash
 	recreated   bool
 	unhealthy   bool
 	cycles      int
@@ -68,7 +69,10 @@ func (t *Tracker) ApplyAt(action, detail string, at time.Time) {
 		t.ev.OOM = true
 	case "die":
 		t.ev.Known = true
-		if !t.ev.ManualStop {
+		switch {
+		case t.killIgnored:
+			t.killIgnored = false // the die this kill led to; a later die with no kill before it is a crash again
+		case !t.ev.ManualStop:
 			t.ev.Crashed = true
 			t.cycles++
 		}
@@ -77,6 +81,7 @@ func (t *Tracker) ApplyAt(action, detail string, at time.Time) {
 		t.ev = Evidence{}
 		t.markedAt = time.Time{}
 		t.quarantined = false
+		t.killIgnored = false
 		t.unhealthy = false
 	case "destroy":
 		t.recreated = true
@@ -85,6 +90,14 @@ func (t *Tracker) ApplyAt(action, detail string, at time.Time) {
 	case StreamLost:
 		t.Quarantine(at.Add(-QuarantineWindow))
 	}
+}
+
+// IgnoreKill records a kill that sets no marker (inside the restore window, plan §3.3 mechanism c). It still preceded the
+// die that follows, which is therefore not a crash: with no marker and no crash the container is judged without evidence,
+// by its exit code (a signal exit is notify-only), as after a quarantined kill. The next die or start ends it.
+func (t *Tracker) IgnoreKill() {
+	t.ev.Known = true
+	t.killIgnored = true
 }
 
 // Evidence returns the current evidence.
