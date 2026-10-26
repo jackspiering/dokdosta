@@ -12,6 +12,7 @@ import (
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/rules"
 )
 
 const host = "h"
@@ -753,6 +754,33 @@ func TestDuplicateKeyPrefersNewest(t *testing.T) {
 
 // ---- event stream ---------------------------------------------------------------------------------
 
+// HandleEvent takes the actions the subscription asks for (docker.WatchedActions) and nothing else, so the two cannot
+// drift apart. An open action window is the probe: every event that reaches the engine is attributed to it.
+func TestHandleEventActionsMatchTheSubscription(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	c := h.running(hexID("01"), "p", "web")
+	h.tick()
+	h.d.eng.Begin(engine.Target{Key: docker.StateKey(host, c.Name, c.Labels), ID: c.ID, Name: c.Name}, engine.Plan{}, rules.Decision{})
+	reached := func(action string) bool {
+		before := h.rec.Count(engine.EventAttributed)
+		h.event(c, action, "unhealthy")
+		return h.rec.Count(engine.EventAttributed) > before
+	}
+	for _, a := range docker.WatchedActions {
+		if !reached(a) {
+			t.Errorf("%s is subscribed to but HandleEvent drops it", a)
+		}
+	}
+	for _, a := range []string{"exec_create", "exec_start", "exec_die", "stop", "restart", "rename", "attach", "pause"} {
+		if docker.Watched(a) {
+			t.Errorf("%s is subscribed to", a)
+		}
+		if reached(a) {
+			t.Errorf("HandleEvent took %s, which is not subscribed to", a)
+		}
+	}
+}
+
 func TestEventStreamReconnectsWithSince(t *testing.T) {
 	h := newHarness(t, nil, nil)
 	h.d.o.ReconnectBackoff = 5 * time.Millisecond
@@ -770,6 +798,29 @@ func TestEventStreamReconnectsWithSince(t *testing.T) {
 	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 2 })
 	if got := h.fake.Subscriptions()[1]; !got.Equal(evTime) {
 		t.Fatalf("resubscribed with since=%v, want %v", got, evTime)
+	}
+}
+
+// A daemon that refuses every subscription is down, however often whalenurse
+// retries: a failed retry must not count as the stream coming back.
+func TestHealthyReportsAStreamThatFailsOnEveryRetry(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	h.d.o.ReconnectBackoff = 5 * time.Millisecond
+	h.fake.EventsErr = fmt.Errorf("connection refused")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go h.d.watchEvents(ctx, make(chan docker.Event, 8), make(chan streamSignal, 16))
+
+	waitFor(t, func() bool { return len(h.fake.Subscriptions()) >= 3 })
+	h.clk.Advance(3 * time.Minute)
+	h.d.lastTick.Store(h.clk.Now().UnixNano())
+	n := len(h.fake.Subscriptions())
+	waitFor(t, func() bool { return len(h.fake.Subscriptions()) > n+1 })
+	if ok, why := h.d.Healthy(); ok || !strings.Contains(why, "events stream down") {
+		t.Fatalf("Healthy() = %v, %q; want the stream reported down", ok, why)
+	}
+	if h.d.eventsUp.Load() {
+		t.Fatal("events_up after failed subscriptions")
 	}
 }
 

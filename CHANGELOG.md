@@ -10,15 +10,6 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
-### Added
-
-- **Store failures are visible.** When `/data` is full or read-only, healing carries on from memory as before, but now
-  `whalenurse status`, `/api/v1/status` (a new `store` object: the error count, the time and kind of the last failure),
-  `/metrics` (`whalenurse_store_errors_total`) and the overview page say that the state may not survive a restart.
-  `/healthz` is unchanged. A failed read of the store is no longer taken for an absent value: an unreadable boot id is
-  not overwritten at startup. The event IDs are seeded from the highest one stored, and `run` refuses a store whose event
-  sequence cannot be read. A data directory with `?`, `#` or `%` in its path now opens the database at that path.
-
 ### Security
 
 - **Compose's error output no longer reaches the dashboard, the API, the store or the log.** A compose load error can quote
@@ -30,12 +21,20 @@ workflow refuses an undated section.
   `State.Error`, and the dashboard and `/api/v1/containers` showed it unredacted next to the masked start error. It is now
   redacted and cut to 600 characters; a long `State.Error` is cut on a character, not inside one.
 
+### Added
+
+- **Store failures are visible.** When `/data` is full or read-only, healing carries on from memory as before, but now
+  `whalenurse status`, `/api/v1/status` (a new `store` object: the error count, the time and kind of the last failure),
+  `/metrics` (`whalenurse_store_errors_total`) and the overview page say that the state may not survive a restart.
+  `/healthz` is unchanged. A failed read of the store is no longer taken for an absent value: an unreadable boot id is
+  not overwritten at startup. The event IDs are seeded from the highest one stored, and `run` refuses a store whose event
+  sequence cannot be read. A data directory with `?`, `#` or `%` in its path now opens the database at that path.
+
 ### Fixed
 
 - **Retention keeps the events of an incident that is still open.** A container SUSPENDED for longer than
   `WHALENURSE_HISTORY_RETENTION` lost its cause, its drift findings and its rollback from the dashboard and the API. Those
   events now stay while the incident is open; the 100,000-row cap removes them last.
-
 - **A failed "upgraded during heal" no longer shows as a success.** A notification URL with a boolean option
   (`preview=false`, `usehtml=true`) made the redactor mask every `true`/`false`, so the API carried `"ok": "***"` and the
   dashboard read a failed upgrade as done. Boolean option values are no longer masked, and the last upgrade's result is
@@ -46,6 +45,23 @@ workflow refuses an undated section.
   the default 100.
 - **HEAD on `/api/v1/stream` answers at once.** It used to hold one of the 32 stream slots until whalenurse stopped, so a
   monitor sending HEAD requests could stop the dashboard's live updates for everyone.
+- **A dropped Docker events stream went unnoticed.** The Docker client reports the end of the stream only on its error
+  channel, so whalenurse kept waiting for events that never came: no resubscribe, no sweep after the reconnect, and `/healthz`
+  stayed ok. It now resubscribes, sweeps after the settle time, and `/healthz` reports a stream that stays down, also when
+  every resubscribe fails at once.
+- **The compose version gate was read only at startup.** After the events stream came back, an Engine upgraded in the
+  meantime was not seen, and a failed first read of the Engine version disabled rungs 2 and 3 until whalenurse was restarted.
+  The gate is now read again before the startup sweep and the sweep after a reconnect, and at every poll until a first read
+  succeeds. A pre-release of a minimum version (`28.1.0-rc.1`, `5.2.0-rc.1`) now counts as below it.
+- **Healthcheck exec events could crowd out a `kill`.** whalenurse subscribed to every container event, and the
+  healthcheck `exec_*` events of busy hosts filled the subscription during a long pull or recreate, after which Docker drops
+  events for a subscriber that does not keep up, a manual stop's `kill` too. The subscription now asks only for the events
+  whalenurse uses.
+- **One hung Docker call could stop all healing.** A container list or inspect that never returned held the main loop,
+  and `/healthz` said ok for up to 11 minutes. Every list, inspect and image inspect now has a 30-second timeout: a call that
+  hangs fails for that container, which is tried again at the next poll, and the rest are still healed. `/healthz` (and so the
+  image's health check and the uptime ping) now reports not ok when the Docker API has been failing for longer than twice the
+  poll interval, also while an action is running.
 
 ## [0.1.2] - 2026-10-22
 
