@@ -16,8 +16,10 @@
 //	Push/PullRegistry  push or pull references of the test registry only (M4: a registry:2 on loopback, started as a
 //	          whalenurse-test-* compose project)
 //	RunRollback  runs the rollback commands of an "upgraded during heal" message, after checking them line by line
-//	Actor     wraps whalenurse's own docker.Actor so the healer under test cannot
+//	Actor     wraps whalenurse's own docker.Actor so the in-process healer under test cannot
 //	          touch a container outside a matching project either
+//	PreflightNoStrangers  refuses to start while any container outside a matching project is opted in. The tests that run
+//	          a whalenurse the guard cannot wrap (the built binary, the published image) rely on this alone
 //	ComposeRunner  the compose Runner the healer under test runs compose through: only `up` (with -d --no-deps --pull never
 //	          --no-build), `pull --policy always <one service>` (rung 3), `config --hash` and `version`, only with -p
 //	          <matching project>; never down, rm, build or an up that could pull
@@ -210,24 +212,33 @@ func (g *Guard) PullBase(ctx context.Context, ref string) error {
 }
 
 // PreflightNoStrangers fails if whalenurse could act on anything outside a
-// matching project: it refuses WHALENURSE_MODE=all and any container that
-// carries whalenurse.enable=true outside a whalenurse-test-* project.
+// matching project: it refuses WHALENURSE_MODE=all and any container outside a
+// whalenurse-test-* project whose whalenurse.enable value whalenurse reads as an
+// opt-in. The daemon lists every container and decides with config.ParseLabels
+// (strconv.ParseBool of the trimmed value: 1, t, T, TRUE, True, true, " true"), but
+// `docker ps --filter label=k=v` matches the value as an exact string. So the
+// filter is by key only and the value is parsed here, by whalenurse's own parser.
 func (g *Guard) PreflightNoStrangers(ctx context.Context) error {
 	if m := os.Getenv("WHALENURSE_MODE"); m != "" && m != string(config.ModeLabel) {
 		return refuse("WHALENURSE_MODE=%s: integration tests run in label mode only", m)
 	}
-	out, err := g.R.Run(ctx, "docker", "ps", "-a", "--filter", "label=whalenurse.enable=true",
-		"--format", `{{.ID}} {{.Label "com.docker.compose.project"}}`)
+	out, err := g.R.Run(ctx, "docker", "ps", "-a", "--filter", "label="+config.LabelEnable,
+		"--format", `{{.ID}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "`+config.LabelEnable+`"}}`)
 	if err != nil {
 		return refuse("cannot list opted-in containers: %v", err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line == "" {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		id, project, _ := strings.Cut(line, " ")
-		if !ProjectRE.MatchString(project) {
-			return refuse("container %s is opted in (whalenurse.enable=true) but belongs to project %q", id, project)
+		f := strings.SplitN(line, "\t", 3)
+		for len(f) < 3 {
+			f = append(f, "")
+		}
+		id, project, value := f[0], f[1], f[2]
+		c, _ := config.ParseLabels(map[string]string{config.LabelEnable: value}, config.ModeLabel)
+		if c.OptedIn && !ProjectRE.MatchString(project) {
+			return refuse("container %s is opted in (%s=%q) but belongs to project %q", id, config.LabelEnable, value, project)
 		}
 	}
 	return nil
