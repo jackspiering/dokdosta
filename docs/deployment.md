@@ -43,8 +43,13 @@ services:
 - **`/run` as a tmpfs** holds the control socket that the CLI and the image's health check use (the root filesystem is read-only).
 - **`/data`** is the state store (`whalenurse.db`): incidents, SUSPENDED, pauses, flap history, the event log, the notification
   dedupe. A named volume works as it is (the image prepares the directory for uid 65532); a bind mount needs
-  `chown 65532:65532`. Without it a restart of whalenurse forgets everything that it has not yet recovered from.
-- **Set `WHALENURSE_HOST_ID`** if you want a stable host name in keys and notifications: the container's hostname is its ID.
+  `chown 65532:65532`. Without it a restart of whalenurse forgets everything that it has not yet recovered from. One
+  whalenurse per data directory: `run` holds a lock on `whalenurse.lock` there, and a second `run` on the same directory
+  refuses to start.
+- **Set `WHALENURSE_HOST_ID`** (the examples do) for a stable host name in keys, notifications and the API: without it the
+  host ID is the container's hostname, its ID, which changes whenever whalenurse is recreated (an upgrade), and whalenurse
+  warns at startup. The state itself survives such a change: at startup the store's records are moved to the current host
+  ID (the event history keeps the host it was written with).
 
 ### The two read-only mounts that make recreate work
 
@@ -141,7 +146,14 @@ Differences from the container:
   `sudo -u whalenurse env WHALENURSE_CONTROL_SOCKET=/run/whalenurse/whalenurse.sock whalenurse status`.
 - systemd stops whalenurse in the host's shutdown like everything else; it writes its `last_seen` heartbeat on a clean stop and
   every 5 s, which is how it recognises the containers that a shutdown stopped (and does not mistake them for crashes).
-  Keep `TimeoutStopSec` at its 30 s.
+  A stop lets an action in flight finish (up to 30 s, then compose gets SIGTERM and, 10 s later, SIGKILL), so keep the
+  unit's `KillMode=mixed` (systemd's default would SIGTERM compose itself) and `TimeoutStopSec=60s`. In a container the
+  examples' `stop_grace_period: 60s` does the same; keep it well below 85 s, because a stop of the Docker daemon waits for
+  the longest `stop_grace_period` plus 5 s, and systemd stops `docker.service` after 90 s by default.
+- `Requires=docker.service` stops whalenurse when Docker is stopped (`systemctl stop docker` for maintenance), and
+  `WantedBy=multi-user.target docker.service` starts it again when Docker starts. A unit from 0.1.2 or earlier has only
+  `multi-user.target`: install the new file, then `sudo systemctl daemon-reload && sudo systemctl reenable whalenurse`
+  (`reenable` adds the `docker.service.wants/` link).
 - If a hardened setting gets in the way (an `EPERM` in the journal), loosen that one line and tell us in an issue: the filter
   fails with `EPERM`, not with a kill, so it shows.
 

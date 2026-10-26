@@ -72,10 +72,22 @@ func Handler(o Options) http.Handler {
 	return Secure(SecureOptions{Token: o.Token, AllowedHosts: o.AllowedHosts, TrustedProxies: o.TrustedProxies, Now: o.Now, OnBlock: o.OnBlock}, mux)
 }
 
-// ParseEventsQuery reads ?since=, ?limit=, ?key= and ?type= (repeatable or comma-separated).
+// Bounds of the events filter. There are fewer than 32 event types, and a key is host/project/service/number; each type
+// costs work in the store's query and in the dry run's ring scan, which holds the ring's lock (and so the engine's).
+const (
+	maxTypes   = 64
+	maxTypeLen = 64
+	maxKeyLen  = 512
+)
+
+// ParseEventsQuery reads ?since=, ?limit=, ?key= and ?type= (repeatable or comma-separated). The errors never quote the
+// input.
 func ParseEventsQuery(r *http.Request) (EventsQuery, error) {
 	v := r.URL.Query()
 	q := EventsQuery{Key: v.Get("key")}
+	if len(q.Key) > maxKeyLen {
+		return q, fmt.Errorf("key: longer than %d bytes", maxKeyLen)
+	}
 	if s := v.Get("since"); s != "" {
 		n, err := strconv.ParseUint(s, 10, 64)
 		if err != nil {
@@ -90,9 +102,20 @@ func ParseEventsQuery(r *http.Request) (EventsQuery, error) {
 		}
 		q.Limit = n
 	}
+	n, seen := 0, map[string]bool{}
 	for _, t := range v["type"] {
-		for _, p := range strings.Split(t, ",") {
-			if p = strings.TrimSpace(p); p != "" {
+		for p := range strings.SplitSeq(t, ",") {
+			if p = strings.TrimSpace(p); p == "" {
+				continue
+			}
+			if n++; n > maxTypes {
+				return q, fmt.Errorf("type: more than %d types", maxTypes)
+			}
+			if len(p) > maxTypeLen {
+				return q, fmt.Errorf("type: an entry longer than %d bytes", maxTypeLen)
+			}
+			if !seen[p] {
+				seen[p] = true
 				q.Types = append(q.Types, p)
 			}
 		}
@@ -248,6 +271,16 @@ func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotImplemented, "streaming is not available")
 		return
 	}
+	h := w.Header()
+	h.Set("Content-Type", "text/event-stream")
+	h.Set("Cache-Control", "no-store")
+	h.Set("X-Accel-Buffering", "no") // nginx: do not buffer
+	if r.Method == http.MethodHead {
+		// The headers only. net/http discards a HEAD's body, so no write would ever fail and the loop below would hold a
+		// slot until shutdown, even after the client has gone.
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	wake, cancel, ok := s.Hub.Subscribe()
 	if !ok {
 		writeError(w, http.StatusServiceUnavailable, "too many streams")
@@ -267,10 +300,6 @@ func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	key := r.URL.Query().Get("key")
 
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream")
-	h.Set("Cache-Control", "no-store")
-	h.Set("X-Accel-Buffering", "no") // nginx: do not buffer
 	fmt.Fprint(w, "retry: 3000\n: connected\n\n")
 	fl.Flush()
 

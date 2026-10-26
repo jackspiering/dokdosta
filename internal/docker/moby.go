@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -111,23 +112,55 @@ func (m *Moby) Start(ctx context.Context, id string) error {
 }
 
 func (m *Moby) Events(ctx context.Context, since time.Time) Stream {
-	opts := client.EventsListOptions{Filters: client.Filters{}.Add("type", string(events.ContainerEventType))}
+	opts := client.EventsListOptions{Filters: client.Filters{}.
+		Add("type", string(events.ContainerEventType)).
+		Add("event", WatchedActions...)}
 	if !since.IsZero() {
 		opts.Since = fmt.Sprintf("%d.%09d", since.Unix(), since.Nanosecond())
 	}
 	res := m.c.Events(ctx, opts)
 	out := make(chan Event)
+	errs := make(chan error, 1)
 	go func() {
 		defer close(out)
-		for msg := range res.Messages {
+		errs <- forward(ctx, res, out) // before out closes, as Stream promises
+	}()
+	return Stream{Events: out, Err: errs}
+}
+
+// forward copies the client's messages until the stream ends and returns why.
+// The moby client (v0.6.2) reports the end on Err only and never closes
+// Messages, so both are watched; a Messages that does close is read as an end
+// too.
+func forward(ctx context.Context, res client.EventsResult, out chan<- Event) error {
+	ended := func(err error, ok bool) error {
+		if !ok || err == nil {
+			return io.EOF
+		}
+		return err
+	}
+	for {
+		select {
+		case msg, ok := <-res.Messages:
+			if !ok {
+				select {
+				case err, ok := <-res.Err:
+					return ended(err, ok)
+				default:
+					return io.EOF
+				}
+			}
 			select {
 			case out <- fromMessage(msg):
 			case <-ctx.Done():
-				return
+				return ctx.Err()
 			}
+		case err, ok := <-res.Err:
+			return ended(err, ok)
+		case <-ctx.Done():
+			return ctx.Err()
 		}
-	}()
-	return Stream{Events: out, Err: res.Err}
+	}
 }
 
 func fromMessage(msg events.Message) Event {

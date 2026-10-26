@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/jackspiering/whalenurse/internal/api"
 	"github.com/jackspiering/whalenurse/internal/clock"
+	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/daemon"
 	"github.com/jackspiering/whalenurse/internal/docker"
@@ -80,6 +83,7 @@ func TestPrintStatus(t *testing.T) {
 	var b bytes.Buffer
 	printStatus(&b, daemon.Status{
 		Host: "h", Mode: "label", Healthy: true, EventsUp: true, Settled: true,
+		Store: &api.StoreDoc{Errors: 3, LastErrorOp: "write pause", LastErrorAt: time.Now()},
 		Engine: engine.Status{
 			RateLimit: 10, ActionsLastH: 2,
 			Pauses: []engine.Pause{{Scope: "p/web"}},
@@ -87,7 +91,7 @@ func TestPrintStatus(t *testing.T) {
 		},
 	})
 	out := b.String()
-	for _, want := range []string{"host h", "2 actions in the last hour (limit 10)", "PAUSED", "p/web  until resume", "h/p/web/1", "SUSPENDED", "suspended: ladder", "rung 2 done"} {
+	for _, want := range []string{"host h", "2 actions in the last hour (limit 10)", "PAUSED", "p/web  until resume", "h/p/web/1", "STORE: 3 operations failed, the last (write pause)", "SUSPENDED", "suspended: ladder", "rung 2 done"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output lacks %q:\n%s", want, out)
 		}
@@ -318,5 +322,132 @@ func TestTrustedProxiesAreIgnoredWithoutAToken(t *testing.T) {
 	cfg.HTTPToken = "a-long-random-token-0123456789"
 	if got := httpWarnings(cfg); len(got) != 0 {
 		t.Fatalf("with a token the list is used: %v", got)
+	}
+}
+
+// versionRunner answers `version --short` like a compose binary; nothing else may be run while the actors are picked.
+type versionRunner struct{ t *testing.T }
+
+func (r versionRunner) Run(_ context.Context, c compose.Command) (compose.Result, error) {
+	if len(c.Args) == 2 && c.Args[0] == "version" && c.Args[1] == "--short" {
+		return compose.Result{Stdout: []byte("5.6.0\n")}, nil
+	}
+	r.t.Errorf("unexpected compose command while wiring: %v", c.Args)
+	return compose.Result{}, errors.New("unexpected")
+}
+
+type regularFile struct{ os.FileInfo }
+
+func (regularFile) IsDir() bool { return false }
+
+// Dry-run is structural: the daemon calls whatever actors the binary wires, so the binary's own wiring must give a dry run
+// the no-op actors, for rung 1 and for the compose rungs, and a live run the real ones.
+func TestDryRunWiresOnlyNoOpActors(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	lookup := compose.Lookup{
+		Env: "/fake/docker-compose", Runner: versionRunner{t},
+		Stat: func(string) (os.FileInfo, error) { return regularFile{}, nil },
+	}
+	cli := &docker.Fake{}
+	for _, dry := range []bool{true, false} {
+		cfg := config.Defaults()
+		cfg.DryRun = dry
+		cfg.ControlSocket = filepath.Join(t.TempDir(), "whalenurse.sock")
+
+		rd, act, note, remove := composeFor(context.Background(), cfg, lookup, log)
+		remove()
+		if rd == nil || note != "" {
+			t.Fatalf("dry=%v: no compose reader (note %q)", dry, note)
+		}
+		_, noop := act.(compose.DryRun)
+		real, isReal := act.(*compose.Compose)
+		if dry && !noop {
+			t.Errorf("dry run: the compose actor is %T, want compose.DryRun", act)
+		}
+		if !dry && (!isReal || real != rd) {
+			t.Errorf("live run: the compose actor is %T, want the *compose.Compose that is also the reader", act)
+		}
+
+		da := dockerActor(cfg, cli, log)
+		_, noop = da.(docker.DryRun)
+		if dry && !noop {
+			t.Errorf("dry run: the Docker actor is %T, want docker.DryRun", da)
+		}
+		if !dry && da != docker.Actor(cli) {
+			t.Errorf("live run: the Docker actor is %T, want the client", da)
+		}
+	}
+}
+
+// `run` takes --dry-run and nothing else. A positional argument stops Go's flag parsing, so `run dry-run` or
+// `run -- --dry-run` would otherwise start a live healer during the evaluation the docs say to run as a dry run.
+func TestRunRefusesPositionalArguments(t *testing.T) {
+	for _, args := range [][]string{{"dry-run"}, {"--", "--dry-run"}, {"x", "--dry-run"}, {"--dry-run", "extra"}} {
+		if dry, err := parseRunFlags(args); err == nil {
+			t.Errorf("run %q: accepted (dry=%v), want an error", args, dry)
+		}
+	}
+	for _, tc := range []struct {
+		args []string
+		dry  bool
+	}{{nil, false}, {[]string{"--dry-run"}, true}, {[]string{"-dry-run"}, true}, {[]string{"--dry-run=false"}, false}} {
+		dry, err := parseRunFlags(tc.args)
+		if err != nil || dry != tc.dry {
+			t.Errorf("run %q: dry=%v err=%v, want dry=%v", tc.args, dry, err, tc.dry)
+		}
+	}
+}
+
+// -h and --help print the usage and exit 0; they used to reach `run`'s flag set and exit 1.
+func TestCommandDispatch(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		cmd  string
+		rest int
+	}{
+		{nil, "run", 0}, {[]string{"--dry-run"}, "run", 1}, {[]string{"run", "--dry-run"}, "run", 1},
+		{[]string{"-h"}, "help", 0}, {[]string{"--help"}, "help", 0}, {[]string{"-help"}, "help", 0},
+		{[]string{"status", "--json"}, "status", 1}, {[]string{""}, "run", 1},
+	} {
+		cmd, rest := command(tc.args)
+		if cmd != tc.cmd || len(rest) != tc.rest {
+			t.Errorf("command(%q) = %q %q, want %q with %d arguments", tc.args, cmd, rest, tc.cmd, tc.rest)
+		}
+	}
+}
+
+func TestHostIDWarning(t *testing.T) {
+	self := strings.Repeat("ab", 32)
+	if hostIDWarning(self[:12], self) == "" {
+		t.Error("no warning for a host ID that is the own container's ID")
+	}
+	for _, tc := range [][2]string{{"nas", self}, {"nas", ""}, {self[:12], ""}} {
+		if w := hostIDWarning(tc[0], tc[1]); w != "" {
+			t.Errorf("hostIDWarning(%q, %q) = %q", tc[0], tc[1], w)
+		}
+	}
+}
+
+// The binary re-keys the store to its host ID before it loads it (plan v3.13 item 12).
+func TestOpenStoreRekeysToTheHostID(t *testing.T) {
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config.Defaults()
+	cfg.DataDir = t.TempDir()
+	cfg.HostID = "0123456789ab"
+	st, _, err := openStore(cfg, log, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.SaveKey(engine.KeyRecord{Key: "0123456789ab/p/web/1", Name: "p-web-1", MarkerAt: time.Now()})
+	st.Close()
+
+	cfg.HostID = "ba9876543210" // whalenurse recreated
+	st, snap, err := openStore(cfg, log, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if len(snap.Keys) != 1 || snap.Keys[0].Key != "ba9876543210/p/web/1" || snap.Keys[0].MarkerAt.IsZero() {
+		t.Fatalf("loaded %+v", snap.Keys)
 	}
 }

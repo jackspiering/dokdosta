@@ -106,7 +106,9 @@ address (`0.0.0.0/0`) is refused.
 One place decides what leaves whalenurse, for every page, endpoint and the event stream: environment variables, commands,
 mounts and full inspect output are not even read into the objects the API uses; labels shown are only `com.docker.compose.*`
 and `whalenurse.*`; event attributes are an allow-list; and every message, attribute and start error goes through the same
-redactor as the notifications, which also knows the HTTP token. A test plants ten secrets and greps every page, endpoint,
+redactor as the notifications, which also knows the HTTP token. Compose's own error output is not shown at all, since a
+load error can quote a line of the stack's `.env`: only the exit status and the causes whalenurse names in its own words
+([troubleshooting](troubleshooting.md#what-compose-said)). A test plants ten secrets and greps every page, endpoint,
 the stream and `/metrics` for them. Host paths in the compose labels and in the rollback commands are shown on purpose.
 
 Every response carries a strict `Content-Security-Policy` (no inline script or style, no form, no frame, no third-party

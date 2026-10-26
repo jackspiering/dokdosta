@@ -28,6 +28,14 @@ import (
 // actionTimeout bounds one restart or start call.
 const actionTimeout = 2 * time.Minute
 
+// shutdownGrace is how long an action in flight may still run once whalenurse is told to stop (SIGTERM, SIGINT). The
+// loop is synchronous, so Run returns right after the action. It must stay below the stop timeout the deployment gives
+// whalenurse (stop_grace_period in the compose examples, TimeoutStopSec in the systemd unit, both 60 s), or the action
+// is killed with the process; a compose command that is stopped gets compose.StopDelay more before it is killed. It is
+// kept short because dockerd's own shutdown waits for the longest stop_grace_period plus 5 s, inside docker.service's
+// stop timeout (systemd's default, 90 s).
+const shutdownGrace = 30 * time.Second
+
 // MetaBootID is the store key the kernel boot id is kept under.
 const MetaBootID = "boot_id"
 
@@ -45,10 +53,17 @@ const shutdownSpan = 5 * time.Minute
 // BootIDPath is where Linux publishes the boot id (the same value on the host and in a container).
 const BootIDPath = "/proc/sys/kernel/random/boot_id"
 
-// Meta is the key-value part of the store: the persisted boot id.
+// Meta is the key-value part of the store: the persisted boot id. Meta's ok is false for a value that is not there;
+// err is set when it could not be read, which is not the same.
 type Meta interface {
-	Meta(key string) (string, bool)
+	Meta(key string) (value string, ok bool, err error)
 	SetMeta(key, value string)
+}
+
+// StoreHealth is implemented by a Persist that can fail without stopping healing (internal/store): its error count, the
+// time of the last failure and its kind (a fixed word, never a key), for status, the API and /metrics.
+type StoreHealth interface {
+	Health() (errors int64, lastAt time.Time, lastOp string)
 }
 
 // Options are the daemon's dependencies.
@@ -96,6 +111,10 @@ type pending struct {
 	due time.Time
 }
 
+// readTimeout bounds every List, Inspect and ImageID the daemon makes (plan v3.13 item 13): a normal one takes
+// milliseconds, and one that hangs would otherwise stop the loop and with it all healing.
+const readTimeout = 30 * time.Second
+
 // Daemon is the healer.
 type Daemon struct {
 	o   Options
@@ -121,6 +140,7 @@ type Daemon struct {
 	compState   atomic.Pointer[composeState] // the startup version gate, readable from the control socket
 	depGate     map[string]depGate           // one dependent at a time per parent, keyed by the raw container: reference
 	beatEvery   time.Duration                // how often last_seen is written during an action (heartbeatEvery; tests shorten it)
+	stopGrace   time.Duration                // how long an action in flight may run on after the stop (shutdownGrace)
 	view        *view                        // what the API reads
 	parents     map[string][]string          // per key: the services a dependent depends on, learned (also kept in the store's meta; parents.go)
 	parentsGone map[string]time.Time         // keys that were not in the last list, and since when
@@ -128,6 +148,7 @@ type Daemon struct {
 
 	eventsUp   atomic.Bool
 	eventsDown atomic.Int64 // unix nanos when the stream went down; 0 while up
+	apiFailing atomic.Int64 // unix nanos since when the Docker API has been failing (apiError); 0 while it answers
 	lastTick   atomic.Int64
 	acting     atomic.Int64 // unix nanos when the action in progress started; 0 when none
 }
@@ -142,13 +163,14 @@ func New(o Options) *Daemon {
 	}
 	g := o.Config
 	d := &Daemon{
-		o: o, cfg: g, rd: o.Reader, clk: o.Clock, log: o.Log,
+		o: o, cfg: g, rd: docker.WithReadTimeout(o.Reader, readTimeout), clk: o.Clock, log: o.Log,
 		eng: engine.New(engine.Params{
 			Host: g.HostID, BaseCooldown: g.Cooldown, RateLimit: g.RateLimit, DryRun: g.DryRun,
 			RecoveryPeriod: g.RecoveryPeriod, CrashloopAfter: g.CrashloopAfter, FlapLimit: g.FlapLimit, FlapWindow: g.FlapWindow,
 			Persist: o.Persist,
 		}, o.Clock, o.Bus),
 		beatEvery: heartbeatEvery,
+		stopGrace: shutdownGrace,
 		pend:      map[string]pending{},
 		warned:    map[string]bool{},
 		parents:   map[string][]string{}, parentsGone: map[string]time.Time{},
@@ -183,8 +205,14 @@ func (d *Daemon) checkStartup() {
 	}
 	bootChanged := false
 	if id := strings.TrimSpace(read()); id != "" {
-		prev, had := d.o.Meta.Meta(MetaBootID)
-		d.o.Meta.SetMeta(MetaBootID, id)
+		prev, had, err := d.o.Meta.Meta(MetaBootID)
+		if err != nil {
+			// Not "no boot id yet": the stored one is kept for the next start to compare with, and this start cannot tell
+			// whether the host rebooted.
+			d.log.Warn("cannot read the persisted boot id: a reboot cannot be told from a restart this time", "error", err.Error())
+		} else {
+			d.o.Meta.SetMeta(MetaBootID, id)
+		}
 		if had && prev != id {
 			bootChanged = true
 			d.log.Info("new boot id: dropping manual-stop markers", "previous", prev, "current", id)
@@ -192,7 +220,11 @@ func (d *Daemon) checkStartup() {
 			d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "new boot id")
 		}
 	}
-	if v, ok := d.o.Meta.Meta(MetaLastSeen); ok {
+	v, ok, err := d.o.Meta.Meta(MetaLastSeen)
+	if err != nil {
+		d.log.Warn("cannot read the persisted last_seen: the previous run's end is unknown, so no shutdown window is opened", "error", err.Error())
+	}
+	if ok {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			seen := time.Unix(0, n)
 			gap := now.Sub(seen)
@@ -242,7 +274,8 @@ func readBootID() string {
 func (d *Daemon) Engine() *engine.Engine { return d.eng }
 
 // Healthy reports whether the daemon is working: the events stream is up (or
-// has been down for less than twice the poll interval) and the loop is alive.
+// has been down for less than twice the poll interval), the Docker API answers
+// (or has failed for less than twice the poll interval) and the loop is alive.
 func (d *Daemon) Healthy() (bool, string) {
 	now := d.clk.Now()
 	limit := 2 * d.cfg.PollInterval
@@ -251,6 +284,10 @@ func (d *Daemon) Healthy() (bool, string) {
 		if now.Sub(down) > limit {
 			return false, fmt.Sprintf("docker events stream down for %s", now.Sub(down).Round(time.Second))
 		}
+	}
+	// Before the action tolerance: with reads bounded the loop keeps ticking, and only this shows a dead API.
+	if since := d.apiFailing.Load(); since != 0 && now.Sub(time.Unix(0, since)) > limit {
+		return false, fmt.Sprintf("docker API failing for %s", now.Sub(time.Unix(0, since)).Round(time.Second))
 	}
 	// The loop is busy, not dead, while it runs an action: a pull or a recreate can take minutes.
 	if since := d.acting.Load(); since != 0 && now.Sub(time.Unix(0, since)) < pullTimeout+time.Minute {
@@ -336,16 +373,17 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig c
 	for ctx.Err() == nil {
 		sctx, cancel := context.WithCancel(ctx)
 		s := d.rd.Events(sctx, since)
-		d.setEvents(true)
-		if backoff > d.o.ReconnectBackoff {
-			d.log.Info("docker events stream reconnected")
-		}
 		established := false
 		establish := func() bool {
 			if established {
 				return true
 			}
 			established = true
+			// Only now is the stream up: a subscription that fails at once must not reset the down time.
+			d.setEvents(true)
+			if backoff > d.o.ReconnectBackoff {
+				d.log.Info("docker events stream reconnected")
+			}
 			return send(streamSignal{})
 		}
 		stable := time.NewTimer(streamStable)
@@ -466,14 +504,19 @@ func (d *Daemon) Tick(ctx context.Context) {
 		d.settledFlag.Store(true)
 		d.nextPoll = now.Add(d.cfg.PollInterval)
 		d.log.Info("startup settle over; sweeping all containers")
+		d.CheckVersions(ctx)
 		d.sweep(ctx)
 	} else if !now.Before(d.nextPoll) {
 		d.nextPoll = now.Add(d.cfg.PollInterval)
+		if d.cs().unread {
+			d.CheckVersions(ctx)
+		}
 		d.poll(ctx)
 	}
 	if !d.reconnectAt.IsZero() && !now.Before(d.reconnectAt) {
 		d.reconnectAt = time.Time{}
 		d.log.Info("sweeping all containers after the events stream was re-established")
+		d.CheckVersions(ctx)
 		d.sweep(ctx)
 	}
 	if !d.sweepAt.IsZero() && !now.Before(d.sweepAt) {
@@ -497,10 +540,8 @@ func (d *Daemon) schedule(key string, due time.Time) {
 // HandleEvent reacts to one Docker event. Events are only triggers: the
 // decision is made later, by inspecting the container after GRACE.
 func (d *Daemon) HandleEvent(ctx context.Context, ev docker.Event) {
-	switch ev.Action {
-	case "create", "start", "die", "kill", "oom", "destroy", "health_status":
-	default:
-		return // exec_*, stop, restart, rename, attach, ...
+	if !docker.Watched(ev.Action) {
+		return // exec_*, stop, restart, rename, attach, ...: not subscribed to, and dropped if they come anyway
 	}
 	if d.o.SelfID != "" && ev.ID == d.o.SelfID {
 		return
@@ -538,6 +579,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, ev docker.Event) {
 func (d *Daemon) apiError(what string, err error) {
 	if !d.apiDown {
 		d.apiDown = true
+		d.apiFailing.Store(d.clk.Now().UnixNano())
 		d.log.Warn("docker API not ready; no incident is opened, will retry", "while", what, "error", err.Error())
 	}
 }
@@ -545,6 +587,7 @@ func (d *Daemon) apiError(what string, err error) {
 func (d *Daemon) apiOK() {
 	if d.apiDown {
 		d.apiDown = false
+		d.apiFailing.Store(0)
 		d.log.Info("docker API is answering again")
 	}
 }
@@ -730,6 +773,9 @@ func (d *Daemon) adjust(c docker.Container, cfg config.Container, dec rules.Deci
 // between the decision and the action, and an API restart of a dependent whose parent ID is gone turns a running
 // dependent into an exited one (E1).
 func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container) {
+	if ctx.Err() != nil {
+		return // whalenurse is stopping: nothing new is started; the next run looks at the key again
+	}
 	d.markActing()
 	defer d.acting.Store(0)
 	defer d.keepAlive()()
@@ -750,8 +796,11 @@ func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Containe
 		return
 	}
 
+	if ctx.Err() != nil {
+		return
+	}
 	d.eng.Begin(t, plan, dec)
-	actx, cancel := context.WithTimeout(ctx, actionTimeout)
+	actx, cancel := d.actionContext(ctx, actionTimeout)
 	defer cancel()
 	var err error
 	switch plan.Act {
@@ -760,9 +809,33 @@ func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Containe
 	case rules.ActionStart:
 		err = d.o.Actor.Start(actx, c.ID)
 	}
+	if interrupted(ctx, err) {
+		d.eng.Interrupt(t, plan, err)
+		return
+	}
 	recheck := d.eng.End(t, plan, engine.Result{Err: err, DryRun: d.cfg.DryRun}, cfg)
 	d.afterAction(t, c, recheck)
 }
+
+// actionContext is the context of a mutating action: ctx's values and the timeout, but not ctx's cancellation, so a stop
+// of whalenurse does not kill a recreate between its create and its start. Once ctx ends, the action gets stopGrace
+// more; then it is cancelled, and interrupted says so.
+func (d *Daemon) actionContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	stop := context.AfterFunc(ctx, func() {
+		if actx.Err() != nil {
+			return
+		}
+		d.log.Warn("whalenurse is stopping: letting the action in flight finish", "grace", d.stopGrace.String())
+		t := time.AfterFunc(d.stopGrace, cancel)
+		context.AfterFunc(actx, func() { t.Stop() })
+	})
+	return actx, func() { stop(); cancel() }
+}
+
+// interrupted reports whether an action failed because whalenurse is stopping (ctx is the loop's context), not on its
+// own: such an action is not a result and does not spend its rung (engine.Interrupt).
+func interrupted(ctx context.Context, err error) bool { return err != nil && ctx.Err() != nil }
 
 func (d *Daemon) refuse(t engine.Target, dec rules.Decision, why string) {
 	d.eng.Refuse(t, dec, why)

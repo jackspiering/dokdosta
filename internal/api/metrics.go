@@ -30,6 +30,10 @@ func (s *Service) metrics(w http.ResponseWriter, _ *http.Request) {
 	m.sample("whalenurse_action_rate_limit", float64(st.RateLimit.Limit))
 	m.family("whalenurse_last_event_id", "gauge", "The highest event ID of this host.")
 	m.sample("whalenurse_last_event_id", float64(st.LastEventID))
+	if st.Store != nil {
+		m.family("whalenurse_store_errors_total", "counter", "Store operations that failed since the process started; healing carries on from memory.")
+		m.sample("whalenurse_store_errors_total", float64(st.Store.Errors))
+	}
 
 	m.family("whalenurse_containers", "gauge", "Containers by whalenurse's state; only watched containers have a state other than ok.")
 	m.sample("whalenurse_containers", float64(st.Counts.Containers-st.Counts.Watched), "state", "unwatched")

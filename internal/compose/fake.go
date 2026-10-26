@@ -24,11 +24,13 @@ type Fake struct {
 	OnRecreate func(p Project) error
 	OnUp       func(p Project) error
 	OnPull     func(p Project) error
+	// OnCtx, when set, sees the context of every mutating call (recreate, up, pull) before its hook runs.
+	OnCtx func(verb string, ctx context.Context)
 }
 
 // NewFake returns a Fake that reports compose 5.6.0 from the host plugin.
 func NewFake() *Fake {
-	return &Fake{Bin: Binary{Path: "/host/docker-compose", Source: SourceHost, Version: Version{5, 6, 0}, Raw: "5.6.0"}}
+	return &Fake{Bin: Binary{Path: "/host/docker-compose", Source: SourceHost, Version: Version{5, 6, 0, ""}, Raw: "5.6.0"}}
 }
 
 func (f *Fake) record(verb string, p Project) {
@@ -81,24 +83,33 @@ func (f *Fake) PullPolicy(_ context.Context, p Project) (string, error) {
 	return "", nil
 }
 
-func (f *Fake) Recreate(_ context.Context, p Project) error {
+func (f *Fake) Recreate(ctx context.Context, p Project) error {
 	f.record("recreate", p)
+	if f.OnCtx != nil {
+		f.OnCtx("recreate", ctx)
+	}
 	if f.OnRecreate != nil {
 		return f.OnRecreate(p)
 	}
 	return nil
 }
 
-func (f *Fake) Up(_ context.Context, p Project) error {
+func (f *Fake) Up(ctx context.Context, p Project) error {
 	f.record("up", p)
+	if f.OnCtx != nil {
+		f.OnCtx("up", ctx)
+	}
 	if f.OnUp != nil {
 		return f.OnUp(p)
 	}
 	return nil
 }
 
-func (f *Fake) Pull(_ context.Context, p Project) error {
+func (f *Fake) Pull(ctx context.Context, p Project) error {
 	f.record("pull", p)
+	if f.OnCtx != nil {
+		f.OnCtx("pull", ctx)
+	}
 	if f.OnPull != nil {
 		return f.OnPull(p)
 	}

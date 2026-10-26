@@ -17,7 +17,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -37,7 +39,35 @@ type Store struct {
 	rdb  *sql.DB // a second, read-only connection for the API: a page view never queues behind (or in front of) a healer write
 	log  *slog.Logger
 	errs atomic.Int64
+	lock *os.File // holds the flock on LockName while the store is open
+
+	mu     sync.Mutex
+	lastAt time.Time
+	lastOp Op
 }
+
+// LockName is the file in the data directory that a running whalenurse holds an exclusive flock(2) on. A second whalenurse on
+// the same directory would heal the same containers from the same state, so Open refuses it. The lock is not SQLite's
+// own (those are fcntl locks, which any close in the process drops); it goes away with the process.
+const LockName = "whalenurse.lock"
+
+// ErrLocked is returned by Open when another process holds the data directory.
+var ErrLocked = errors.New("another whalenurse is running with this data directory")
+
+// Op names the kind of operation that failed. It is a fixed word, never a key or a scope, so it can be shown anywhere.
+type Op string
+
+const (
+	OpWriteKey      Op = "write key"
+	OpWriteIncident Op = "write incident"
+	OpWritePause    Op = "write pause"
+	OpWriteAction   Op = "write action"
+	OpWriteMeta     Op = "write meta"
+	OpWriteNotified Op = "write notification"
+	OpWriteEvent    Op = "write event"
+	OpReadMeta      Op = "read meta"
+	OpReadEvents    Op = "read events"
+)
 
 // Open creates the data directory if needed and opens (and migrates) the database.
 func Open(dir string, log *slog.Logger) (*Store, error) {
@@ -47,8 +77,37 @@ func Open(dir string, log *slog.Logger) (*Store, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("data dir: %w", err)
 	}
+	lock, err := lockDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	s, err := openDB(dir, log)
+	if err != nil {
+		lock.Close()
+		return nil, err
+	}
+	s.lock = lock
+	return s, nil
+}
+
+func lockDir(dir string) (*os.File, error) {
+	f, err := os.OpenFile(filepath.Join(dir, LockName), os.O_RDWR|os.O_CREATE|syscall.O_CLOEXEC, 0o600)
+	if err != nil {
+		return nil, fmt.Errorf("data dir lock: %w", err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, fmt.Errorf("%w (%s)", ErrLocked, dir)
+		}
+		return nil, fmt.Errorf("data dir lock: %w", err)
+	}
+	return f, nil
+}
+
+func openDB(dir string, log *slog.Logger) (*Store, error) {
 	path := filepath.Join(dir, FileName)
-	dsn := "file:" + path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
+	dsn := "file:" + uriPath(path) + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, err
@@ -62,7 +121,7 @@ func Open(dir string, log *slog.Logger) (*Store, error) {
 	// WAL lets a reader run beside the writer. The reads of the API use their own connection; if it cannot be opened
 	// they share the writer's, which only costs a little latency.
 	s.rdb = db
-	if r, err := sql.Open("sqlite", "file:"+path+"?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)"); err == nil {
+	if r, err := sql.Open("sqlite", "file:"+uriPath(path)+"?mode=ro&_pragma=busy_timeout(5000)&_pragma=query_only(1)"); err == nil {
 		r.SetMaxOpenConns(2)
 		if err := r.Ping(); err == nil {
 			s.rdb = r
@@ -71,19 +130,43 @@ func Open(dir string, log *slog.Logger) (*Store, error) {
 			log.Warn("store: no separate read connection; the API shares the healer's", "error", err.Error())
 		}
 	}
+	// The bus is seeded from the last event ID: a wrong seed would make RecordEvent's ON CONFLICT drop new events, so
+	// a store whose sequence cannot be read is not opened.
+	if _, err := s.lastID(); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("open %s: read the event sequence: %w", path, err)
+	}
 	return s, nil
 }
 
-// Close closes the database.
+// uriPath escapes a file path for SQLite's file: URI: the driver splits the DSN at the first '?', and SQLite ends the
+// path at a '#' and decodes %HH in it, so a data directory with any of those characters would name another database
+// (WHALENURSE_DATA_DIR=/data?mode=memory would keep the state in memory).
+func uriPath(p string) string {
+	return strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(p)
+}
+
+// Close closes the database and releases the data directory.
 func (s *Store) Close() error {
 	if s.rdb != s.db {
 		s.rdb.Close()
 	}
-	return s.db.Close()
+	err := s.db.Close()
+	if s.lock != nil {
+		s.lock.Close()
+	}
+	return err
 }
 
-// WriteErrors counts the writes that failed since Open.
-func (s *Store) WriteErrors() int64 { return s.errs.Load() }
+// Errors counts the operations (writes, and the reads of meta and of the event sequence) that failed since Open.
+func (s *Store) Errors() int64 { return s.errs.Load() }
+
+// Health is the error count, the time of the last failure and its kind (a fixed Op), for status, the API and /metrics.
+func (s *Store) Health() (errors int64, lastAt time.Time, lastOp string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.errs.Load(), s.lastAt, string(s.lastOp)
+}
 
 func (s *Store) migrate() error {
 	var v int
@@ -185,31 +268,43 @@ func fn(n int64) time.Time {
 	return time.Unix(0, n).UTC()
 }
 
-func (s *Store) fail(op string, err error) {
+// fail counts and logs a failed operation; the engine carries on from memory. what (a key, a scope) goes to the log only.
+func (s *Store) fail(op Op, what string, err error) {
+	s.mu.Lock()
 	s.errs.Add(1)
-	s.log.Error("store write failed; continuing from memory", "op", op, "error", err.Error())
+	s.lastAt, s.lastOp = time.Now().UTC(), op
+	s.mu.Unlock()
+	msg := "store write failed; continuing from memory"
+	if strings.HasPrefix(string(op), "read") {
+		msg = "store read failed"
+	}
+	args := []any{"op", string(op), "error", err.Error()}
+	if what != "" {
+		args = append(args, "what", what)
+	}
+	s.log.Error(msg, args...)
 }
 
 // ---- meta ----------------------------------------------------------------------------------------------
 
-// Meta returns a meta value.
-func (s *Store) Meta(key string) (string, bool) {
-	var v string
-	err := s.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&v)
+// Meta returns a meta value: ok is false when there is none, and err is set (and counted) when it could not be read,
+// which is not the same as absent.
+func (s *Store) Meta(key string) (value string, ok bool, err error) {
+	err = s.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, key).Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", false
+		return "", false, nil
 	}
 	if err != nil {
-		s.fail("read meta", err)
-		return "", false
+		s.fail(OpReadMeta, key, err)
+		return "", false, err
 	}
-	return v, true
+	return value, true, nil
 }
 
 // SetMeta stores a meta value.
 func (s *Store) SetMeta(key, value string) {
 	if _, err := s.db.Exec(`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
-		s.fail("set meta", err)
+		s.fail(OpWriteMeta, key, err)
 	}
 }
 
@@ -260,7 +355,7 @@ func (s *Store) SaveKey(r engine.KeyRecord) {
 		return nil
 	})
 	if err != nil {
-		s.fail("save key "+r.Key, err)
+		s.fail(OpWriteKey, r.Key, err)
 	}
 }
 
@@ -276,7 +371,7 @@ func (s *Store) DeleteKey(key string) {
 		return err
 	})
 	if err != nil {
-		s.fail("delete key "+key, err)
+		s.fail(OpWriteKey, key, err)
 	}
 }
 
@@ -286,7 +381,7 @@ func (s *Store) CloseIncident(c engine.ClosedIncident) {
 		ON CONFLICT(key, opened_at) DO UPDATE SET closed_at = excluded.closed_at, outcome = excluded.outcome`,
 		c.Key, tn(c.Opened), c.Class, tn(c.Closed), c.Outcome)
 	if err != nil {
-		s.fail("close incident "+c.Key, err)
+		s.fail(OpWriteIncident, c.Key, err)
 	}
 }
 
@@ -294,21 +389,21 @@ func (s *Store) CloseIncident(c engine.ClosedIncident) {
 func (s *Store) SavePause(p engine.Pause) {
 	if _, err := s.db.Exec(`INSERT INTO pauses (scope, until, created) VALUES (?, ?, ?)
 		ON CONFLICT(scope) DO UPDATE SET until = excluded.until, created = excluded.created`, p.Scope, tn(p.Until), tn(p.Created)); err != nil {
-		s.fail("save pause "+p.Scope, err)
+		s.fail(OpWritePause, p.Scope, err)
 	}
 }
 
 // DeletePause removes a pause.
 func (s *Store) DeletePause(scope string) {
 	if _, err := s.db.Exec(`DELETE FROM pauses WHERE scope = ?`, scope); err != nil {
-		s.fail("delete pause "+scope, err)
+		s.fail(OpWritePause, scope, err)
 	}
 }
 
 // SaveAction records an action for the rate limit.
 func (s *Store) SaveAction(at time.Time) {
 	if _, err := s.db.Exec(`INSERT INTO actions (at) VALUES (?)`, tn(at)); err != nil {
-		s.fail("save action", err)
+		s.fail(OpWriteAction, "", err)
 	}
 }
 
@@ -338,14 +433,14 @@ func (s *Store) LoadNotified(now time.Time, ttl time.Duration) (map[string]time.
 // SaveNotified records that the message with this identity was sent.
 func (s *Store) SaveNotified(id, typ, key string, at time.Time) {
 	if _, err := s.db.Exec(`INSERT INTO notified (id, type, key, at) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET at = excluded.at`, id, typ, key, tn(at)); err != nil {
-		s.fail("save notified", err)
+		s.fail(OpWriteNotified, "", err)
 	}
 }
 
 // ForgetNotified deletes the ledger rows of one event type for one key (a recovery makes the next "giving up" news again).
 func (s *Store) ForgetNotified(typ, key string) {
 	if _, err := s.db.Exec(`DELETE FROM notified WHERE type = ? AND key = ?`, typ, key); err != nil {
-		s.fail("forget notified", err)
+		s.fail(OpWriteNotified, "", err)
 	}
 }
 
@@ -485,14 +580,57 @@ func (s *Store) Prune(now time.Time, retention, flapWindow time.Duration) (int64
 // MaxEvents caps the events table whatever the retention says: a flapping container can emit a lot.
 const MaxEvents = 100_000
 
-// pruneEvents deletes events older than the retention, and the oldest beyond MaxEvents. AUTOINCREMENT keeps the ID
-// counter, so the deletion never makes an ID come back.
+// pruneEvents deletes events older than the retention, except those of an incident that is still open, and then the
+// oldest beyond MaxEvents: first events of closed incidents and events without one, those of open incidents only as the
+// last resort (plan v3.13 item 21). AUTOINCREMENT keeps the ID counter, so the deletion never makes an ID come back.
 func (s *Store) pruneEvents(now time.Time, retention time.Duration) error {
-	if _, err := s.db.Exec(`DELETE FROM events WHERE at < ?`, tn(now.Add(-retention))); err != nil {
+	return s.pruneEventsMax(now, retention, MaxEvents)
+}
+
+func (s *Store) pruneEventsMax(now time.Time, retention time.Duration, max int) error {
+	open, args, err := s.openIncidentEvents()
+	if err != nil {
 		return err
 	}
-	_, err := s.db.Exec(`DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)`, MaxEvents)
+	if _, err := s.db.Exec(`DELETE FROM events WHERE at < ? AND NOT `+open, append([]any{tn(now.Add(-retention))}, args...)...); err != nil {
+		return err
+	}
+	var n int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM events`).Scan(&n); err != nil || n <= max {
+		return err
+	}
+	if _, err := s.db.Exec(`DELETE FROM events WHERE id IN (SELECT id FROM events WHERE NOT `+open+` ORDER BY id LIMIT ?)`,
+		append(args, n-max)...); err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`DELETE FROM events WHERE id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET ?)`, max)
 	return err
+}
+
+// openIncidentEvents is an SQL condition, with its arguments, that holds for the events of an incident still open: the
+// event's key and its incident attribute (engine.AttrIncident, the opening time) match an incident without closed_at.
+func (s *Store) openIncidentEvents() (string, []any, error) {
+	rows, err := s.db.Query(`SELECT key, opened_at FROM incidents WHERE closed_at IS NULL`)
+	if err != nil {
+		return "", nil, err
+	}
+	var args []any
+	for rows.Next() {
+		var k string
+		var opened int64
+		if err := rows.Scan(&k, &opened); err != nil {
+			rows.Close()
+			return "", nil, err
+		}
+		args = append(args, k+"\x00"+fn(opened).Format(time.RFC3339Nano))
+	}
+	if err := closeRows(rows); err != nil {
+		return "", nil, err
+	}
+	if len(args) == 0 {
+		return "0", nil, nil
+	}
+	return `(key || char(0) || COALESCE(json_extract(attrs, '$.` + engine.AttrIncident + `'), '') IN (` + placeholders(len(args)) + `))`, args, nil
 }
 
 // ---- events (the API's log) ----------------------------------------------------------------------------
@@ -509,22 +647,34 @@ func (s *Store) RecordEvent(e engine.Event) {
 	}
 	if _, err := s.db.Exec(`INSERT INTO events (id, at, host, key, container, type, message, attrs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO NOTHING`, e.ID, tn(e.Time), e.Host, e.Key, e.Container, string(e.Type), e.Message, attrs); err != nil {
-		s.fail("record event", err)
+		s.fail(OpWriteEvent, "", err)
 	}
 }
 
-// LastID is the highest event ID ever stored (also after retention deleted the newest rows); 0 for none.
+// LastID is the highest event ID ever stored (also after retention deleted the newest rows); 0 for none. Open has
+// already read it once, so a failure here is a store gone bad since; it is counted.
 func (s *Store) LastID() uint64 {
-	var n sql.NullInt64
-	if err := s.rdb.QueryRow(`SELECT seq FROM sqlite_sequence WHERE name = 'events'`).Scan(&n); err != nil && !errors.Is(err, sql.ErrNoRows) {
-		s.fail("read event sequence", err)
-		return 0
+	n, err := s.lastID()
+	if err != nil {
+		s.fail(OpReadEvents, "", err)
 	}
-	if !n.Valid || n.Int64 < 0 {
-		return 0
-	}
-	return uint64(n.Int64)
+	return n
 }
+
+// lastID is the larger of the AUTOINCREMENT sequence and the highest ID in the table: either alone can be behind (a
+// sequence row lost or reset), and a seed behind a stored ID would make RecordEvent drop every new event as a conflict.
+func (s *Store) lastID() (uint64, error) {
+	var n int64
+	err := s.rdb.QueryRow(`SELECT MAX(COALESCE((SELECT seq FROM sqlite_sequence WHERE name = 'events'), 0),
+		COALESCE((SELECT MAX(id) FROM events), 0))`).Scan(&n)
+	if err != nil || n < 0 {
+		return 0, err
+	}
+	return uint64(n), nil
+}
+
+// placeholders is "?,?,...,?" for n > 0 values, built in linear time.
+func placeholders(n int) string { return strings.Repeat(",?", n)[1:] }
 
 // Query implements engine.EventLog.
 func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
@@ -540,26 +690,16 @@ func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
 		where, args = append(where, "key = ?"), append(args, q.Key)
 	}
 	if len(q.Types) > 0 {
-		in := ""
-		for i, t := range q.Types {
-			if i > 0 {
-				in += ","
-			}
-			in += "?"
+		for _, t := range q.Types {
 			args = append(args, string(t))
 		}
-		where = append(where, "type IN ("+in+")")
+		where = append(where, "type IN ("+placeholders(len(q.Types))+")")
 	}
 	if len(q.ExcludeTypes) > 0 {
-		in := ""
-		for i, t := range q.ExcludeTypes {
-			if i > 0 {
-				in += ","
-			}
-			in += "?"
+		for _, t := range q.ExcludeTypes {
 			args = append(args, string(t))
 		}
-		where = append(where, "type NOT IN ("+in+")")
+		where = append(where, "type NOT IN ("+placeholders(len(q.ExcludeTypes))+")")
 	}
 	order := "ASC"
 	if q.Newest {

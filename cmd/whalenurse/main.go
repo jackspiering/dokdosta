@@ -41,11 +41,7 @@ import (
 var version = ""
 
 func main() {
-	args := os.Args[1:]
-	cmd := "run"
-	if len(args) > 0 && len(args[0]) > 0 && args[0][0] != '-' {
-		cmd, args = args[0], args[1:]
-	}
+	cmd, args := command(os.Args[1:])
 	var err error
 	switch cmd {
 	case "run":
@@ -60,17 +56,35 @@ func main() {
 		err = notifyCmd(args)
 	case "version":
 		fmt.Println("whalenurse", buildVersion())
-	case "help", "-h", "--help":
+	case "help":
 		usage()
 	default:
 		fmt.Fprintf(os.Stderr, "whalenurse: unknown command %q\n\n", cmd)
 		usage()
 		os.Exit(2)
 	}
+	if errors.Is(err, flag.ErrHelp) {
+		return // the flag set has printed its own usage
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "whalenurse:", err)
 		os.Exit(1)
 	}
+}
+
+// command splits the arguments into the command and its own arguments. The command is the first argument unless that
+// is a flag (`whalenurse --dry-run` is `run --dry-run`); -h, -help and --help there ask for the usage.
+func command(args []string) (string, []string) {
+	if len(args) == 0 {
+		return "run", nil
+	}
+	switch a := args[0]; {
+	case a == "-h" || a == "-help" || a == "--help":
+		return "help", args[1:]
+	case a != "" && a[0] != '-':
+		return a, args[1:]
+	}
+	return "run", args
 }
 
 func usage() {
@@ -106,18 +120,39 @@ func buildVersion() string {
 	return "dev"
 }
 
-func runCmd(args []string) error {
+// parseRunFlags reads the flags of `run`.
+func parseRunFlags(args []string) (dry bool, err error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	dry := fs.Bool("dry-run", false, "log decisions only; change nothing (same as WHALENURSE_DRY_RUN=true)")
+	d := fs.Bool("dry-run", false, "log decisions only; change nothing (same as WHALENURSE_DRY_RUN=true)")
 	if err := fs.Parse(args); err != nil {
+		return false, err
+	}
+	// Parsing stops at the first argument that is not a flag, so `run dry-run` or `run -- --dry-run` would leave the
+	// flag unset and start a live healer.
+	if fs.NArg() > 0 {
+		return false, fmt.Errorf("run: unexpected argument %q (did you mean --dry-run?)", fs.Arg(0))
+	}
+	return *d, nil
+}
+
+func runCmd(args []string) error {
+	dry, err := parseRunFlags(args)
+	if err != nil {
 		return err
 	}
 	cfg, warns, err := config.FromEnv(os.Environ())
 	if err != nil {
 		return err
 	}
-	if *dry {
+	if dry {
 		cfg.DryRun = true
+	}
+	// A second `run` beside a live daemon (a dry run by docker exec, say) must not take its control socket over; the store
+	// lock stops a second live run as well, but a dry run opens no store.
+	if cfg.ControlSocket != "" {
+		if err := control.CheckFree(cfg.ControlSocket); err != nil {
+			return fmt.Errorf("%w: a whalenurse is already running here; give a second one its own WHALENURSE_CONTROL_SOCKET (and, for a live run, its own WHALENURSE_DATA_DIR)", err)
+		}
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	for _, w := range warns {
@@ -153,6 +188,9 @@ func runCmd(args []string) error {
 		}
 		log.Info("running in a container", "self", docker.ShortID(selfID))
 	}
+	if w := hostIDWarning(cfg.HostID, selfID); w != "" {
+		log.Warn("config", "detail", w)
+	}
 
 	// One redactor for the log, the notifications and the API: the notification and ping URLs, the HTTP token and the
 	// registry credentials.
@@ -174,16 +212,11 @@ func runCmd(args []string) error {
 		bus.Subscribe(ring.Record)
 		evlog = ring
 	} else {
-		st, err := store.Open(cfg.DataDir, log)
+		st, snap, err := openStore(cfg, log, time.Now())
 		if err != nil {
-			return fmt.Errorf("cannot open the state store in %s (is WHALENURSE_DATA_DIR a writable volume?): %w", cfg.DataDir, err)
+			return err
 		}
 		defer st.Close()
-		snap, err := st.Load(time.Now())
-		if err != nil {
-			return fmt.Errorf("cannot read the state store: %w", err)
-		}
-		log.Info("state store opened", "dir", cfg.DataDir, "keys", len(snap.Keys), "pauses", len(snap.Pauses))
 		opts.Persist, opts.Snapshot, opts.Meta = st, snap, st
 		ledger, evlog, history = st, st, st
 		// Event IDs are monotonic per host across restarts: the bus continues after the highest ID ever stored,
@@ -197,15 +230,13 @@ func runCmd(args []string) error {
 	nt := setupNotify(cfg, log, bus, ledger, red)
 	defer nt.Shutdown(5 * time.Second) // the last message before a stop is often the one that matters
 
-	var actor docker.Actor = cli
+	opts.Actor = dockerActor(cfg, cli, log)
 	if cfg.DryRun {
-		actor = docker.DryRun{Would: func(verb, id string) { log.Info("dry-run: would act", "verb", verb, "id", docker.ShortID(id)) }}
 		log.Warn("DRY RUN: decisions are logged, no container is changed")
 	}
-	opts.Actor = actor
 	var removeConfigDir func()
 	opts.PullAuthHosts = regAuth.hosts()
-	opts.Compose, opts.ComposeActor, opts.ComposeNote, removeConfigDir = composeFor(ctx, cfg, log)
+	opts.Compose, opts.ComposeActor, opts.ComposeNote, removeConfigDir = composeFor(ctx, cfg, compose.Lookup{Env: cfg.ComposeBin}, log)
 	defer removeConfigDir()
 	var pinger *notify.Pinger
 	opts.NotifyStatus = func() notify.Status {
@@ -236,7 +267,11 @@ func runCmd(args []string) error {
 	if cfg.ControlSocket != "" {
 		go func() {
 			if err := control.Serve(ctx, cfg.ControlSocket, sockHandler); err != nil {
-				log.Error("control socket unavailable; the image healthcheck will fail", "path", cfg.ControlSocket, "error", err.Error())
+				msg := "control socket unavailable; the image healthcheck will fail"
+				if errors.Is(err, control.ErrInUse) {
+					msg = "control socket in use by another whalenurse; this one has none (the CLI reaches the other)"
+				}
+				log.Error(msg, "path", cfg.ControlSocket, "error", err.Error())
 			}
 		}()
 	}
@@ -245,7 +280,7 @@ func runCmd(args []string) error {
 			log.Warn("dashboard", "detail", w)
 		}
 		// No WriteTimeout: the event stream is open for as long as a browser tab is.
-		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute}
+		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 32 << 10}
 		srv.RegisterOnShutdown(hub.Close)
 		go func() {
 			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics, "extra_hosts_without_token", len(cfg.HTTPAllowedHosts), "trusted_proxies", len(cfg.HTTPTrustedProxies))
@@ -268,6 +303,42 @@ func runCmd(args []string) error {
 	}
 	log.Info("stopped")
 	return nil
+}
+
+// hostIDWarning is the startup warning for a host ID that is the own container's ID: the default (the hostname) in a
+// container without WHALENURSE_HOST_ID or hostname:, which changes whenever whalenurse is recreated.
+func hostIDWarning(hostID, selfID string) string {
+	if selfID == "" || hostID != docker.ShortID(selfID) {
+		return ""
+	}
+	return "the host ID is this container's ID (its hostname, the default without WHALENURSE_HOST_ID), which changes whenever whalenurse is recreated: the state is carried over at startup, but keys, notifications and the API name another host after every upgrade. Set WHALENURSE_HOST_ID"
+}
+
+// openStore opens the state store, re-keys what it holds to the current host ID (plan v3.13 item 12: in a container the
+// default host ID is the container's ID, which an upgrade changes) and loads it.
+func openStore(cfg config.Global, log *slog.Logger, now time.Time) (*store.Store, engine.Snapshot, error) {
+	st, err := store.Open(cfg.DataDir, log)
+	if err != nil {
+		if errors.Is(err, store.ErrLocked) {
+			return nil, engine.Snapshot{}, err
+		}
+		return nil, engine.Snapshot{}, fmt.Errorf("cannot open the state store in %s (is WHALENURSE_DATA_DIR a writable volume?): %w", cfg.DataDir, err)
+	}
+	n, err := st.Rekey(cfg.HostID, store.RekeyMeta{Keyed: daemon.MetaKeyed, WithKey: daemon.MetaWithKey})
+	if err != nil {
+		st.Close()
+		return nil, engine.Snapshot{}, fmt.Errorf("cannot re-key the state store to the host ID %s: %w", cfg.HostID, err)
+	}
+	if n > 0 {
+		log.Info("state store: moved the state of containers recorded under another host ID to this one", "keys", n, "host", cfg.HostID)
+	}
+	snap, err := st.Load(now)
+	if err != nil {
+		st.Close()
+		return nil, engine.Snapshot{}, fmt.Errorf("cannot read the state store: %w", err)
+	}
+	log.Info("state store opened", "dir", cfg.DataDir, "keys", len(snap.Keys), "pauses", len(snap.Pauses))
+	return st, snap, nil
 }
 
 // setupNotify makes the notifier one more subscriber of the event stream. The URLs hold tokens, so everything about them
@@ -307,11 +378,11 @@ func newRedactor(cfg config.Global, secrets []string) *notify.Redactor {
 // and the note says why. In dry-run mode the Actor is a no-op; the Reader still runs the drift guard, which only reads.
 // The commands get an empty directory of their own as DOCKER_CONFIG, next to the control socket (writable in both
 // deployments: /run is a tmpfs in the examples, the runtime directory under systemd) or else in the temp directory; the
-// returned func removes it.
-func composeFor(ctx context.Context, cfg config.Global, log *slog.Logger) (compose.Reader, compose.Actor, string, func()) {
+// returned func removes it. The lookup is a parameter so a test can run this with a fake binary.
+func composeFor(ctx context.Context, cfg config.Global, l compose.Lookup, log *slog.Logger) (compose.Reader, compose.Actor, string, func()) {
 	rctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	bin, notes, err := compose.Resolve(rctx, compose.Lookup{Env: cfg.ComposeBin})
+	bin, notes, err := compose.Resolve(rctx, l)
 	if err != nil {
 		log.Warn("no usable docker compose binary", "error", err.Error())
 		return nil, nil, err.Error(), func() {}
@@ -327,12 +398,28 @@ func composeFor(ctx context.Context, cfg config.Global, log *slog.Logger) (compo
 			"error", err.Error(), "docker_config", compose.NoDockerConfig)
 	}
 	c := compose.New(*bin, compose.ExecRunner{ConfigDir: dir}).WithRegistryAuth(cfg.RegistryAuthDir)
+	return c, composeActor(cfg, c, log), "", remove
+}
+
+// Dry-run is structural (m1-notes decision 8): the daemon calls its actors without asking whether this is a dry run, so
+// these two functions are what keeps a dry run from changing anything. A test checks both.
+
+// dockerActor is the Docker API actor of rung 1: the client itself, or in a dry run a no-op that logs.
+func dockerActor(cfg config.Global, cli docker.Actor, log *slog.Logger) docker.Actor {
 	if cfg.DryRun {
-		return c, compose.DryRun{Would: func(verb string, p compose.Project) {
-			log.Info("dry-run: would run compose", "verb", verb, "project", p.Name, "service", p.Service)
-		}}, "", remove
+		return docker.DryRun{Would: func(verb, id string) { log.Info("dry-run: would act", "verb", verb, "id", docker.ShortID(id)) }}
 	}
-	return c, c, "", remove
+	return cli
+}
+
+// composeActor is the compose actor of rungs 2 and 3: c itself, or in a dry run a no-op that logs.
+func composeActor(cfg config.Global, c *compose.Compose, log *slog.Logger) compose.Actor {
+	if cfg.DryRun {
+		return compose.DryRun{Would: func(verb string, p compose.Project) {
+			log.Info("dry-run: would run compose", "verb", verb, "project", p.Name, "service", p.Service)
+		}}
+	}
+	return c
 }
 
 func healthCmd(args []string) error {
@@ -566,6 +653,10 @@ func printStatus(w io.Writer, st daemon.Status) {
 	}
 	if !st.Settled {
 		flags = append(flags, "still in the startup settle period")
+	}
+	if st.Store != nil && st.Store.Errors > 0 {
+		flags = append(flags, fmt.Sprintf("STORE: %d operations failed, the last (%s) at %s: state may not survive a restart",
+			st.Store.Errors, st.Store.LastErrorOp, st.Store.LastErrorAt.Local().Format(time.TimeOnly)))
 	}
 	fmt.Fprintf(w, "host %s, mode %s", st.Host, st.Mode)
 	if len(flags) > 0 {

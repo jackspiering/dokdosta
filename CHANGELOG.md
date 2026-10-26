@@ -12,13 +12,37 @@ workflow refuses an undated section.
 
 ### Security
 
-- **Event text is redacted in the log and in notification bodies**, as it already was in the API. An error that quoted a
-  notification URL, the uptime ping URL, the HTTP token or a registry credential reached the container log unmasked, and
-  was pushed to every notification service (one URL's token to another URL's channel). The message and the free-text
-  attributes of every event now pass the redactor; a rollback command it would change is withheld from the notification.
+- **Compose's error output no longer reaches the dashboard, the API, the store or the log.** A compose load error can quote
+  a line of the stack's `.env` (an unterminated quote prints the value), and the drift guard put that text into its finding.
+  A failed compose command now reports only its exit status and the causes whalenurse knows by name (a port conflict, a
+  registry login failure, ...); run `docker compose config` in the stack to see the rest. Each output stream of a compose
+  command is also capped at 4 MiB.
+- **The last decision's reason is redacted like the start error.** For a failed start it quotes the container's
+  `State.Error`, and the dashboard and `/api/v1/containers` showed it unredacted next to the masked start error. It is now
+  redacted and cut to 600 characters; a long `State.Error` is cut on a character, not inside one.
+
+### Added
+
+- **Store failures are visible.** When `/data` is full or read-only, healing carries on from memory as before, but now
+  `whalenurse status`, `/api/v1/status` (a new `store` object: the error count, the time and kind of the last failure),
+  `/metrics` (`whalenurse_store_errors_total`) and the overview page say that the state may not survive a restart.
+  `/healthz` is unchanged. A failed read of the store is no longer taken for an absent value: an unreadable boot id is
+  not overwritten at startup. The event IDs are seeded from the highest one stored, and `run` refuses a store whose event
+  sequence cannot be read. A data directory with `?`, `#` or `%` in its path now opens the database at that path.
 
 ### Changed
 
+- **A stop of whalenurse lets a heal in flight finish, and no longer spends its rung.** A restart, recreate or the `up`
+  after a pull in flight when whalenurse is stopped (an upgrade, `systemctl restart`, a reboot) may finish for up to 30 s;
+  compose is then stopped with SIGTERM, not SIGKILL. An action cut short is recorded as interrupted (`ActionInterrupted`),
+  not failed, and runs again after the restart instead of the container being SUSPENDED. **Action:** give the container
+  `stop_grace_period: 60s` (the examples do), or the systemd unit `KillMode=mixed` and `TimeoutStopSec=60s`, then
+  `systemctl daemon-reload`.
+- **The systemd unit starts again with Docker.** After `systemctl stop docker` and a start, whalenurse stayed stopped
+  until a reboot. The unit is now also `WantedBy=docker.service`. **Action:** install the new unit, then
+  `systemctl daemon-reload && systemctl reenable whalenurse`.
+- A unit test now checks that the binary gives a dry run only the actors that change nothing, for the restart rung and
+  for the compose rungs; before, only the restart one was checked, by an integration test.
 - **A container whose healthcheck keeps flipping no longer sends a stream of messages.** SUSPENDED and "unsuspended" were
   news again after each other every time within an incident; now that happens once per incident (suspended, unsuspended,
   suspended again), and further changes are recorded and shown on the dashboard but not sent until the next incident. An
@@ -29,6 +53,53 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **Retention keeps the events of an incident that is still open.** A container SUSPENDED for longer than
+  `WHALENURSE_HISTORY_RETENTION` lost its cause, its drift findings and its rollback from the dashboard and the API. Those
+  events now stay while the incident is open; the 100,000-row cap removes them last.
+- **A failed "upgraded during heal" no longer shows as a success.** A notification URL with a boolean option
+  (`preview=false`, `usehtml=true`) made the redactor mask every `true`/`false`, so the API carried `"ok": "***"` and the
+  dashboard read a failed upgrade as done. Boolean option values are no longer masked, and the last upgrade's result is
+  read before redaction.
+- **The events filter and the request size are bounded.** `/api/v1/events` and `/history` refuse more than 64 types, a type
+  over 64 bytes or a key over 512 bytes with a 400, so a crafted `type=` list can no longer burn a CPU (or, in a dry run, stall
+  the healing loop); the request header is capped at 32 KiB; `/api/v1/incidents?limit=` above 500 now gives 500 instead of
+  the default 100.
+- **HEAD on `/api/v1/stream` answers at once.** It used to hold one of the 32 stream slots until whalenurse stopped, so a
+  monitor sending HEAD requests could stop the dashboard's live updates for everyone.
+- **A dropped Docker events stream went unnoticed.** The Docker client reports the end of the stream only on its error
+  channel, so whalenurse kept waiting for events that never came: no resubscribe, no sweep after the reconnect, and `/healthz`
+  stayed ok. It now resubscribes, sweeps after the settle time, and `/healthz` reports a stream that stays down, also when
+  every resubscribe fails at once.
+- **The compose version gate was read only at startup.** After the events stream came back, an Engine upgraded in the
+  meantime was not seen, and a failed first read of the Engine version disabled rungs 2 and 3 until whalenurse was restarted.
+  The gate is now read again before the startup sweep and the sweep after a reconnect, and at every poll until a first read
+  succeeds. A pre-release of a minimum version (`28.1.0-rc.1`, `5.2.0-rc.1`) now counts as below it.
+- **Healthcheck exec events could crowd out a `kill`.** whalenurse subscribed to every container event, and the
+  healthcheck `exec_*` events of busy hosts filled the subscription during a long pull or recreate, after which Docker drops
+  events for a subscriber that does not keep up, a manual stop's `kill` too. The subscription now asks only for the events
+  whalenurse uses.
+- **One hung Docker call could stop all healing.** A container list or inspect that never returned held the main loop,
+  and `/healthz` said ok for up to 11 minutes. Every list, inspect and image inspect now has a 30-second timeout: a call that
+  hangs fails for that container, which is tried again at the next poll, and the rest are still healed. `/healthz` (and so the
+  image's health check and the uptime ping) now reports not ok when the Docker API has been failing for longer than twice the
+  poll interval, also while an action is running.
+- `whalenurse run` refuses any argument other than `--dry-run`: `run dry-run` or `run -- --dry-run` started a live
+  healer. `whalenurse -h` and `--help` print the usage and exit 0 instead of exiting 1.
+- A second `whalenurse run` no longer takes over a running daemon's control socket (its exit left the live daemon
+  unreachable by the CLI and its health check): it refuses to start, and a second live run on the same data directory is
+  refused by a lock on it.
+- Under systemd, whalenurse no longer takes a container with `ipc: shareable` for its own container (it saw that
+  container's `/dev/shm` mount in the host's mount table) and so no longer skips healing it. Its own container ID is read
+  only from the `/etc/hostname`, `/etc/hosts` and `/etc/resolv.conf` binds.
+- **A recreate of the whalenurse container no longer loses its state.** In a container the default host ID is the
+  container's ID, so every upgrade gave every key a new host segment: SUSPENDED containers were healed again from the
+  start, hand-stopped ones could be started, and flap history was reset. At startup the stored state is now moved to the
+  current `WHALENURSE_HOST_ID` (on a collision, the more recent record wins). whalenurse warns when the host ID is its
+  own container ID, and the examples set `WHALENURSE_HOST_ID`.
+- **Event text is redacted in the log and in notification bodies**, as it already was in the API. An error that quoted a
+  notification URL, the uptime ping URL, the HTTP token or a registry credential reached the container log unmasked, and
+  was pushed to every notification service (one URL's token to another URL's channel). The message and the free-text
+  attributes of every event now pass the redactor; a rollback command it would change is withheld from the notification.
 - **The "upgraded during heal" message keeps its rollback commands exact.** After the rate limit had held messages back,
   the note that says so cut the end of the message, which is where the rollback commands are; the note now goes before
   them. Whitespace inside a quoted path of the commands was collapsed to one space; the commands are now sent byte for byte.

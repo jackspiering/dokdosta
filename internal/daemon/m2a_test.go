@@ -3,10 +3,12 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -122,6 +124,10 @@ func openStore(t *testing.T) *store.Store {
 // withStore wires a real SQLite store and a boot id, loading whatever the store holds.
 func (h *harness) withStore(st *store.Store, bootID string) func(*Options) {
 	return func(o *Options) {
+		// As the binary does (openStore in cmd/whalenurse): re-key to the host ID, then load.
+		if _, err := st.Rekey(h.cfg.HostID, store.RekeyMeta{Keyed: MetaKeyed, WithKey: MetaWithKey}); err != nil {
+			h.t.Fatal(err)
+		}
 		snap, err := st.Load(h.clk.Now())
 		if err != nil {
 			h.t.Fatal(err)
@@ -430,7 +436,7 @@ func TestHeartbeatIsWrittenEveryFewSecondsAndAtTheEnd(t *testing.T) {
 	h := newHarnessOpts(t, nil, nil, nil)
 	h.start(h.withStore(st, "boot-A"))
 	last := func() int64 {
-		v, _ := st.Meta(MetaLastSeen)
+		v, _, _ := st.Meta(MetaLastSeen)
 		n, _ := strconv.ParseInt(v, 10, 64)
 		return n
 	}
@@ -652,6 +658,38 @@ func TestStateSurvivesARestartOfWhalenurse(t *testing.T) {
 	}
 	if len(hist) != 0 {
 		t.Fatalf("an incident that is still open is not history yet: %+v", hist)
+	}
+}
+
+// In a container the default host ID is the hostname, which is the container's ID: an upgrade recreates whalenurse and
+// changes it. The persisted state is re-keyed to the new host ID at startup (plan v3.13 item 12), so a SUSPENDED container
+// stays SUSPENDED and its ladder does not start over.
+func TestStateSurvivesARecreateOfWhalenurse(t *testing.T) {
+	st := openStore(t)
+	h := newHarnessOpts(t, nil, nil, nil)
+	h.start(h.withStore(st, "boot-A"))
+	a := h.running(hexID("a1"), "p", "web")
+	h.tick()
+	h.set(a.ID, unhealthy)
+	h.advance(5 * time.Minute)
+	if !h.d.Engine().Suspended("h/p/web/1") {
+		t.Fatalf("setup: %v", h.rec.Types())
+	}
+
+	h.cfg.HostID = "0123456789ab" // whalenurse recreated: a new container ID, so a new hostname
+	h.start(h.withStore(st, "boot-A"))
+	if !h.d.Engine().Suspended("0123456789ab/p/web/1") {
+		t.Fatalf("SUSPENDED was lost with the host ID: %v", h.d.Engine().Status().Keys)
+	}
+	h.advance(20 * time.Minute)
+	if !h.d.Engine().Suspended("0123456789ab/p/web/1") {
+		t.Fatalf("SUSPENDED was lost with the host ID: %v", h.d.Engine().Status().Keys)
+	}
+	h.wantCalls("restart " + a.ID) // the ladder did not start over
+	for _, k := range h.d.Engine().Status().Keys {
+		if strings.HasPrefix(k.Key, "h/") {
+			t.Fatalf("a key under the old host ID is still there: %+v", k)
+		}
 	}
 }
 
@@ -885,4 +923,36 @@ func TestDependentsOfAParentLeftDownByPolicyStayDown(t *testing.T) {
 	h.d.StreamConnected()
 	h.advance(10 * time.Minute)
 	h.wantCalls() // neither is started
+}
+
+// failingMeta fails every read of one key, as a store whose disk went bad does; the rest is a map.
+type failingMeta struct {
+	m    map[string]string
+	fail string
+}
+
+func (f failingMeta) Meta(k string) (string, bool, error) {
+	if k == f.fail {
+		return "", false, errors.New("disk I/O error")
+	}
+	v, ok := f.m[k]
+	return v, ok, nil
+}
+func (f failingMeta) SetMeta(k, v string) { f.m[k] = v }
+
+// A boot id that cannot be read is not "no boot id yet": the stored one is kept for the next start to compare with,
+// instead of being overwritten with the current boot's (which would hide a reboot from mechanism (b) for good).
+func TestAnUnreadableBootIDIsNotOverwritten(t *testing.T) {
+	m := failingMeta{m: map[string]string{MetaBootID: "boot-A"}, fail: MetaBootID}
+	h := newHarnessOpts(t, nil, nil, func(o *Options) {
+		o.Meta = m
+		o.BootID = func() string { return "boot-B" }
+	})
+	h.tick()
+	if m.m[MetaBootID] != "boot-A" {
+		t.Fatalf("the stored boot id was overwritten: %q", m.m[MetaBootID])
+	}
+	if m.m[MetaLastSeen] == "" {
+		t.Fatal("the rest of the startup ran (last_seen is written)")
+	}
 }

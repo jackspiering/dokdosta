@@ -32,6 +32,7 @@ type composeState struct {
 	server docker.ServerInfo
 	bin    *compose.Binary
 	gate   compose.Gate
+	unread bool // the Engine version has never been read: the gate is no verdict yet, and each poll tries again
 }
 
 // ComposeStatus is the compose part of `whalenurse status`.
@@ -57,8 +58,8 @@ func (d *Daemon) cs() composeState {
 // CheckVersions is the startup version gate (plan §3.6, *Minimum versions per rung*): rungs 2 and 3 and the drift guard
 // need Engine 28.1 or later and Compose v5.2.0 or later. Below that, or when a version cannot be read, or when there is no
 // compose binary at all, it logs one warning, disables every use of compose, and the ladder ends with notify and
-// SUSPENDED after rung 1. It is called at start and again after the events stream came back, because the Engine may have
-// been upgraded in between.
+// SUSPENDED after rung 1. It is called at start, before the startup sweep and before the sweep after the events stream
+// came back, because the Engine may have been upgraded in between, and at each poll until a first read succeeds.
 func (d *Daemon) CheckVersions(ctx context.Context) {
 	prev := d.cs()
 	vctx, cancel := context.WithTimeout(ctx, 15*time.Second)
@@ -72,9 +73,10 @@ func (d *Daemon) CheckVersions(ctx context.Context) {
 	st := composeState{server: info, bin: bin}
 	if err != nil {
 		if d.compState.Load() != nil {
-			return // keep what was known; the next check tries again
+			return // keep what was known (or that nothing is); the next check tries again
 		}
 		st.gate = compose.Gate{Reason: "cannot read the Docker Engine version: " + err.Error()}
+		st.unread = true
 	} else {
 		st.gate = compose.CheckVersions(info.Version, bin)
 	}
@@ -307,12 +309,12 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 	if stale {
 		allow = d.dependentMayTakeMove(ctx, c)
 	}
-	if !d.guardVerdict(ctx, t, c, dec, p, allow) {
+	if !d.guardVerdict(ctx, t, c, dec, p, allow) || ctx.Err() != nil {
 		return
 	}
 
 	d.eng.Begin(t, plan, dec)
-	actx, cancel := context.WithTimeout(ctx, composeTimeout)
+	actx, cancel := d.actionContext(ctx, composeTimeout)
 	defer cancel()
 	var runErr error
 	d.markActing()
@@ -323,9 +325,13 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 		}
 	} else {
 		runErr = d.o.ComposeActor.Recreate(actx, p)
-		if allow && !d.cfg.DryRun {
+		if allow && !d.cfg.DryRun && !interrupted(ctx, runErr) {
 			d.noteUpgrade(actx, t, c, p, runErr)
 		}
+	}
+	if interrupted(ctx, runErr) {
+		d.eng.Interrupt(t, plan, runErr)
+		return
 	}
 	recheck := d.eng.End(t, plan, engine.Result{Err: runErr, DryRun: d.cfg.DryRun}, cfg)
 	d.afterAction(t, c, recheck)

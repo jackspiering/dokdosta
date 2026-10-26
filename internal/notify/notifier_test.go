@@ -632,7 +632,8 @@ func TestRedactingAnEventKeepsItsControlAttributes(t *testing.T) {
 	if e.Attrs["ok"] != "true" || e.Attrs["action"] != "restart" || e.Attrs["rung"] != "restart" || e.Key != webKey || e.Host != testHost {
 		t.Fatalf("%+v", e)
 	}
-	if e.Attrs["error"] != "*** ***" || e.Message != "*** failed: *** ***" {
+	// "true" is a boolean option value, never a fragment (v3.13 item 20); "json" and "restart" are.
+	if e.Attrs["error"] != "*** true" || e.Message != "*** failed: true ***" {
 		t.Fatalf("%+v", e)
 	}
 }

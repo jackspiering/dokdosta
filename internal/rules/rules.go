@@ -409,8 +409,8 @@ func waitForParent(d Decision, p Parent) Decision {
 
 func trim(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 300 {
-		return s[:300] + "..."
+	if r := []rune(s); len(r) > 300 {
+		return string(r[:300]) + "..."
 	}
 	return s
 }

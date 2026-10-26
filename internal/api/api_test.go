@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/whalenurse/internal/notify"
 )
 
 func get(t *testing.T, h http.Handler, path string, hdr ...string) *httptest.ResponseRecorder {
@@ -200,6 +203,186 @@ func TestRedactionAndLengthCaps(t *testing.T) {
 	c := s.clean(ContainerDoc{StartError: "bind SECRET-TOKEN-1234 " + long})
 	if strings.Contains(c.StartError, "SECRET") || len([]rune(c.StartError)) > maxErrorText {
 		t.Errorf("start error not cleaned")
+	}
+}
+
+// The last decision's reason quotes State.Error for a failed start (rules rule 1), so it is redacted and cut like the
+// start error itself; the view's own decision is not changed.
+func TestDecisionReasonIsRedacted(t *testing.T) {
+	s := fixtureService()
+	s.Redact = func(v string) string { return strings.ReplaceAll(v, "SECRET-TOKEN-1234", "***") }
+	orig := &DecisionDoc{Class: "start-failed", Action: "start", Skip: "x SECRET-TOKEN-1234",
+		Reason: "failed start (other): exec: \"curl SECRET-TOKEN-1234\": not found " + strings.Repeat("x", 5000)}
+	c := s.clean(ContainerDoc{Decision: orig})
+	if strings.Contains(c.Decision.Reason, "SECRET") || len([]rune(c.Decision.Reason)) > maxErrorText || strings.Contains(c.Decision.Skip, "SECRET") {
+		t.Errorf("decision not cleaned: %.120q / %q", c.Decision.Reason, c.Decision.Skip)
+	}
+	if !strings.Contains(orig.Reason, "SECRET") {
+		t.Error("clean changed the document it was given")
+	}
+}
+
+// The "last upgrade" decides ok from the raw event: a redactor that masks a boolean word (a notification URL with
+// preview=false) must not turn a failed upgrade into a successful one (plan v3.13 item 20).
+func TestFailedUpgradeStaysFailedUnderABooleanURLOption(t *testing.T) {
+	for _, c := range []struct {
+		url, ok string
+		want    bool
+	}{
+		{"telegram://123456789:AAEhBP0-tok@telegram?channels=@ops&preview=false", "false", false},
+		{"smtp://u:p@h:587/?usehtml=true", "true", true},
+	} {
+		r := engine.NewRing(10)
+		r.Record(engine.Event{ID: 1, Time: t0, Host: "nas", Key: "nas/media/vpn/1", Container: "media-vpn-1", Type: engine.TagMoved,
+			Message: "x:latest: aaa moved to bbb; the recreate failed: exit status 1",
+			Attrs:   map[string]string{"ref": "x:latest", "old": "sha256:aaa", "new": "sha256:bbb", "ok": c.ok, "error": "exit status 1"}})
+		red := notify.NewRedactor(c.url)
+		// The redactor of before item 20, which also masked boolean words: the decision must not depend on it.
+		mask := func(v string) string {
+			return strings.NewReplacer("false", "***", "true", "***").Replace(red.Redact(v))
+		}
+		for name, redact := range map[string]func(string) string{"redactor": red.Redact, "masking every boolean": mask} {
+			s := &Service{Host: "nas", Source: fixtureSource{}, Events: r, Redact: redact}
+			d, ok := s.Container("nas/media/vpn/1")
+			if !ok || d.LastUpgrade == nil || d.LastUpgrade.OK != c.want {
+				t.Errorf("%s, %s: ok=%s should read as %v: %+v", c.url, name, c.ok, c.want, d.LastUpgrade)
+			}
+		}
+		evs, _ := r.Query(engine.EventQuery{Limit: 1})
+		e := (&Service{Redact: red.Redact}).EventDoc(evs[0])
+		if e.Attrs["ok"] != c.ok {
+			t.Errorf("%s: the ok attribute reads %q", c.url, e.Attrs["ok"])
+		}
+	}
+}
+
+// The type filter is bounded: a comma list is not limited by net/http's parameter count, and each entry costs work in
+// the store's query and the dry run's ring scan. Too many entries, or a long entry or key, is a 400 that does not echo
+// the input; the history page's two-type filter still works.
+func TestEventsTypeFilterIsBounded(t *testing.T) {
+	h := handler(t, "")
+	for name, path := range map[string]string{
+		"1000 types":   "/api/v1/events?type=" + strings.TrimSuffix(strings.Repeat("ActionResult,", 1000), ","),
+		"65 type args": "/api/v1/events" + "?type=a" + strings.Repeat("&type=a", 64),
+		"a long type":  "/api/v1/events?type=" + strings.Repeat("Z", 200),
+		"a long key":   "/api/v1/events?key=" + strings.Repeat("Z", 2000),
+	} {
+		rec := get(t, h, path)
+		if rec.Code != 400 || strings.Contains(rec.Body.String(), "ZZZ") || strings.Contains(rec.Body.String(), "ActionResult") {
+			t.Errorf("%s: %d %.200s", name, rec.Code, rec.Body.String())
+		}
+	}
+	for _, path := range []string{"/api/v1/events?type=ActionResult,ActionStarted", "/api/v1/events?type=" + strings.TrimSuffix(strings.Repeat("ActionResult,", 64), ",")} {
+		if rec := get(t, h, path); rec.Code != 200 {
+			t.Errorf("%.80s: %d %s", path, rec.Code, rec.Body.String())
+		}
+	}
+	q, err := ParseEventsQuery(httptest.NewRequest("GET", "/api/v1/events?type=Suspended,Suspended&type=Recovered,Suspended", nil))
+	if err != nil || strings.Join(q.Types, ",") != "Suspended,Recovered" {
+		t.Errorf("types are deduplicated in order: %v %v", q.Types, err)
+	}
+}
+
+// ?limit= on /incidents caps at 500 like /events caps at 1000, instead of falling back to the default.
+func TestIncidentsLimitCaps(t *testing.T) {
+	s := fixtureService()
+	s.History = manyHistory{n: 700}
+	if got := len(s.Incidents("", 600).Incidents); got != 500 {
+		t.Errorf("limit=600 gave %d incidents, want 500", got)
+	}
+	if got := len(s.Incidents("", 0).Incidents); got != 100 {
+		t.Errorf("no limit gave %d incidents, want 100", got)
+	}
+}
+
+type manyHistory struct{ n int }
+
+func (m manyHistory) History(string) ([]engine.ClosedIncident, error) {
+	out := make([]engine.ClosedIncident, m.n)
+	for i := range out {
+		out[i] = engine.ClosedIncident{Key: "nas/media/vpn/1", Opened: t0.Add(time.Duration(i) * time.Minute), Closed: t0.Add(time.Duration(i)*time.Minute + time.Second)}
+	}
+	return out, nil
+}
+
+// HEAD on the stream answers the headers and returns: net/http discards a HEAD's body, so a streaming handler would never
+// see a write fail, and held one of the MaxStreams slots until shutdown.
+func TestHEADOnTheStreamReturnsAtOnceAndHoldsNoSlot(t *testing.T) {
+	svc := fixtureService()
+	t.Cleanup(svc.Hub.Close)
+	h := Handler(Options{Health: okChecker{}, Service: svc})
+	req := httptest.NewRequest("HEAD", "/api/v1/stream", nil)
+	req.Host = "127.0.0.1:8484"
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() { h.ServeHTTP(rec, req); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("HEAD /api/v1/stream did not return")
+	}
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "text/event-stream" || svc.Hub.Clients() != 0 {
+		t.Fatalf("code %d, type %q, clients %d", rec.Code, rec.Header().Get("Content-Type"), svc.Hub.Clients())
+	}
+}
+
+// No route holds a HEAD request open (a future long-lived GET handler would have the stream's problem).
+func TestHEADOnEveryRouteReturns(t *testing.T) {
+	svc := fixtureService()
+	t.Cleanup(svc.Hub.Close)
+	h := Handler(Options{Health: okChecker{}, Service: svc})
+	for _, path := range allRoutes {
+		req := httptest.NewRequest("HEAD", path, nil)
+		req.Host = "127.0.0.1:8484"
+		done := make(chan struct{})
+		go func() { h.ServeHTTP(httptest.NewRecorder(), req); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Errorf("HEAD %s did not return", path)
+		}
+	}
+}
+
+// The real leak: a client that reuses the keep-alive connection after a HEAD and then closes it. No stream is held, and
+// after MaxStreams of them a GET still streams.
+func TestHEADOnAReusedConnectionHoldsNoStream(t *testing.T) {
+	svc := fixtureService()
+	srv := httptest.NewServer(Handler(Options{Health: okChecker{}, Service: svc}))
+	defer srv.Close()
+	defer svc.Hub.Close()
+	for range MaxStreams {
+		conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		br := bufio.NewReader(conn)
+		fmt.Fprint(conn, "HEAD /api/v1/stream HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil {
+				t.Fatalf("reading the HEAD answer: %v", err)
+			}
+			if line == "\r\n" {
+				break
+			}
+		}
+		fmt.Fprint(conn, "GET /healthz HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+		time.Sleep(20 * time.Millisecond)
+		conn.Close()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for svc.Hub.Clients() != 0 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if n := svc.Hub.Clients(); n != 0 {
+		t.Fatalf("%d streams held after HEAD requests", n)
+	}
+	c := connect(t, srv.URL+"/api/v1/stream")
+	defer c.close()
+	if c.resp.StatusCode != 200 {
+		t.Fatalf("a GET stream after the HEADs: %d", c.resp.StatusCode)
 	}
 }
 

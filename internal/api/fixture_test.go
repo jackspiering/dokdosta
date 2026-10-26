@@ -33,6 +33,7 @@ func (fixtureSource) Status() StatusDoc {
 		},
 		PullAuth:         PullAuthDoc{Registries: []string{"ghcr.io", "registry.example.lan:5000"}},
 		HistoryRetention: 30 * 24 * 3600,
+		Store:            &StoreDoc{Errors: 2, LastErrorAt: t0.Add(30 * time.Minute), LastErrorOp: "write event"},
 	}
 }
 
