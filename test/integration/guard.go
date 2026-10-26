@@ -21,7 +21,7 @@
 //	PreflightNoStrangers  refuses to start while any container outside a matching project is opted in. The tests that run
 //	          a whalenurse the guard cannot wrap (the built binary, the published image) rely on this alone
 //	ComposeRunner  the compose Runner the healer under test runs compose through: only `up` (with -d --no-deps --pull never
-//	          --no-build), `pull --policy always <one service>` (rung 3), `config --hash` and `version`, only with -p
+//	          --no-build), `pull --policy always -- <one service>` (rung 3), `config --hash` and `version`, only with -p
 //	          <matching project>; never down, rm, build or an up that could pull
 //
 // Reads (inspect, ps, logs) use plain docker. This file has no build tag so
@@ -456,7 +456,7 @@ func (g *Guard) ImagePullRefs(ctx context.Context, since, until string) ([]strin
 
 // CheckComposeCommand is the filter in front of whalenurse's compose: it accepts exactly the five shapes the compose
 // package builds and nothing else. A command whalenurse should never run (down, rm, build, run, a different project,
-// a pull that is not `--policy always <one service>`, an up that could pull or build or touch other services) is REFUSED.
+// a pull that is not `--policy always -- <one service>`, an up that could pull or build or touch other services) is REFUSED.
 func CheckComposeCommand(args []string) error {
 	if len(args) < 3 || args[0] != "-p" {
 		return refuse("compose command does not start with -p <project>: %v", args)
@@ -489,21 +489,24 @@ sub:
 	case "config":
 		switch {
 		case len(rest) == 1 && strings.HasPrefix(rest[0], "--hash=") && !strings.ContainsAny(rest[0], ",*"):
-		case len(rest) == 4 && rest[0] == "--format" && rest[1] == "json" && rest[2] == "--no-env-resolution" && !strings.HasPrefix(rest[3], "-"):
+		case len(rest) == 5 && rest[0] == "--format" && rest[1] == "json" && rest[2] == "--no-env-resolution" && rest[3] == "--" && !strings.HasPrefix(rest[4], "-"):
 			// The pull rung reads one service's pull_policy; the rest of the output is dropped by the caller.
 		default:
-			return refuse("compose config with %v: only --hash=<one service> or --format json --no-env-resolution <one service>", rest)
+			return refuse("compose config with %v: only --hash=<one service> or --format json --no-env-resolution -- <one service>", rest)
 		}
 	case "pull":
 		// Rung 3 only: one service, with the policy flag, nothing else (no --include-deps).
-		if len(rest) != 3 || rest[0] != "--policy" || rest[1] != "always" || strings.HasPrefix(rest[2], "-") {
-			return refuse("compose pull with %v: only --policy always <one service>", rest)
+		if len(rest) != 4 || rest[0] != "--policy" || rest[1] != "always" || rest[2] != "--" || strings.HasPrefix(rest[3], "-") {
+			return refuse("compose pull with %v: only --policy always -- <one service>", rest)
 		}
 	case "up":
+		// The service is the one operand and follows `--` (plan v3.13 item 11): the flags come first, then `--`, then it.
 		want := map[string]bool{"-d": false, "--no-deps": false, "--no-build": false}
-		pullNever, force, services := false, false, 0
-		for j := 0; j < len(rest); j++ {
+		pullNever, force, dashes := false, false, -1
+		for j := 0; j < len(rest) && dashes < 0; j++ {
 			switch a := rest[j]; {
+			case a == "--":
+				dashes = j
 			case a == "--pull":
 				if j+1 >= len(rest) || rest[j+1] != "never" {
 					return refuse("compose up --pull must be never: %v", rest)
@@ -518,7 +521,7 @@ sub:
 				}
 				want[a] = true
 			default:
-				services++
+				return refuse("compose up with %q before --: the service follows --: %v", a, rest)
 			}
 		}
 		for f, seen := range want {
@@ -526,8 +529,8 @@ sub:
 				return refuse("compose up without %s", f)
 			}
 		}
-		if !pullNever || services != 1 {
-			return refuse("compose up needs --pull never and exactly one service: %v (force=%v)", rest, force)
+		if !pullNever || dashes < 0 || len(rest) != dashes+2 || strings.HasPrefix(rest[dashes+1], "-") {
+			return refuse("compose up needs --pull never and exactly one service after --: %v (force=%v)", rest, force)
 		}
 	default:
 		return refuse("compose %s is not something whalenurse runs", args[i])
