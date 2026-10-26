@@ -50,9 +50,16 @@ func (d *Daemon) parentServices(key string, labels map[string]string) []string {
 func (d *Daemon) knownParents(key string) []string { return d.known(d.parents, metaParents, key) }
 
 // namespaceParents are the services that the live container: references of a dependent resolved to when whalenurse last
-// saw them (plan v3.13 item 3); nil when it never saw one, as for a sidecar first seen after its parent was gone.
+// saw them (plan v3.13 item 3); nil when it never saw one, as for a sidecar first seen after its parent was gone. They are
+// kept per reference ("network:web", "ipc:db"), so that one reference resolving does not wipe what was learned for another.
 func (d *Daemon) namespaceParents(key string) []string {
-	return d.known(d.nsParents, metaNSParent, key)
+	var out []string
+	for _, e := range d.known(d.nsParents, metaNSParent, key) {
+		if _, svc, ok := strings.Cut(e, ":"); ok && !slices.Contains(out, svc) {
+			out = append(out, svc)
+		}
+	}
+	return out
 }
 
 // known reads a learned set from memory, then from the store's meta.
@@ -81,26 +88,28 @@ func (d *Daemon) optInServices(key string, labels map[string]string) []string {
 	return d.parentServices(key, labels)
 }
 
-// liveParentServices are the services of the containers that c's container: references resolve to now.
-func (d *Daemon) liveParentServices(c docker.Container) []string {
-	var out []string
+// liveNamespace are the "kind:service" entries for the references of c (network, ipc, pid) that resolve to a container of
+// its project now; refs says which kinds hold a container: reference at all.
+func (d *Daemon) liveNamespace(c docker.Container) (live []string, refs map[string]bool) {
+	refs = map[string]bool{}
 	project := c.Labels[docker.LabelProject]
-	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
-		ref := docker.ContainerRef(mode)
+	for _, r := range []struct{ kind, mode string }{{"network", c.NetworkMode}, {"ipc", c.IpcMode}, {"pid", c.PidMode}} {
+		ref := docker.ContainerRef(r.mode)
 		if ref == "" {
 			continue
 		}
+		refs[r.kind] = true
 		for _, s := range d.idx.all {
 			svc := s.Labels[docker.LabelService]
 			if svc == "" || s.Labels[docker.LabelProject] != project || docker.IsOneOff(s.Labels) || !docker.MatchesRef(s.ID, s.Name, ref) {
 				continue
 			}
-			if !slices.Contains(out, svc) {
-				out = append(out, svc)
+			if e := r.kind + ":" + svc; !slices.Contains(live, e) {
+				live = append(live, e)
 			}
 		}
 	}
-	return out
+	return live, refs
 }
 
 // learnParents records the services a dependent depends on. A non-empty label is authoritative and replaces what was
@@ -108,7 +117,13 @@ func (d *Daemon) liveParentServices(c docker.Container) []string {
 // never shrinks a set learned from the label (depends_on can name services besides the one it shares a namespace with).
 func (d *Daemon) learnParents(key string, c docker.Container) {
 	delete(d.parentsGone, key)
-	live := d.liveParentServices(c)
+	liveNS, refs := d.liveNamespace(c)
+	var live []string
+	for _, e := range liveNS {
+		if _, svc, _ := strings.Cut(e, ":"); !slices.Contains(live, svc) {
+			live = append(live, svc)
+		}
+	}
 	known := d.knownParents(key)
 	var next []string
 	if l := dependsOn(c.Labels[compose.LabelDependsOn]); len(l) > 0 {
@@ -127,11 +142,24 @@ func (d *Daemon) learnParents(key string, c docker.Container) {
 			d.o.Meta.SetMeta(metaParents+key, strings.Join(next, ","))
 		}
 	}
-	// The namespace parent is what the live references say, replaced each time one resolves (plan v3.13 item 3).
-	if len(live) > 0 && !slices.Equal(live, d.namespaceParents(key)) {
-		d.nsParents[key] = live
+	// The namespace parent is what the live references say: per reference, replaced when it resolves, kept while it does
+	// not (its parent is gone, which is when it matters), and dropped when the container no longer holds that reference
+	// (plan v3.13 item 3).
+	oldNS := d.known(d.nsParents, metaNSParent, key)
+	var nextNS []string
+	for _, e := range oldNS {
+		kind, _, _ := strings.Cut(e, ":")
+		if refs[kind] && !slices.ContainsFunc(liveNS, func(l string) bool { return strings.HasPrefix(l, kind+":") }) {
+			nextNS = append(nextNS, e)
+		}
+	}
+	nextNS = append(nextNS, liveNS...)
+	slices.Sort(nextNS)
+	nextNS = slices.Compact(nextNS)
+	if len(nextNS) > 0 && !slices.Equal(nextNS, oldNS) {
+		d.nsParents[key] = nextNS
 		if d.o.Meta != nil {
-			d.o.Meta.SetMeta(metaNSParent+key, strings.Join(live, ","))
+			d.o.Meta.SetMeta(metaNSParent+key, strings.Join(nextNS, ","))
 		}
 	}
 }
