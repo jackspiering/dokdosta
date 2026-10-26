@@ -291,7 +291,7 @@ func TestSidecarTakesTheTagItsParentsPullMoved(t *testing.T) {
 		t.Fatalf("nothing may be blocked: %+v", e)
 	}
 	verbs := h.verbs()
-	if !strings.Contains(verbs, "pull web, up web") || !strings.HasSuffix(verbs, "up side") {
+	if !strings.Contains(verbs, "pull web, dry-run web, up web") || !strings.HasSuffix(verbs, "up side") {
 		t.Fatalf("compose calls = %q: the sidecar is recreated after the parent's up", verbs)
 	}
 	if now := h.current("p", "side"); now.NetworkMode != "container:"+h.current("p", "web").ID || !now.Running {
