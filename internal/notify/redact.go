@@ -112,15 +112,27 @@ func fragmentsOf(raw string) []string {
 	}
 	for _, vals := range u.Query() {
 		for _, v := range vals {
-			add(v)
-			// A value with commas (tags=a,b, chats=1,2) is leaked piece by piece as well.
-			for _, piece := range strings.Split(v, ",") {
-				add(piece)
+			// A value with commas (tags=a,b, chats=1,2) is leaked piece by piece as well. A boolean word (preview=false,
+			// usehtml=true) is an option, not a token, and masking it turned whalenurse's own ok=false into ok=*** (plan
+			// v3.13 item 20).
+			for _, piece := range append([]string{v}, strings.Split(v, ",")...) {
+				if !booleanWord(piece) {
+					add(piece)
+				}
 			}
 		}
 	}
 	add(u.RawQuery)
 	return out
+}
+
+// booleanWord reports whether a query value is one of the words an option switch takes, in any case.
+func booleanWord(s string) bool {
+	switch strings.ToLower(s) {
+	case "true", "false", "1", "0", "yes", "no", "on", "off":
+		return true
+	}
+	return false
 }
 
 // Redact returns s with every fragment of the configured URLs replaced by ***.

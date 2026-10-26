@@ -40,7 +40,7 @@ func (d *Daemon) knownParents(key string) []string {
 	if d.o.Meta == nil {
 		return nil
 	}
-	v, ok := d.o.Meta.Meta(metaParents + key)
+	v, ok, _ := d.o.Meta.Meta(metaParents + key) // a read error is counted and logged by the store; nothing is cached
 	if !ok || v == "" {
 		return nil
 	}

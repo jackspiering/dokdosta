@@ -715,7 +715,7 @@ func TestLearnedParentsFollowTheLabelAndOnlyGrowFromLiveReferences(t *testing.T)
 	if got := strings.Join(h.d.knownParents(k), ","); got != "other,parent" {
 		t.Fatalf("an empty label must not shrink what was learned, and a live reference adds its service: %q", got)
 	}
-	if v, _ := st.Meta(metaParents + k); v != "other,parent" {
+	if v, _, _ := st.Meta(metaParents + k); v != "other,parent" {
 		t.Fatalf("not persisted: %q", v)
 	}
 	h.set(dep.ID, func(c *docker.Container) {

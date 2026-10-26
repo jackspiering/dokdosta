@@ -78,6 +78,14 @@ hash layout. It refuses rather than guess. Fix: **mount the host's plugin** (`do
 the container has no `com.docker.compose.config-hash` or `.image` label, or the dry run and `config --hash` both failed.
 The message says which.
 
+### What compose said
+
+When a compose command fails, whalenurse does not show compose's own output: compose can quote a line of the stack's `.env` or
+`env_file` in it (an unterminated quote, for one), and that would put a password on the dashboard. The message keeps the exit
+status and the causes whalenurse knows by name (`port is already allocated`, `no such service`, `network not found`,
+`pull access denied`, `unauthorized`, ...), as `compose reported: ...`. Otherwise it says
+"compose's output is not shown ...": run `docker compose config` in the stack yourself to see why.
+
 ## Recreate is skipped
 
 Messages like `recreate skipped: compose inputs of project X are not readable from here ...`:
@@ -181,4 +189,5 @@ missing bind source, a port already allocated (`port is already allocated`), a b
 | `whalenurse status` says `docker API failing for ...`, and `/healthz` is `not ok` | The Docker API has answered no container list or inspect for over twice the poll interval: each call times out after 30 s, or fails. Check `docker ps` on the host and the daemon's own log (`journalctl -u docker`). whalenurse heals nothing it cannot inspect; it recovers on its own once the API answers. |
 | A warning that the dashboard has no token | `WHALENURSE_HTTP_ADDR` is not loopback and no token is set. Set the token, or publish the port on `127.0.0.1`. |
 | `run` exits: `WHALENURSE_REGISTRY_AUTH_DIR: ...` | The credentials file is not valid: it must be a `config.json` with only `auths`, each entry with an inline credential ([deployment.md](deployment.md#private-registries-for-the-pull-rung)). The message names the problem and never a value. |
+| `store write failed; continuing from memory` (or `store read failed`) in the log, `STORE: N operations failed` in `status` | `/data` is full, read-only or gone bad. Healing goes on from memory, but SUSPENDED, pauses, markers and events written since are lost on a restart. Free the space (or fix the mount), then restart whalenurse so it starts from a store that works; check what you paused or unsuspended meanwhile. |
 | Unknown `WHALENURSE_...` variable | A typo; the warning names it. |

@@ -565,16 +565,16 @@ func TestLastSeenAdvancesWhileAPullIsBlocked(t *testing.T) {
 	var seenDuring [2]string
 	h.cf.OnPull = func(compose.Project) error {
 		close(started)
-		seenDuring[0], _ = meta.Meta(MetaLastSeen)
+		seenDuring[0], _, _ = meta.Meta(MetaLastSeen)
 		h.clk.Advance(8 * time.Minute) // the pull takes a long time
 		deadline := time.Now().Add(5 * time.Second)
 		for time.Now().Before(deadline) {
-			if v, _ := meta.Meta(MetaLastSeen); v != seenDuring[0] {
+			if v, _, _ := meta.Meta(MetaLastSeen); v != seenDuring[0] {
 				break
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		seenDuring[1], _ = meta.Meta(MetaLastSeen)
+		seenDuring[1], _, _ = meta.Meta(MetaLastSeen)
 		<-release
 		return nil
 	}
@@ -598,10 +598,10 @@ type memMetaSafe struct {
 	m  map[string]string
 }
 
-func (m memMetaSafe) Meta(k string) (string, bool) {
+func (m memMetaSafe) Meta(k string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	v, ok := m.m[k]
-	return v, ok
+	return v, ok, nil
 }
 func (m memMetaSafe) SetMeta(k, v string) { m.mu.Lock(); defer m.mu.Unlock(); m.m[k] = v }

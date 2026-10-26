@@ -32,6 +32,15 @@ type StatusDoc struct {
 	HistoryRetention int64            `json:"history_retention_seconds"`
 	Notifications    NotificationsDoc `json:"notifications"`
 	PullAuth         PullAuthDoc      `json:"pull_auth"`
+	Store            *StoreDoc        `json:"store,omitempty"` // nil in a dry run, which stores nothing
+}
+
+// StoreDoc says whether the store has failed since startup. Healing carries on from memory when it does, but what failed
+// to be written does not survive a restart. Only a count, a time and a fixed operation name: never a key or an error text.
+type StoreDoc struct {
+	Errors      int64     `json:"errors"`
+	LastErrorAt time.Time `json:"last_error_at,omitzero"`
+	LastErrorOp string    `json:"last_error_op,omitempty"` // "write pause", "read meta", ...
 }
 
 // PullAuthDoc says which registries the pull rung has credentials for (WHALENURSE_REGISTRY_AUTH_DIR): the hosts, sorted,

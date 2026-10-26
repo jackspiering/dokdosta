@@ -10,8 +10,41 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Security
+
+- **Compose's error output no longer reaches the dashboard, the API, the store or the log.** A compose load error can quote
+  a line of the stack's `.env` (an unterminated quote prints the value), and the drift guard put that text into its finding.
+  A failed compose command now reports only its exit status and the causes whalenurse knows by name (a port conflict, a
+  registry login failure, ...); run `docker compose config` in the stack to see the rest. Each output stream of a compose
+  command is also capped at 4 MiB.
+- **The last decision's reason is redacted like the start error.** For a failed start it quotes the container's
+  `State.Error`, and the dashboard and `/api/v1/containers` showed it unredacted next to the masked start error. It is now
+  redacted and cut to 600 characters; a long `State.Error` is cut on a character, not inside one.
+
+### Added
+
+- **Store failures are visible.** When `/data` is full or read-only, healing carries on from memory as before, but now
+  `whalenurse status`, `/api/v1/status` (a new `store` object: the error count, the time and kind of the last failure),
+  `/metrics` (`whalenurse_store_errors_total`) and the overview page say that the state may not survive a restart.
+  `/healthz` is unchanged. A failed read of the store is no longer taken for an absent value: an unreadable boot id is
+  not overwritten at startup. The event IDs are seeded from the highest one stored, and `run` refuses a store whose event
+  sequence cannot be read. A data directory with `?`, `#` or `%` in its path now opens the database at that path.
+
 ### Fixed
 
+- **Retention keeps the events of an incident that is still open.** A container SUSPENDED for longer than
+  `WHALENURSE_HISTORY_RETENTION` lost its cause, its drift findings and its rollback from the dashboard and the API. Those
+  events now stay while the incident is open; the 100,000-row cap removes them last.
+- **A failed "upgraded during heal" no longer shows as a success.** A notification URL with a boolean option
+  (`preview=false`, `usehtml=true`) made the redactor mask every `true`/`false`, so the API carried `"ok": "***"` and the
+  dashboard read a failed upgrade as done. Boolean option values are no longer masked, and the last upgrade's result is
+  read before redaction.
+- **The events filter and the request size are bounded.** `/api/v1/events` and `/history` refuse more than 64 types, a type
+  over 64 bytes or a key over 512 bytes with a 400, so a crafted `type=` list can no longer burn a CPU (or, in a dry run, stall
+  the healing loop); the request header is capped at 32 KiB; `/api/v1/incidents?limit=` above 500 now gives 500 instead of
+  the default 100.
+- **HEAD on `/api/v1/stream` answers at once.** It used to hold one of the 32 stream slots until whalenurse stopped, so a
+  monitor sending HEAD requests could stop the dashboard's live updates for everyone.
 - **A dropped Docker events stream went unnoticed.** The Docker client reports the end of the stream only on its error
   channel, so whalenurse kept waiting for events that never came: no resubscribe, no sweep after the reconnect, and `/healthz`
   stayed ok. It now resubscribes, sweeps after the settle time, and `/healthz` reports a stream that stays down, also when

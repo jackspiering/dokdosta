@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -100,7 +101,8 @@ type dashboardRig struct {
 
 func newRig(t *testing.T, token string) *dashboardRig {
 	t.Helper()
-	notifyURL := "generic://u:" + secUserinfo + "@127.0.0.1:9/hook/" + secPath + "?k=" + secQuery
+	// usehtml=true: a boolean option is no secret, so whalenurse's own "ok": "true" must survive (plan v3.13 item 20).
+	notifyURL := "generic://u:" + secUserinfo + "@127.0.0.1:9/hook/" + secPath + "?k=" + secQuery + "&usehtml=true"
 	ping := "http://127.0.0.1:9/ping/" + secPing
 	t.Setenv("DB_PASSWORD", secEnv) // an environment variable of the process: nothing may dump it
 	regAuth := registryAuthDir(t)
@@ -269,8 +271,81 @@ func TestNoSecretReachesAnyPageEndpointOrStream(t *testing.T) {
 	}
 	// The attribute the engine never emits was dropped; the allowed one ("reason") stayed, redacted.
 	_, ev := r.fetch(t, "/api/v1/events?limit=1000", secHTTP)
-	if strings.Contains(ev, `"labels"`) || strings.Contains(ev, `"env"`) || !strings.Contains(ev, `"reason": "x ***"`) {
+	if strings.Contains(ev, `"labels"`) || strings.Contains(ev, `"env"`) || !strings.Contains(ev, `"reason": "x ***"`) || !strings.Contains(ev, `"ok": "true"`) {
 		t.Errorf("event attributes: allow-list not applied:\n%s", ev)
+	}
+}
+
+// A failed start's decision quotes State.Error (rule 1): an exec-form command that holds a webhook URL puts it there. The
+// last decision is redacted like the start error, on the JSON endpoints and the container page.
+func TestDecisionReasonReachesNoPageWithASecret(t *testing.T) {
+	r := newRig(t, secHTTP)
+	h := r.h
+	c := h.running(hexID("d4"), "p", "job")
+	h.tick()
+	dead := h.set(c.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode = "exited", false, 127
+		c.Error = `failed to create task for container: exec: "curl generic://u:` + secUserinfo + `@127.0.0.1:9/hook/` + secPath + `": stat: no such file or directory`
+	})
+	h.event(dead, "die", "")
+	h.advance(45 * time.Second)
+	key := "nas/p/job/1"
+	pages := map[string]string{}
+	for _, p := range []string{"/api/v1/containers?all=1", "/api/v1/containers/" + key, "/containers/" + key} {
+		_, pages[p] = r.fetch(t, p, secHTTP)
+	}
+	for p, body := range pages {
+		for _, s := range []string{secUserinfo, secPath} {
+			if strings.Contains(body, s) {
+				t.Errorf("%s leaks %q", p, s)
+			}
+		}
+	}
+	if !strings.Contains(pages["/api/v1/containers/"+key], `"reason": "failed start (`) {
+		t.Errorf("no failed-start decision to check (the test proves nothing):\n%s", pages["/api/v1/containers/"+key])
+	}
+}
+
+// The history page shares the events filter's bounds: too many types is a 400 that does not echo them.
+func TestHistoryTypeFilterIsBounded(t *testing.T) {
+	r := newRig(t, "")
+	code, body := r.fetch(t, "/history?type="+strings.TrimSuffix(strings.Repeat("ActionResult,", 1000), ","), "")
+	if code != 400 || strings.Contains(body, "ActionResult") {
+		t.Errorf("%d %.300s", code, body)
+	}
+	if code, _ := r.fetch(t, "/history?type=ActionResult,Suspended", ""); code != 200 {
+		t.Errorf("a two-type filter: %d", code)
+	}
+}
+
+// A store that fails (a full or read-only /data) does not stop healing, but it is no longer silent: /api/v1/status, the
+// CLI status, /metrics and the overview say so, with a count, a time and a fixed operation name (never a key).
+func TestStoreWriteFailuresAreVisible(t *testing.T) {
+	r := newRig(t, "")
+	r.h.tick()
+	_, before := r.fetch(t, "/api/v1/status", "")
+	if !strings.Contains(before, `"store": {`) || !strings.Contains(before, `"errors": 0`) {
+		t.Errorf("a healthy store reports zero errors:\n%s", before)
+	}
+	r.st.Close() // every later write fails, and is counted
+	if _, err := r.h.d.Engine().Pause("p/other", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	_, status := r.fetch(t, "/api/v1/status", "")
+	_, metrics := r.fetch(t, "/metrics", "")
+	_, overview := r.fetch(t, "/", "")
+	cli, _ := json.Marshal(r.h.d.Status())
+	if !regexp.MustCompile(`"errors": [1-9]`).MatchString(status) || !regexp.MustCompile(`"last_error_op": "(write pause|write event|read events)"`).MatchString(status) || !strings.Contains(status, `"last_error_at"`) {
+		t.Errorf("/api/v1/status:\n%s", status)
+	}
+	if !regexp.MustCompile(`(?m)^whalenurse_store_errors_total [1-9]`).MatchString(metrics) {
+		t.Errorf("/metrics has no store error count")
+	}
+	if strings.Contains(overview, "survives restarts") || !strings.Contains(overview, "may not survive a restart") {
+		t.Errorf("the overview still says the state survives restarts")
+	}
+	if !regexp.MustCompile(`"errors":[1-9]`).MatchString(string(cli)) {
+		t.Errorf("CLI status: %s", cli)
 	}
 }
 
@@ -645,14 +720,20 @@ func TestCompanionNamesAreFinal(t *testing.T) {
 // refused because compose says it would recreate, so it is SUSPENDED for drift.
 func driftRig(t *testing.T) *dashboardRig {
 	t.Helper()
+	cf := compose.NewFake()
+	cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
+	return driftRigWith(t, cf)
+}
+
+// driftRigWith runs an unhealthy container through restart into a drift guard that blocks, with this compose.
+func driftRigWith(t *testing.T, cf *compose.Fake) *dashboardRig {
+	t.Helper()
 	st, err := store.Open(t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
 	hub := api.NewHub()
-	cf := compose.NewFake()
-	cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
 	h := newCompose(t, nil, cf, docker.ServerInfo{}, func(o *Options) {
 		o.Persist, o.Meta, o.Version = st, st, "v-test"
 		o.Bus.Seed(st.LastID())
@@ -671,6 +752,54 @@ func driftRig(t *testing.T) *dashboardRig {
 	r.srv = httptest.NewServer(api.Handler(api.Options{Health: h.d, Service: r.svc, Web: web2(r.svc)}))
 	t.Cleanup(r.srv.Close)
 	return r
+}
+
+// Compose's stderr can quote a line of the stack's .env (a dotenv parse error does), and the drift guard puts the errors
+// of the oracle and of config --hash into its finding. The error compose.RunError builds, the one the real runner returns,
+// reaches no page, endpoint or the stream with the value in it.
+func TestComposeErrorTextReachesNoPageOrStream(t *testing.T) {
+	const planted = "hunter2-planted-71125"
+	cf := compose.NewFake()
+	fail := func(verb string) error {
+		cmd := compose.Command{Bin: "/usr/libexec/whalenurse/docker-compose", Args: []string{"-p", "p", verb}}
+		return compose.RunError(cmd, errors.New("exit status 15"), []byte("failed to read /srv/p/.env: line 3: unterminated quoted value \""+planted+"\n"))
+	}
+	cf.OracleFn = func(compose.Project, string) (compose.Oracle, error) { return compose.Oracle{}, fail("up") }
+	cf.HashFn = func(compose.Project) (string, error) { return "", fail("config") }
+	r := driftRigWith(t, cf)
+
+	pages := map[string]string{"SSE replay": r.readStream(t, "0", 400*time.Millisecond)}
+	for _, p := range []string{"/api/v1/events?since=0", "/api/v1/containers/h/p/web/1", "/containers/h/p/web/1", "/history", "/api/v1/incidents"} {
+		_, pages[p] = r.fetch(t, p, "")
+	}
+	for p, body := range pages {
+		if strings.Contains(body, planted) {
+			t.Errorf("%s shows the .env value", p)
+		}
+	}
+	if !strings.Contains(pages["/api/v1/events?since=0"], "cannot check the compose config for drift") {
+		t.Errorf("the guard's finding is not in the events (the check above proves nothing):\n%s", pages["/api/v1/events?since=0"])
+	}
+}
+
+// Retention keeps the events of an incident still open (plan v3.13 item 21): the engine's incident attribute and the
+// store's open incident match, so a SUSPENDED container keeps its drift findings however old they are.
+func TestRetentionKeepsASuspendedContainersCause(t *testing.T) {
+	r := driftRig(t)
+	if _, err := r.st.Prune(r.h.clk.Now().Add(400*24*time.Hour), time.Hour, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := r.st.Query(engine.EventQuery{Key: "h/p/web/1", Types: []engine.EventType{engine.DriftBlocked, engine.Suspended}})
+	if err != nil || len(evs) != 2 {
+		t.Fatalf("the open incident's cause was pruned: %v %v", evs, err)
+	}
+	r.h.d.Engine().Unsuspend("p/web")
+	if _, err := r.st.Prune(r.h.clk.Now().Add(400*24*time.Hour), time.Hour, time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if evs, _ := r.st.Query(engine.EventQuery{Key: "h/p/web/1", Types: []engine.EventType{engine.DriftBlocked}}); len(evs) != 0 {
+		t.Fatalf("once the incident closed its events age out: %v", evs)
+	}
 }
 
 func web2(s *api.Service) http.Handler { return web.Handler(s) }

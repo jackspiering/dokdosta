@@ -33,7 +33,7 @@ the API show (see [security.md](security.md)). Put them in an env file that stay
 |---|---|---|
 | `WHALENURSE_HOST_ID` | the hostname | Carried in every container key (`host/project/service/1`), event and API record, for the future multi-host hub. Set it in a container, where the hostname is a container ID. |
 | `WHALENURSE_DATA_DIR` | `/data` | The SQLite store: incidents, SUSPENDED, pauses, flap history, the event log, the notification dedupe. `run` refuses to start if it cannot open it; a dry run does not need it. |
-| `WHALENURSE_HISTORY_RETENTION` | `30d` | Closed incidents and events older than this are pruned (hourly). Events are also capped at 100,000 rows. |
+| `WHALENURSE_HISTORY_RETENTION` | `30d` | Closed incidents and events older than this are pruned (hourly), except the events of an incident that is still open (a long SUSPENDED keeps its cause and its rollback). Events are also capped at 100,000 rows; the cap removes the events of open incidents last. |
 | `WHALENURSE_CONTROL_SOCKET` | `/run/whalenurse.sock` | The unix socket (mode 0600) that serves the CLI (`status`, `pause`, `resume`, `unsuspend`) and the image's health check. Under systemd, point it at a directory the service owns. |
 | `WHALENURSE_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. Logs are JSON lines on stderr. |
 

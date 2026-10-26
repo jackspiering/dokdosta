@@ -242,7 +242,7 @@ func runCmd(args []string) error {
 			log.Warn("dashboard", "detail", w)
 		}
 		// No WriteTimeout: the event stream is open for as long as a browser tab is.
-		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute}
+		srv := &http.Server{Addr: cfg.HTTPAddr, Handler: tcpHandler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, IdleTimeout: 2 * time.Minute, MaxHeaderBytes: 32 << 10}
 		srv.RegisterOnShutdown(hub.Close)
 		go func() {
 			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics, "extra_hosts_without_token", len(cfg.HTTPAllowedHosts), "trusted_proxies", len(cfg.HTTPTrustedProxies))
@@ -559,6 +559,10 @@ func printStatus(w io.Writer, st daemon.Status) {
 	}
 	if !st.Settled {
 		flags = append(flags, "still in the startup settle period")
+	}
+	if st.Store != nil && st.Store.Errors > 0 {
+		flags = append(flags, fmt.Sprintf("STORE: %d operations failed, the last (%s) at %s: state may not survive a restart",
+			st.Store.Errors, st.Store.LastErrorOp, st.Store.LastErrorAt.Local().Format(time.TimeOnly)))
 	}
 	fmt.Fprintf(w, "host %s, mode %s", st.Host, st.Mode)
 	if len(flags) > 0 {
