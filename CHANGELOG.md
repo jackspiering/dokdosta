@@ -19,6 +19,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A sidecar's own compose edit is now checked when it heals itself.** For a `network_mode`/`ipc`/`pid` or `volumes_from`
+  container that is opted in and heals itself while what it references is current, the drift guard now asks compose's dry
+  run, so an edit to its own definition that you have not deployed blocks the recreate instead of being deployed. The check
+  is still not made when the sidecar is repaired after its parent was recreated, or in the pull rung's image-move mode.
 - **A pull that took minutes no longer acts on a stale check.** After the pull rung's pull moved the image, the `up` ran on
   the pause and drift checks made before the pull. Now both are checked again first: a container paused meanwhile, or a
   compose file edited meanwhile, gets no `up`. The "upgraded during heal" message then says the recreate was not run (with the

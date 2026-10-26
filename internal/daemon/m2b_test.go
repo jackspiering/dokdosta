@@ -1229,3 +1229,80 @@ func TestTheTwoContainersOfOneRecreateAreOneReplica(t *testing.T) {
 		t.Fatalf("a stopped replica of another number counts: %q", why)
 	}
 }
+
+// A sidecar's own failure, with its references current: the oracle is asked about its own config (plan v3.13 item 4), so an
+// edit that is not deployed yet blocks the recreate as it does for any other service.
+func TestReferenceHolderWithCurrentReferencesIsCheckedByTheOracle(t *testing.T) {
+	for name, hold := range map[string]func(c *docker.Container, parent docker.Container){
+		"network_mode": func(c *docker.Container, p docker.Container) { c.NetworkMode = "container:" + p.ID },
+		"volumes_from": func(c *docker.Container, p docker.Container) { c.VolumesFrom = []string{p.Name + ":ro"} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			setup := func() (*cfH, docker.Container) {
+				h := newCompose(t, nil, nil, docker.ServerInfo{})
+				parent := h.svc(hexID("c1"), "p", "parent", config.LabelEnable, "false")
+				dep := h.svc(hexID("d1"), "p", "dep")
+				h.set(dep.ID, func(c *docker.Container) { hold(c, parent) })
+				h.cf.OnRecreate = func(compose.Project) error {
+					h.replace("p", "dep", func(c *docker.Container) { c.Health = "healthy" })
+					return nil
+				}
+				h.tick()
+				h.set(dep.ID, unhealthy)
+				return h, dep
+			}
+			// Unchanged: the oracle says Running, the recreate goes ahead.
+			h, _ := setup()
+			h.advance(6 * time.Minute)
+			if h.cf.Count("dry-run") != 1 || h.cf.Count("recreate") != 1 || h.count(engine.DriftBlocked) != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+			// Edited: the oracle says Recreate, and nothing is deployed.
+			h, _ = setup()
+			h.cf.OracleFn = func(_ compose.Project, n string) (compose.Oracle, error) { return compose.Recreated(n), nil }
+			h.advance(6 * time.Minute)
+			b := h.events(engine.DriftBlocked)
+			if h.cf.Count("recreate") != 0 || h.cf.Count("hash") != 0 || len(b) != 1 || !strings.Contains(b[0].Message, "config:") {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+		})
+	}
+}
+
+// A reference that is not the current container of its service (the parent was recreated, or it is not a compose
+// container) leaves check 1 skipped, as before.
+func TestReferenceHolderWithoutCurrentReferencesIsNotAskedToTheOracle(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent := h.svc(hexID("c1"), "p", "parent", config.LabelEnable, "false")
+	dep := h.svc(hexID("d1"), "p", "dep")
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+	h.cf.OracleFn = func(_ compose.Project, n string) (compose.Oracle, error) { return compose.Recreated(n), nil }
+	h.cf.OnRecreate = func(compose.Project) error { h.replace("p", "dep", nil); return nil }
+	_ = h.d.refresh(h.ctx)
+	d1, _ := h.fake.Inspect(h.ctx, dep.ID)
+	if !h.d.refsCurrent(d1) {
+		t.Fatal("the parent is the current, running container of its service")
+	}
+	h.set(parent.ID, func(c *docker.Container) { c.Status, c.Running = "exited", false })
+	_ = h.d.refresh(h.ctx)
+	if h.d.refsCurrent(d1) {
+		t.Fatal("a parent that is not running is not current")
+	}
+	h.set(parent.ID, func(c *docker.Container) { c.Status, c.Running = "running", true })
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + hexID("ff") })
+	_ = h.d.refresh(h.ctx)
+	d2, _ := h.fake.Inspect(h.ctx, dep.ID)
+	if h.d.refsCurrent(d2) {
+		t.Fatal("a reference to a container that is gone is not current")
+	}
+	h.set(dep.ID, func(c *docker.Container) {
+		c.NetworkMode = "container:" + parent.ID
+		c.VolumesFrom = []string{"stranger"}
+	})
+	h.fake.Put(docker.Container{ID: hexID("ee"), Name: "stranger", Labels: map[string]string{}, Status: "running", Running: true})
+	_ = h.d.refresh(h.ctx)
+	d3, _ := h.fake.Inspect(h.ctx, dep.ID)
+	if h.d.refsCurrent(d3) {
+		t.Fatal("a container compose did not make cannot be judged")
+	}
+}

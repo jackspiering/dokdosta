@@ -790,3 +790,70 @@ func driftBlockedMessages(t *testing.T, id string) []string {
 	}
 	return msgs
 }
+
+// The precondition of plan v3.13 item 4, on every compose release and image store of the CI matrix: for a reference holder
+// whose references are current, compose's own hash matches the one it recorded, so the dry-run oracle says nothing for an
+// unchanged holder and says Recreate after an edit to the holder's own definition. One holder of each kind (E4 hashed each
+// after resolving it: network_mode, ipc, pid, volumes_from). If a release or a kind fails this, add the release to
+// compose.refHolderOracleExcluded (or take the kind out of Daemon.refsCurrent) and record it in docs/m2b-notes.md.
+func TestOracleForAReferenceHolderWithCurrentReferences(t *testing.T) {
+	g, cli := requireIntegration(t)
+	holder := func(name, ref string) string {
+		return fmt.Sprintf(`
+  %s:
+    image: busybox:1.37
+%s    stop_grace_period: 2s
+    command: %s
+`, name, ref, loopCmd)
+	}
+	file := "services:\n  parent:\n    image: busybox:1.37\n    ipc: shareable\n    volumes: [\"/shared\"]\n    stop_grace_period: 2s\n    command: " + loopCmd + "\n" +
+		holder("netdep", "    network_mode: service:parent\n") +
+		holder("ipcdep", "    ipc: service:parent\n") +
+		holder("piddep", "    pid: service:parent\n") +
+		holder("vfdep", "    volumes_from:\n      - parent\n")
+	s := newStack(t, g, cli, "reforacle", file)
+	s.up()
+	anchors := map[string]string{
+		"netdep": "network_mode: service:parent", "ipcdep": "ipc: service:parent", "piddep": "pid: service:parent",
+		"vfdep": "volumes_from:\n      - parent",
+	}
+	c := compose.New(*composeBin(t), NewComposeRunner(t.TempDir()))
+	ask := func(service string) (compose.Oracle, error) {
+		t.Helper()
+		dep := s.container(service)
+		p, err := compose.ProjectFromLabels(dep.Labels)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		o, err := c.DryRunUp(ctx, p, dep.Name)
+		return o, err
+	}
+	ids := map[string]string{}
+	for service := range anchors {
+		ids[service] = s.container(service).ID
+		o, err := ask(service)
+		if err != nil {
+			t.Fatalf("the oracle for %s: %v", service, err)
+		}
+		if o.WouldRecreate() {
+			t.Fatalf("%s: an unchanged holder whose reference is current must not be a Recreate: %v", service, o.Texts())
+		}
+	}
+	for _, anchor := range anchors {
+		editCompose(t, s, anchor, anchor+"\n    environment:\n      EDITED: \"1\"")
+	}
+	for service := range anchors {
+		o, err := ask(service)
+		if err != nil {
+			t.Fatalf("the oracle for %s after the edit: %v", service, err)
+		}
+		if !o.WouldRecreate() {
+			t.Fatalf("%s: an edit to the holder's own definition must be a Recreate: %v", service, o.Texts())
+		}
+		if after := s.container(service); after.ID != ids[service] {
+			t.Fatalf("%s: the dry run changed the container: %s -> %s", service, ids[service], after.ID)
+		}
+	}
+}
