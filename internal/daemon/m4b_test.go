@@ -466,3 +466,27 @@ func TestFollowedMoveIsNotNamedAsAnotherStacksMoverAndOnlyServesTheParentsSideca
 	}
 	t.Fatalf("the other stack should have been blocked by the moved tag: %v", h.rec.Types())
 }
+
+// A followed move never replaces the record of the pull it follows, and several containers may follow the same result: each
+// keeps its own part, so every one of their sidecars can take it (plan v3.13 item 6).
+func TestFollowedMoveIsAddedToTheRecordNotReplacingIt(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	d := h.d
+	d.recordMove(tagMove{Ref: "web:1", Key: key("p", "web"), At: h.clk.Now(), Old: "old-a", OldPlain: "plain-a", New: "new", NewPlain: "new-plain"})
+	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "old-b", OldPlain: "plain-b"}, "new", "new-plain")
+	d.recordFollowed("web:1", mover{Key: key("r", "job"), At: h.clk.Now(), Old: "old-c"}, "new", "new-plain")
+	m, ok := d.moveOf("web:1")
+	if !ok || m.Key != key("p", "web") || m.Followed || len(m.Followers) != 2 || len(m.movers()) != 3 {
+		t.Fatalf("%+v", m)
+	}
+	// Following again updates the follower, it does not add a second one.
+	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "old-b2"}, "new", "new-plain")
+	if m, _ := d.moveOf("web:1"); len(m.Followers) != 2 {
+		t.Fatalf("%+v", m)
+	}
+	// A different result is a new record.
+	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "new"}, "newer", "newer-plain")
+	if m, _ := d.moveOf("web:1"); m.Key != key("q", "api") || !m.Followed || len(m.Followers) != 0 {
+		t.Fatalf("%+v", m)
+	}
+}
