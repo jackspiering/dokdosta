@@ -12,6 +12,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **The integration tests' host-safety preflight (and the M0b one) now sees every spelling of an opt-in.** It listed strangers
+  with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
+  it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps
+  and which rely on the preflight alone.
 - **A very long `--for` or duration (`213504d`) is refused** instead of wrapping to a few minutes.
 - **`WHALENURSE_HOST_ID` with a `/` is refused at startup.** It shifted the parts of every container key, so `pause` and
   `unsuspend` matched nothing.
