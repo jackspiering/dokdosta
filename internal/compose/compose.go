@@ -3,7 +3,6 @@ package compose
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 // Reader is the read-only half: nothing here changes a container, so it runs in dry-run mode too. `--dry-run` is
@@ -168,8 +167,3 @@ func (d DryRun) note(verb string, p Project) error {
 }
 
 var _ Actor = DryRun{}
-
-// Describe is a one-line summary of a project for logs.
-func (p Project) Describe() string {
-	return fmt.Sprintf("%s/%s (%s)", p.Name, p.Service, strings.Join(p.ConfigFiles, ","))
-}
