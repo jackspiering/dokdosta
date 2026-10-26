@@ -130,10 +130,13 @@ func TestEventsThatAreNotListedAreNotNotified(t *testing.T) {
 	}
 }
 
-func TestADriftSuspensionIsOneMessage(t *testing.T) {
-	// The engine publishes DriftBlocked and then Suspended(reason drift): the first carries everything.
-	if _, _, ok := render(ev(engine.Suspended, webKey, "recreate skipped by the drift guard (x): y", map[string]string{"reason": "drift"}), rctx{}); ok {
-		t.Fatal("Suspended with reason drift duplicates DriftBlocked")
+// The Suspended(drift) right after its DriftBlocked is folded by the dispatcher (TestADriftBlockedSuspensionIsExactlyOneMessage).
+// The one render sees is a re-suspension later in the incident: a giving-up message that keeps the drift context.
+func TestADriftSuspensionAgainIsAGivingUpMessage(t *testing.T) {
+	m := renderOne(t, ev(engine.Suspended, webKey, "failed again before the incident closed (drift): unhealthy", map[string]string{"reason": "drift"}), rctx{dryRun: true})
+	if !strings.HasSuffix(m.Title, "giving up, SUSPENDED") || !m.Critical || !strings.Contains(m.Body, "cause: unhealthy again; the drift guard blocked the recreate") ||
+		!strings.Contains(m.Body, "whalenurse unsuspend stack/web") || utf8.RuneCountInString(m.Body) > MaxBody || utf8.RuneCountInString(m.Title) > MaxTitle {
+		t.Fatalf("%v", m)
 	}
 }
 
@@ -143,5 +146,61 @@ func TestALongContainerNameIsCutNotTheHeadline(t *testing.T) {
 	m := renderOne(t, e, rctx{dryRun: true})
 	if !strings.HasSuffix(m.Title, "giving up, SUSPENDED") || utf8.RuneCountInString(m.Title) > MaxTitle || !strings.HasPrefix(m.Title, "[dry-run] nas: ") {
 		t.Fatalf("%q", m.Title)
+	}
+}
+
+// A long host never cuts the headline: the container name gives way first, then the host. Every title ends with its whole
+// headline, for host IDs up to 32 runes (a container's 12-hex ID is the default), with and without the dry-run marker.
+func TestTheHeadlineSurvivesALongHost(t *testing.T) {
+	cases := []struct {
+		e        engine.Event
+		headline string
+	}{
+		{ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "the tag moved"}), "recreate blocked by the drift guard, SUSPENDED"},
+		{ev(engine.DriftWarned, webKey, "x", map[string]string{"findings": "the tag moved"}), "recreating despite drift (WHALENURSE_DRIFT_GUARD=warn)"},
+		{ev(engine.Suspended, webKey, "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder"}), "giving up, SUSPENDED"},
+		{ev(engine.NeedsRecreate, webKey, "x", nil), "needs a recreate that is not available"},
+		{ev(engine.TagMoved, webKey, "x", map[string]string{"ref": "web:1", "new": newID, "ok": "false"}), "pulled a newer image, but the recreate failed"},
+		{ev(engine.Upgraded, webKey, "x", map[string]string{"ref": "web:1", "new": newID, "ok": "false"}), "took the moved tag, but the recreate failed"},
+		{ev(engine.RungsDisabled, "", "x", nil), "recreate and pull rungs are disabled"},
+	}
+	for _, host := range []string{"nas", "0123456789ab", "homelab-nas", strings.Repeat("h", 32)} {
+		for _, dry := range []bool{false, true} {
+			for _, c := range cases {
+				e := c.e
+				e.Host = host
+				e.Container = "a-rather-long-project-name-web-1"
+				m := renderOne(t, e, rctx{dryRun: dry})
+				if utf8.RuneCountInString(m.Title) > MaxTitle || !strings.HasSuffix(m.Title, c.headline) {
+					t.Errorf("host %q dry-run %v: %q (%d runes)", host, dry, m.Title, utf8.RuneCountInString(m.Title))
+				}
+				if dry && !strings.HasPrefix(m.Title, DryRunMarker) {
+					t.Errorf("the marker comes first: %q", m.Title)
+				}
+			}
+			// A pause names its scope after the verb; a long scope is what gives way, never the verb.
+			p := ev(engine.Paused, host+"/a-rather-long-project-name/"+strings.Repeat("s", 40), "paused for 2h", nil)
+			p.Host = host
+			if m := renderOne(t, p, rctx{dryRun: dry}); utf8.RuneCountInString(m.Title) > MaxTitle || !strings.Contains(m.Title, ": paused a-rather") {
+				t.Errorf("%q", m.Title)
+			}
+		}
+	}
+}
+
+// The commands a message tells the user to paste are shell-quoted: a project or service label is not checked by Docker,
+// and an image can ship one. An ordinary scope renders unchanged.
+func TestUnsuspendCommandIsShellQuoted(t *testing.T) {
+	m := renderOne(t, ev(engine.Suspended, "nas/p$(id)/web/1", "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder"}), rctx{})
+	if !strings.Contains(m.Body, "whalenurse unsuspend 'p$(id)/web'") {
+		t.Errorf("%s", m.Body)
+	}
+	d := renderOne(t, ev(engine.DriftBlocked, "nas/p/w;id/1", "x", map[string]string{"findings": "the tag moved"}), rctx{})
+	if !strings.Contains(d.Body, "whalenurse unsuspend 'p/w;id'") || !strings.Contains(d.Body, "docker compose up -d 'w;id'") {
+		t.Errorf("%s", d.Body)
+	}
+	ok := renderOne(t, ev(engine.Suspended, webKey, "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder"}), rctx{})
+	if !strings.Contains(ok.Body, "whalenurse unsuspend stack/web") {
+		t.Errorf("an ordinary scope is not quoted: %s", ok.Body)
 	}
 }

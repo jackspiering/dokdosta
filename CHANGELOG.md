@@ -43,6 +43,13 @@ workflow refuses an undated section.
   `systemctl daemon-reload && systemctl reenable whalenurse`.
 - A unit test now checks that the binary gives a dry run only the actors that change nothing, for the restart rung and
   for the compose rungs; before, only the restart one was checked, by an integration test.
+- **A container whose healthcheck keeps flipping no longer sends a stream of messages.** SUSPENDED and "unsuspended" were
+  news again after each other every time within an incident; now that happens once per incident (suspended, unsuspended,
+  suspended again), and further changes are recorded and shown on the dashboard but not sent until the next incident. An
+  unsuspend you run is always sent.
+- **The rollback `up` line has `--no-build`**, like every other `up` whalenurse runs. If the tag line failed or was skipped,
+  the `up` now stops with an error instead of building an image that is not the old one. Rollbacks already shown keep
+  their form.
 
 ### Fixed
 
@@ -89,6 +96,38 @@ workflow refuses an undated section.
   start, hand-stopped ones could be started, and flap history was reset. At startup the stored state is now moved to the
   current `WHALENURSE_HOST_ID` (on a collision, the more recent record wins). whalenurse warns when the host ID is its
   own container ID, and the examples set `WHALENURSE_HOST_ID`.
+- **Event text is redacted in the log and in notification bodies**, as it already was in the API. An error that quoted a
+  notification URL, the uptime ping URL, the HTTP token or a registry credential reached the container log unmasked, and
+  was pushed to every notification service (one URL's token to another URL's channel). The message and the free-text
+  attributes of every event now pass the redactor; a rollback command it would change is withheld from the notification.
+- **The "upgraded during heal" message keeps its rollback commands exact.** After the rate limit had held messages back,
+  the note that says so cut the end of the message, which is where the rollback commands are; the note now goes before
+  them. Whitespace inside a quoted path of the commands was collapsed to one space; the commands are now sent byte for byte.
+- **A failed rung-2 recreate that still changed the image is announced.** For a `whalenurse.heal.pull=true` container,
+  compose replaces the container before it starts it, so a start that failed (a port in use) left it on the moved image
+  without the "upgraded during heal" message or its rollback. That message is now sent, saying that the recreate failed.
+- **The dashboard and the API show the rollback commands exactly, or not at all.** The redactor that masks the
+  notification URLs and the token could change ordinary words of a rollback command (a topic named `docker`, a registry on
+  the receiver's host), and the page offered the masked command with a Copy button. Such a rollback is now withheld, and the
+  page says so.
+- **A container suspended again after a drift block is notified.** When a drift-blocked container recovered and failed
+  again in the same incident, the second SUSPENDED was dropped as if it repeated the drift block, so the last message said
+  "unsuspended". It is now sent as a giving-up message, and the unsuspend after it is news again.
+- **A message no URL could take is no longer recorded as sent.** With no notification URL, or only invalid ones, the
+  dedupe still remembered each message for 24 hours, so after a working URL was added and whalenurse restarted, the
+  version-gate warning and the "left down" advisories for problems that already existed were not sent.
+- **A notification title keeps its headline.** With a long host ID (the default in a container is its 12-character ID)
+  or the dry-run marker, the end of the title was cut, so a phone push could lose "SUSPENDED" or "=warn)". The container
+  name gives way first now, then the host; the message body still names both.
+- **The unsuspend and `docker compose up` commands to paste are shell-quoted.** The SUSPENDED banner and the
+  notifications put the project and service names from the container's labels (which an image can ship) into a command
+  unquoted, so a name with `$(...)` or `;` would run in the shell it was pasted into. Ordinary names show unchanged.
+
+### Documentation
+
+- **A rollback does not last while `whalenurse.heal.pull` stays on.** The next heal reaches the pull again and the registry's
+  newer image comes back. The "upgraded during heal" message, the dashboard and the docs now say so and how to keep the old
+  image: pin it in the compose file or remove the label before running the `up` line.
 
 ## [0.1.2] - 2026-10-22
 

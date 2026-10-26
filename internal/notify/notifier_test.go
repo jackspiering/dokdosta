@@ -459,14 +459,14 @@ func TestUnsuspendedIsRoutineAndSuspendingAgainInTheSameIncidentIsNewsAgain(t *t
 	nt.Handle(susp()) // a repeat: said once
 	nt.Handle(back)
 	nt.Handle(susp()) // it failed again before the incident closed: news again, or the last word would be "unsuspended"
-	nt.Handle(back)   // and again the same reason, same incident: this is the second time it came back
+	nt.Handle(back)   // the second time it came back in this incident: alternating is news once per incident (v3.13 item 18)
 	flush(nt)
 	var got []string
 	for _, m := range s[0].messages() {
 		got = append(got, m.Title)
 	}
-	want := []string{"giving up", "unsuspended", "giving up", "unsuspended"}
-	if len(got) != 4 {
+	want := []string{"giving up", "unsuspended", "giving up"}
+	if len(got) != 3 {
 		t.Fatalf("%v", got)
 	}
 	for i, w := range want {
@@ -533,5 +533,219 @@ func TestAThrottledMessageDoesNotSpendTheURLsHourlyBudget(t *testing.T) {
 	flush(nt)
 	if got := len(s[0].messages()); got != 2 {
 		t.Fatalf("%v", s[0].titles())
+	}
+}
+
+// The held-back note goes before the rollback, never over it: the commands of an "upgraded during heal" message stay whole
+// and last even when the rate limit held messages back before it (plan v3.8 item 6).
+func TestHeldBackNoteNeverCutsTheRollbackCommands(t *testing.T) {
+	nt, s, _, _ := newTest(t, 1, func(o *Options) { o.RateLimit = 2 }) // the routine half is 1 an hour
+	nt.Handle(ev(engine.Recovered, "nas/stack/a/1", "healthy", nil))   // sent
+	nt.Handle(ev(engine.Recovered, "nas/stack/b/1", "healthy", nil))   // held back
+	settle(t, "the hold-back", func() bool { return nt.Status().Targets[0].RateLimited == 1 })
+	a := movedAttrs(stackProject(), "ghcr.io/o/web:latest", true)
+	nt.Handle(ev(engine.TagMoved, webKey, "x", a)) // critical: takes the second slot and carries the note
+	flush(nt)
+	msgs := s[0].messages()
+	if len(msgs) != 2 {
+		t.Fatalf("%d messages", len(msgs))
+	}
+	got := msgs[1].Body
+	if !strings.HasSuffix(got, "\n"+a["rollback_tag"]+"\n"+a["rollback_up"]) {
+		t.Errorf("the rollback commands must be the last two lines, whole:\n%s", got)
+	}
+	if !strings.Contains(got, "(1 earlier messages were held back by the rate limit)") || !strings.HasPrefix(got, webKey+"\n") {
+		t.Errorf("the note or the key line is missing:\n%s", got)
+	}
+	if utf8.RuneCountInString(got) > MaxBodyPinned {
+		t.Errorf("%d runes", utf8.RuneCountInString(got))
+	}
+}
+
+// With the longest pinned message the note still fits within MaxBodyPinned, and neither the commands nor the key line
+// give way to it.
+func TestHeldBackNoteOnTheWorstCaseUpgradeMessage(t *testing.T) {
+	m := renderOne(t, worstCaseUpgrade(t), rctx{dryRun: true})
+	note := "(999 earlier messages were held back by the rate limit)"
+	got := withPinnedNote(m, note)
+	if utf8.RuneCountInString(got) > MaxBodyPinned || !strings.HasSuffix(got, m.pinned) || !strings.HasPrefix(got, "[dry-run] nas/") {
+		t.Fatalf("%d runes:\n%s", utf8.RuneCountInString(got), got)
+	}
+}
+
+// Event text that quotes a configured secret is redacted before it is rendered, so no message body carries it (URL #1's
+// token is not pushed to URL #2's service). The key and the host stay.
+func TestEventTextIsRedactedInTheMessage(t *testing.T) {
+	red := NewRedactorWith([]string{"reg-PASS-82002"}, "ntfy://user:hunter2-token@ntfy.example.com/secret-topic")
+	nt, s, _, _ := newTest(t, 1, func(o *Options) { o.Redact = red })
+	nt.Handle(ev(engine.ActionStarted, webKey, "restart: unhealthy, see ntfy.example.com/secret-topic", map[string]string{"action": "restart"}))
+	nt.Handle(ev(engine.ActionResult, webKey, `restart failed: Post "https://ntfy.example.com/secret-topic": 401 for user hunter2-token reg-PASS-82002`,
+		map[string]string{"action": "restart", "rung": "restart", "ok": "false", engine.AttrIncident: "i"}))
+	nt.Handle(ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "config: hunter2-token would recreate", engine.AttrIncident: "i"}))
+	flush(nt)
+	msgs := s[0].messages()
+	if len(msgs) != 2 {
+		t.Fatalf("%d messages", len(msgs))
+	}
+	for _, m := range msgs {
+		for _, secret := range []string{"hunter2-token", "secret-topic", "ntfy.example.com", "reg-PASS-82002"} {
+			if strings.Contains(m.Title+m.Body, secret) {
+				t.Errorf("%q leaks into %v", secret, m)
+			}
+		}
+		if !strings.Contains(m.Body, "***") || !strings.HasPrefix(m.Body, webKey+"\n") || !strings.HasPrefix(m.Title, "nas: ") {
+			t.Errorf("%v", m)
+		}
+	}
+	if !strings.Contains(msgs[0].Title, "restart failed") {
+		t.Errorf("the control attributes are not redacted: %v", msgs[0])
+	}
+}
+
+// The rollback commands are sent exactly or not at all: when the redactor would change one of them (a topic named like a
+// word of the command), both are withheld, the message says so, and it is an ordinary message within MaxBody. Without
+// such a fragment they are sent byte for byte.
+func TestARollbackTheRedactorWouldChangeIsWithheld(t *testing.T) {
+	a := movedAttrs(stackProject(), "ghcr.io/o/web:latest", true)
+	nt, s, _, _ := newTest(t, 1, func(o *Options) { o.Redact = NewRedactor("ntfy://ntfy.example.com/stacks") })
+	nt.Handle(ev(engine.TagMoved, webKey, "x", a))
+	flush(nt)
+	m := s[0].messages()[0]
+	if strings.Contains(m.Body, "docker image tag") || strings.Contains(m.Body, "roll back:") || !strings.Contains(m.Body, "rollback not shown") {
+		t.Fatalf("%s", m.Body)
+	}
+	if utf8.RuneCountInString(m.Body) > MaxBody {
+		t.Fatalf("%d runes", utf8.RuneCountInString(m.Body))
+	}
+	nt2, s2, _, _ := newTest(t, 1, func(o *Options) { o.Redact = NewRedactor("ntfy://ntfy.example.com/unrelated-topic") })
+	nt2.Handle(ev(engine.TagMoved, webKey, "x", a))
+	flush(nt2)
+	if b := s2[0].messages()[0].Body; !strings.HasSuffix(b, "\n"+a["rollback_tag"]+"\n"+a["rollback_up"]) {
+		t.Fatalf("%s", b)
+	}
+}
+
+// The control attributes are not redacted, so a short query value of a URL cannot change what a message says.
+func TestRedactingAnEventKeepsItsControlAttributes(t *testing.T) {
+	red := NewRedactor("generic://h.example/hook-path?template=json&ok=true&k=restart")
+	e := red.Event(ev(engine.ActionResult, webKey, "restart failed: true json", map[string]string{"action": "restart", "rung": "restart", "ok": "true", "error": "json true"}))
+	if e.Attrs["ok"] != "true" || e.Attrs["action"] != "restart" || e.Attrs["rung"] != "restart" || e.Key != webKey || e.Host != testHost {
+		t.Fatalf("%+v", e)
+	}
+	// "true" is a boolean option value, never a fragment (v3.13 item 20); "json" and "restart" are.
+	if e.Attrs["error"] != "*** true" || e.Message != "*** failed: true ***" {
+		t.Fatalf("%+v", e)
+	}
+}
+
+// The drift fold applies only to the Suspended right after its DriftBlocked (plan v3.13 item 19): a re-suspension later in
+// the same incident, after an Unsuspended, is a giving-up message. The Unsuspended after that is not news again: the two
+// make each other news only once per incident (item 18).
+func TestASuspensionAgainAfterADriftBlockIsNews(t *testing.T) {
+	nt, s, _, _ := newTest(t, 1, nil)
+	nt.Handle(ev(engine.DriftBlocked, webKey, "recreate skipped by the drift guard: the tag moved", map[string]string{"findings": "the tag moved", engine.AttrIncident: "i"}))
+	nt.Handle(ev(engine.Suspended, webKey, "recreate skipped by the drift guard (the tag moved): unhealthy", map[string]string{"reason": "drift", engine.AttrIncident: "i"}))
+	nt.Handle(ev(engine.Unsuspended, webKey, "container returned to healthy", map[string]string{"reason": "healthy", engine.AttrIncident: "i"}))
+	nt.Handle(ev(engine.Suspended, webKey, "failed again before the incident closed (drift): unhealthy", map[string]string{"reason": "drift", engine.AttrIncident: "i"}))
+	nt.Handle(ev(engine.Unsuspended, webKey, "container returned to healthy", map[string]string{"reason": "healthy", engine.AttrIncident: "i"}))
+	flush(nt)
+	got := s[0].messages()
+	var titles []string
+	for _, m := range got {
+		titles = append(titles, m.Title)
+	}
+	want := []string{"drift guard, SUSPENDED", "unsuspended", "SUSPENDED"}
+	if len(got) != len(want) {
+		t.Fatalf("%d messages, want %d: %q", len(got), len(want), titles)
+	}
+	for i, w := range want {
+		if !strings.HasSuffix(got[i].Title, w) {
+			t.Errorf("message %d: %q, want ...%q", i, got[i].Title, w)
+		}
+	}
+	again := got[2]
+	if !again.Critical || !strings.Contains(again.Body, "drift guard") || !strings.Contains(again.Body, "whalenurse unsuspend stack/web") || utf8.RuneCountInString(again.Body) > MaxBody {
+		t.Errorf("the re-suspension is a giving-up message that keeps the drift context: %v", again)
+	}
+}
+
+// Suspended and Unsuspended make each other news again only once per incident (plan v3.13 item 18): the first Unsuspended
+// after a Suspended and the first Suspended after that are sent; a healthcheck that keeps flipping sends nothing more in
+// that incident, also across a restart of whalenurse. A new incident is news again.
+func TestSuspendedAndUnsuspendedAlternateOnlyOncePerIncident(t *testing.T) {
+	l := &memLedger{}
+	susp := func(inc string) engine.Event {
+		return ev(engine.Suspended, webKey, "failed again before the incident closed (ladder): unhealthy", map[string]string{"reason": "ladder", engine.AttrIncident: inc})
+	}
+	back := func(inc string) engine.Event {
+		return ev(engine.Unsuspended, webKey, "container returned to healthy", map[string]string{"reason": "healthy", engine.AttrIncident: inc})
+	}
+	nt, s, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l })
+	for _, e := range []engine.Event{susp("i"), back("i"), susp("i"), back("i"), susp("i")} {
+		nt.Handle(e)
+	}
+	flush(nt)
+	if got := s[0].titles(); len(got) != 3 || !strings.Contains(got[0], "giving up") || !strings.Contains(got[1], "unsuspended") || !strings.Contains(got[2], "giving up") {
+		t.Fatalf("want giving up, unsuspended, giving up: %q", got)
+	}
+	// A restart of whalenurse in the same incident: still nothing more.
+	nt2, s2, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l })
+	nt2.Handle(back("i"))
+	nt2.Handle(susp("i"))
+	// A new incident is news again.
+	nt2.Handle(susp("j"))
+	nt2.Handle(back("j"))
+	nt2.Handle(susp("j"))
+	flush(nt2)
+	if got := s2[0].titles(); len(got) != 3 {
+		t.Fatalf("after a restart nothing more in incident i, then a new incident's three: %q", got)
+	}
+	// A deliberate unsuspend is said every time.
+	nt3, s3, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l })
+	cmd := ev(engine.Unsuspended, webKey, "unsuspended by command", map[string]string{"reason": "command", engine.AttrIncident: "i"})
+	nt3.Handle(cmd)
+	nt3.Handle(cmd)
+	flush(nt3)
+	if got := s3[0].titles(); len(got) != 2 {
+		t.Fatalf("%q", got)
+	}
+}
+
+// A message that no URL could take is not recorded as sent: with no URL, or only invalid ones, nothing is written to the
+// ledger, so the warning goes out once a working URL is added and whalenurse restarts. A URL that takes the message and
+// then fails to deliver it still records it (the dedupe is written as messages are accepted).
+func TestNothingIsRecordedAsSentWhenNoURLCanTakeIt(t *testing.T) {
+	events := []engine.Event{
+		ev(engine.RungsDisabled, "", "rungs 2 and 3 are disabled: Engine 27.0 is below 28.1", nil),
+		ev(engine.NotifyOnly, webKey, "left down by policy", map[string]string{"class": "exited-host-stopped"}),
+	}
+	for name, targets := range map[string][]Target{"no URL": nil, "an invalid URL": {{Label: "#1 bogus", Err: "unknown service"}}} {
+		t.Run(name, func(t *testing.T) {
+			l := &memLedger{}
+			nt, _, _, _ := newTest(t, 0, func(o *Options) { o.Ledger = l; o.Targets = targets })
+			for _, e := range events {
+				nt.Handle(e)
+			}
+			flush(nt)
+			if len(l.rows) != 0 {
+				t.Fatalf("recorded %d rows with no usable URL: %v", len(l.rows), l.rows)
+			}
+			nt2, s, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l }) // a URL is added, whalenurse restarts
+			for _, e := range events {
+				nt2.Handle(e)
+			}
+			flush(nt2)
+			if got := len(s[0].messages()); got != len(events) {
+				t.Fatalf("%d of %d messages after the URL was added", got, len(events))
+			}
+		})
+	}
+	l := &memLedger{}
+	nt, s, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l })
+	s[0].err = errors.New("service down")
+	nt.Handle(events[0])
+	flush(nt)
+	if len(l.rows) != 1 {
+		t.Fatalf("a usable URL that failed to deliver still records it: %v", l.rows)
 	}
 }

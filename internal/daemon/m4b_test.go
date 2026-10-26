@@ -161,7 +161,7 @@ func TestRung2TakesAnImageOnlyMoveForAPullEnabledContainerAndSaysSo(t *testing.T
 	if a["ref"] != "web:1" || a["old"] != imgOldID || a["new"] != imgNewID || a["old_image"] != imgOldID || a["ok"] != "true" {
 		t.Fatalf("%+v", a)
 	}
-	if a["rollback_tag"] != "docker image tag "+imgOldID+" web:1" || !strings.HasSuffix(a["rollback_up"], "up -d --no-deps --pull never web") {
+	if a["rollback_tag"] != "docker image tag "+imgOldID+" web:1" || !strings.HasSuffix(a["rollback_up"], "up -d --no-deps --pull never --no-build web") {
 		t.Fatalf("%+v", a)
 	}
 	if h.count(engine.TagMoved) != 0 {
@@ -169,6 +169,45 @@ func TestRung2TakesAnImageOnlyMoveForAPullEnabledContainerAndSaysSo(t *testing.T
 	}
 	if h.cf.Count("pull") != 0 {
 		t.Fatal("rung 2 never pulls")
+	}
+}
+
+// Compose's up replaces the container (create, stop, remove, rename) before its start phase, so a start that fails still
+// leaves the container on the moved image: that is an upgrade too, with ok=false and the rollback.
+func TestRung2ThatReplacedTheContainerButFailedStillSaysUpgraded(t *testing.T) {
+	h, web := upgradeSetup(t, true)
+	h.cf.OnRecreate = func(compose.Project) error {
+		h.replace("p", "web", func(c *docker.Container) {
+			c.ImageID, c.Running, c.Status, c.ExitCode = imgNewID, false, "created", 128
+			c.Error = "Bind for 0.0.0.0:80 failed: port is already allocated"
+		})
+		return errors.New("exit status 1")
+	}
+	breakAndRun(h, web.ID, 15*time.Minute)
+
+	if h.cf.Count("recreate") != 1 {
+		t.Fatalf("%s", h.verbs())
+	}
+	up := h.events(engine.Upgraded)
+	if len(up) != 1 {
+		t.Fatalf("want one Upgraded: %v", h.rec.Types())
+	}
+	a := up[0].Attrs
+	if a["old"] != imgOldID || a["new"] != imgNewID || a["ok"] != "false" || a["error"] == "" {
+		t.Fatalf("%+v", a)
+	}
+	if a["rollback_tag"] != "docker image tag "+imgOldID+" web:1" || !strings.HasSuffix(a["rollback_up"], " web") {
+		t.Fatalf("%+v", a)
+	}
+}
+
+// A recreate that failed before it replaced the container changed no image, so it says nothing of an upgrade.
+func TestRung2ThatFailedBeforeReplacingSaysNothing(t *testing.T) {
+	h, web := upgradeSetup(t, true)
+	h.cf.OnRecreate = func(compose.Project) error { return errors.New("exit status 1") }
+	breakAndRun(h, web.ID, 15*time.Minute)
+	if h.cf.Count("recreate") != 1 || h.count(engine.Upgraded) != 0 {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
 	}
 }
 
@@ -263,7 +302,7 @@ func TestSidecarTakesTheTagItsParentsPullMoved(t *testing.T) {
 		t.Fatalf("%v", h.rec.Types())
 	}
 	a := moved[0].Attrs
-	if a["sidecars"] != "side" || !strings.HasSuffix(a["rollback_up"], "up -d --no-deps --pull never web side") {
+	if a["sidecars"] != "side" || !strings.HasSuffix(a["rollback_up"], "up -d --no-deps --pull never --no-build web side") {
 		t.Fatalf("the sidecar's rollback must be in the same message: %+v", a)
 	}
 	if h.count(engine.Upgraded) != 0 {

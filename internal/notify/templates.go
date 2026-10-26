@@ -7,6 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	wncompose "github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/engine"
 )
 
@@ -21,6 +22,9 @@ type Message struct {
 	// "action rate limit reached" message names one container, and says the same for all).
 	Class      string
 	MinSpacing time.Duration
+	// pinned is the tail of Body that is never cut or changed (the rollback commands: "\n" + the lines), "" for none. A
+	// note added later goes before it.
+	pinned string
 }
 
 // The size limits. A phone shows about 40 characters of a title and a few lines of a body before it cuts them off.
@@ -124,8 +128,10 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 	case engine.Suspended:
 		switch attr("reason") {
 		case engine.ReasonDrift:
-			// DriftBlocked, published just before it, says all of this. One message, not two.
-			return Message{}, "", false
+			// Right after its DriftBlocked it is folded into that message (the dispatcher does it). This is the other one:
+			// suspended again later in the same incident, after it had recovered.
+			headline = "giving up, SUSPENDED"
+			detail = append(detail, "cause: "+causeOf(e.Message)+" again; the drift guard blocked the recreate earlier in this incident")
 		case engine.ReasonFlapping:
 			headline = "flapping, SUSPENDED"
 			detail = append(detail, e.Message)
@@ -179,12 +185,12 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		detail = append(detail, e.Message, "the ladder ends after the restart rung")
 
 	case engine.Paused:
-		subject, headline = "", "paused "+scope
+		subject, headline = scope, "paused"
 		detail = append(detail, e.Message)
 		once = false
 
 	case engine.Resumed:
-		subject, headline = "", "resumed "+scope
+		subject, headline = scope, "resumed"
 		detail = append(detail, e.Message)
 		once = false
 
@@ -207,19 +213,12 @@ func compose(c rctx, e engine.Event, subject, headline string, detail, pinned []
 	if host == "" {
 		host = c.host
 	}
-	// The headline is what the push is about, so a long container name is what gets cut, not the headline.
 	marker := ""
 	if c.dryRun {
 		marker = DryRunMarker + " "
 	}
-	title := marker + host + ": " + headline
-	if subject != "" && subject != host {
-		room := MaxTitle - utf8.RuneCountInString(marker+host+":  "+headline)
-		if room < 8 {
-			room = 8
-		}
-		title = marker + host + ": " + cut(subject, room) + " " + headline
-	}
+	verbFirst := e.Type == engine.Paused || e.Type == engine.Resumed // "paused <scope>": the scope is the subject
+	title := titleOf(marker, host, subject, headline, verbFirst)
 	keyLine := e.Key
 	if keyLine == "" {
 		keyLine = "host " + host
@@ -239,7 +238,43 @@ func compose(c rctx, e engine.Event, subject, headline string, detail, pinned []
 	// The pinned lines go last and whole; the other lines are cut to the room that is left.
 	tail := "\n" + strings.Join(pinned, "\n")
 	room := MaxBodyPinned - utf8.RuneCountInString(tail)
-	return Message{Title: cut(title, MaxTitle), Body: fit(lines, room) + tail, Critical: critical}
+	// The line that says the rollback does not last is the first to give way, before any other is cut.
+	if n := len(lines); lines[n-1] == rollbackDoesNotLast && utf8.RuneCountInString(strings.Join(lines, "\n")) > room {
+		lines = lines[:n-1]
+	}
+	return Message{Title: cut(title, MaxTitle), Body: fit(lines, room) + tail, Critical: critical, pinned: tail}
+}
+
+// titleOf lays out a title within MaxTitle: the marker, the host, the subject (the container) and the headline. The
+// headline is what the push is about, so it is never cut: the subject gives way first (cut, or left out when fewer than 8
+// runes are left; the body's key line still names it), then the host (cut, or left out below 4). For a pause the subject
+// is the scope and stands after the verb.
+func titleOf(marker, host, subject, headline string, verbFirst bool) string {
+	n := utf8.RuneCountInString
+	if subject == host {
+		subject = ""
+	}
+	hostPart := host + ": "
+	if fixed := n(marker) + n(headline); fixed+n(hostPart) > MaxTitle {
+		switch room := MaxTitle - fixed - 2; {
+		case room >= 4:
+			hostPart = cut(host, room) + ": "
+		default:
+			hostPart = ""
+		}
+	}
+	if subject != "" {
+		room := MaxTitle - n(marker+hostPart+headline) - 1
+		switch {
+		case room < 8:
+			subject = ""
+		case verbFirst:
+			return marker + hostPart + headline + " " + cut(subject, room)
+		default:
+			return marker + hostPart + cut(subject, room) + " " + headline
+		}
+	}
+	return cut(marker+hostPart+headline, MaxTitle) // the backstop cannot cut with the current headlines
 }
 
 // tagMovedMessage fills in the "upgraded during heal" message (plan §3.7): the old and the new digest, and the exact
@@ -254,6 +289,9 @@ func tagMovedMessage(e engine.Event, headline *string, detail *[]string) (pinned
 		return id
 	}
 	switch {
+	case a["ok"] != "true" && e.Type == engine.Upgraded:
+		// Rung 2 never pulls: compose replaced the container onto the moved tag, and then the start failed.
+		*headline = "took the moved tag, but the recreate failed"
 	case a["ok"] != "true":
 		*headline = "pulled a newer image, but the recreate failed"
 	default:
@@ -276,11 +314,22 @@ func tagMovedMessage(e engine.Event, headline *string, detail *[]string) (pinned
 		*detail = append(*detail, "every stack that shares this tag now sees it as moved")
 	}
 	if a["rollback_tag"] != "" && a["rollback_up"] != "" {
-		return []string{"roll back:", oneLine(a["rollback_tag"]), oneLine(a["rollback_up"])}
+		// The last detail line, so it is the first that gives way when the body is full (plan v3.13 item 8).
+		*detail = append(*detail, rollbackDoesNotLast)
+		// Byte for byte: whitespace inside a quoted path is part of the path, so these are never passed through oneLine.
+		return []string{"roll back:", a["rollback_tag"], a["rollback_up"]}
+	}
+	if a[attrRollbackWithheld] == "true" {
+		*detail = append(*detail, "rollback not shown: its commands contain part of a configured secret. Re-tag the old image, then up with --pull never --no-build")
+		return nil
 	}
 	*detail = append(*detail, "no rollback: the previous image was not present locally")
 	return nil
 }
+
+// rollbackDoesNotLast stands before the rollback commands: with whalenurse.heal.pull still on, the next heal reaches the pull
+// rung again and the registry's newer image comes back.
+const rollbackDoesNotLast = "the rollback does not last while whalenurse.heal.pull stays on: to keep the old image, pin it in the compose file or remove the label"
 
 // movedAt prints the time of a move for a phone: minutes, UTC.
 func movedAt(rfc string) string {
@@ -347,7 +396,7 @@ func unsuspendCmd(scope string) string {
 	if scope == "" {
 		return "whalenurse unsuspend <scope>"
 	}
-	return "whalenurse unsuspend " + scope
+	return "whalenurse unsuspend " + wncompose.ShellWord(scope) // the scope comes from labels: quoted when it needs it
 }
 
 // verbOf names an action for a message: the past tense, and the failure.
@@ -403,14 +452,14 @@ func shortFindings(f string) string {
 func driftHint(findings, scope string) string {
 	switch {
 	case strings.Contains(findings, "can't verify drift (compose"):
-		return "hint: whalenurse's compose is not the one that made it. Mount the host plugin at /host/docker-compose, or: docker compose up -d " + serviceOf(scope)
+		return "hint: whalenurse's compose is not the one that made it. Mount the host plugin at /host/docker-compose, or: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
 	case reUpgraded.MatchString(findings):
 		v := reUpgraded.FindStringSubmatch(findings)
-		return "hint: compose upgraded " + v[1] + " to " + v[2] + " since creation: maybe a new hash layout, not an edit. If the file is fine: docker compose up -d " + serviceOf(scope)
+		return "hint: compose upgraded " + v[1] + " to " + v[2] + " since creation: maybe a new hash layout, not an edit. If the file is fine: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
 	case strings.Contains(findings, "the tag moved"):
-		return "hint: the image tag points at another image now. Take it with: docker compose up -d " + serviceOf(scope) + ", or re-tag the old one"
+		return "hint: the image tag points at another image now. Take it with: docker compose up -d " + wncompose.ShellWord(serviceOf(scope)) + ", or re-tag the old one"
 	case strings.Contains(findings, "would recreate") || strings.Contains(findings, "config --hash is"):
-		return "hint: the compose file, an env file or the image changed since creation. Apply it yourself: docker compose up -d " + serviceOf(scope)
+		return "hint: the compose file, an env file or the image changed since creation. Apply it yourself: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
 	}
 	return ""
 }

@@ -69,20 +69,16 @@ func TestUpgradeWithoutAPreviousImageHasNoRollbackCommand(t *testing.T) {
 // The rollback is never cut, whatever the other text: with the longest names the commands can reasonably have, the body
 // stays under MaxBodyPinned and every command is whole. The key line is never cut either.
 func TestUpgradedMessageWorstCase(t *testing.T) {
-	p := wncompose.Project{
-		Name: "whalenurse-" + strings.Repeat("p", 29), WorkingDir: "/srv/docker/stacks/" + strings.Repeat("d", 41),
-		ConfigFiles: []string{"/srv/docker/stacks/" + strings.Repeat("d", 41) + "/" + strings.Repeat("c", 30) + ".yaml"}, Service: strings.Repeat("s", 30),
-	}
-	ref := "registry.example.com:5000/" + strings.Repeat("r", 53)
-	a := movedAttrs(p, ref, false)
-	a["rollback_tag"], a["rollback_up"] = wncompose.RollbackCommands(p, ref, oldID, strings.Repeat("a", 30))
-	a["sidecars"] = strings.Repeat("a", 30)
-	a["error"] = strings.Repeat("compose says something very long and noisy about why this failed; ", 12)
-	key := "nas/" + p.Name + "/" + p.Service + "/1"
-	e := ev(engine.TagMoved, key, "x", a)
-	e.Container = p.Name + "-" + p.Service + "-1"
-	for _, dry := range []bool{false, true} {
+	e := worstCaseUpgrade(t)
+	a, key := e.Attrs, e.Key
+	for _, c := range []struct {
+		typ engine.EventType
+		dry bool
+	}{{engine.TagMoved, false}, {engine.TagMoved, true}, {engine.Upgraded, false}, {engine.Upgraded, true}} {
+		dry := c.dry
+		e.Type = c.typ
 		m := renderOne(t, e, rctx{dryRun: dry})
+		t.Logf("%s, dry-run %v: body %d runes, of them %d pinned (max %d)", e.Type, dry, utf8.RuneCountInString(m.Body), utf8.RuneCountInString(m.pinned), MaxBodyPinned)
 		if utf8.RuneCountInString(m.Title) > MaxTitle || utf8.RuneCountInString(m.Body) > MaxBodyPinned {
 			t.Errorf("%d / %d runes (max %d / %d):\n%s", utf8.RuneCountInString(m.Title), utf8.RuneCountInString(m.Body), MaxTitle, MaxBodyPinned, m.Body)
 		}
@@ -215,7 +211,7 @@ func TestUpgradeMessageCarriesTheSidecarsRollback(t *testing.T) {
 			t.Errorf("lacks %q:\n%s", want, m.Body)
 		}
 	}
-	if !strings.HasSuffix(up, "up -d --no-deps --pull never web side side2") {
+	if !strings.HasSuffix(up, "up -d --no-deps --pull never --no-build web side side2") {
 		t.Fatalf("%s", up)
 	}
 	if utf8.RuneCountInString(m.Body) > MaxBodyPinned {
@@ -229,5 +225,81 @@ func TestPullRungDoesNotApplyIsTheGivingUpCause(t *testing.T) {
 	m := renderOne(t, e, rctx{})
 	if !strings.Contains(m.Body, "cause: pull rung does not apply (pull_policy never)") || !strings.Contains(m.Title, "giving up") {
 		t.Fatalf("%v", m)
+	}
+}
+
+// The rollback lines are sent byte for byte: whitespace inside a quoted path is part of the path.
+func TestRollbackLinesAreSentByteForByte(t *testing.T) {
+	for _, dir := range []string{"/opt/My  Stacks/p", "/opt/My\tStacks/p", "/opt/My Stacks/p"} {
+		p := wncompose.Project{Name: "p", WorkingDir: dir, ConfigFiles: []string{dir + "/compose.yaml"}, Service: "web"}
+		a := movedAttrs(p, "web:1", true)
+		m := renderOne(t, ev(engine.TagMoved, "nas/p/web/1", "x", a), rctx{})
+		if !strings.HasSuffix(m.Body, "\n"+a["rollback_tag"]+"\n"+a["rollback_up"]) {
+			t.Errorf("%q: the rollback was changed:\n%q", dir, m.Body)
+		}
+	}
+}
+
+// worstCaseUpgrade is the "upgraded during heal" event with the longest names the commands can reasonably have.
+func worstCaseUpgrade(t *testing.T) engine.Event {
+	t.Helper()
+	p := wncompose.Project{
+		Name: "whalenurse-" + strings.Repeat("p", 29), WorkingDir: "/srv/docker/stacks/" + strings.Repeat("d", 41),
+		ConfigFiles: []string{"/srv/docker/stacks/" + strings.Repeat("d", 41) + "/" + strings.Repeat("c", 30) + ".yaml"}, Service: strings.Repeat("s", 30),
+	}
+	ref := "registry.example.com:5000/" + strings.Repeat("r", 53)
+	a := movedAttrs(p, ref, false)
+	a["rollback_tag"], a["rollback_up"] = wncompose.RollbackCommands(p, ref, oldID, strings.Repeat("a", 30))
+	a["sidecars"] = strings.Repeat("a", 30)
+	a["error"] = strings.Repeat("compose says something very long and noisy about why this failed; ", 12)
+	e := ev(engine.TagMoved, "nas/"+p.Name+"/"+p.Service+"/1", "x", a)
+	e.Container = p.Name + "-" + p.Service + "-1"
+	return e
+}
+
+// A rung-2 upgrade whose recreate failed after compose had replaced the container: its own headline (rung 2 pulled
+// nothing), the error, and the rollback.
+func TestUpgradedThatFailedSaysTheRecreateFailedNotThePull(t *testing.T) {
+	m := renderOne(t, ev(engine.Upgraded, webKey, "x", movedAttrs(stackProject(), "web:1", false)), rctx{})
+	for _, want := range []string{"took the moved tag, but the recreate failed", "error: port is already allocated", "docker image tag " + oldID} {
+		if !strings.Contains(m.Title+m.Body, want) {
+			t.Errorf("lacks %q: %v", want, m)
+		}
+	}
+	if strings.Contains(m.Title, "pulled") || utf8.RuneCountInString(m.Title) > MaxTitle {
+		t.Errorf("%v", m)
+	}
+}
+
+// The rollback does not last while whalenurse.heal.pull stays on: the next heal reaches the pull again (plan v3.13 item 8).
+// The message says so on one detail line right before the pinned commands, and that line is the first to be cut.
+func TestUpgradeMessageSaysTheRollbackDoesNotLast(t *testing.T) {
+	for _, typ := range []engine.EventType{engine.TagMoved, engine.Upgraded} {
+		m := renderOne(t, ev(typ, webKey, "x", movedAttrs(stackProject(), "web:1", true)), rctx{})
+		if !strings.Contains(m.Body, "\n"+rollbackDoesNotLast+"\nroll back:\n") {
+			t.Errorf("%s: the line must stand right before the commands:\n%s", typ, m.Body)
+		}
+		if strings.Contains(m.pinned, rollbackDoesNotLast) {
+			t.Errorf("%s: the line is cuttable, never pinned", typ)
+		}
+	}
+	// Without a rollback there is nothing to keep.
+	m := renderOne(t, ev(engine.TagMoved, webKey, "x", map[string]string{"ref": "web:1", "new": newID, "ok": "true"}), rctx{})
+	if strings.Contains(m.Body, rollbackDoesNotLast) {
+		t.Errorf("%s", m.Body)
+	}
+	// It is the first line to give way: with room for every other line but not for it, it goes and the rest stay whole.
+	e := ev(engine.TagMoved, webKey, "x", nil)
+	detail := []string{"image: a", "error: b", rollbackDoesNotLast}
+	head := webKey + "\nimage: a\nerror: b"
+	pinned := []string{"roll back:", strings.Repeat("t", MaxBodyPinned-utf8.RuneCountInString(head)-len("\nroll back:\n\n")-40), "up"}
+	got := compose(rctx{}, e, "stack-web-1", "upgraded during heal", detail, pinned, true)
+	if got.Body != head+got.pinned || strings.Contains(got.Body, "…") {
+		t.Errorf("the cuttable line must go first, whole lines stay:\n%s", got.Body)
+	}
+	// In the worst case the commands stay whole and last.
+	w := renderOne(t, worstCaseUpgrade(t), rctx{dryRun: true})
+	if strings.Contains(w.Body, rollbackDoesNotLast) || !strings.HasSuffix(w.Body, w.pinned) || utf8.RuneCountInString(w.Body) > MaxBodyPinned {
+		t.Errorf("%d runes:\n%s", utf8.RuneCountInString(w.Body), w.Body)
 	}
 }

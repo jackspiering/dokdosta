@@ -27,7 +27,7 @@ type Command struct {
 func (c Command) String() string {
 	words := make([]string, 0, 1+len(c.Args))
 	for _, w := range append([]string{c.Bin}, c.Args...) {
-		words = append(words, shellWord(w))
+		words = append(words, ShellWord(w))
 	}
 	return strings.Join(words, " ")
 }

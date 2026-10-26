@@ -89,8 +89,14 @@ type Notifier struct {
 	// dispatcher-only state
 	sent    map[string]time.Time // dedupe identity -> when it was sent
 	reasons map[string]string    // container key -> why its running action was started
+	// foldNext: container key -> the incident of a DriftBlocked just routed. The Suspended(drift) that follows it says
+	// nothing new and is folded into it; any other Suspended(drift) is news (plan v3.13 item 19).
+	foldNext map[string]string
 
 	targets []*worker
+	// usable: some target has a Sender. Without one no message is accepted, so none is recorded as sent: the warning
+	// still goes out once a working URL is configured.
+	usable  bool
 	wg      sync.WaitGroup
 	cancel  context.CancelFunc // aborts deliveries in flight when Shutdown runs out of time
 	sendCtx context.Context
@@ -143,9 +149,10 @@ func New(o Options) *Notifier {
 	}
 	n := &Notifier{
 		o: o, clk: o.Clock, log: o.Log,
-		in:      make(chan engine.Event, o.QueueSize),
-		sent:    map[string]time.Time{},
-		reasons: map[string]string{},
+		in:       make(chan engine.Event, o.QueueSize),
+		sent:     map[string]time.Time{},
+		reasons:  map[string]string{},
+		foldNext: map[string]string{},
 	}
 	n.sendCtx, n.cancel = context.WithCancel(context.Background())
 	if o.Ledger != nil {
@@ -159,6 +166,7 @@ func New(o Options) *Notifier {
 		w := &worker{t: t, q: make(chan Message, o.QueueSize), nt: n, throttled: map[string]time.Time{}}
 		n.targets = append(n.targets, w)
 		if t.Sender != nil {
+			n.usable = true
 			n.wg.Add(1)
 			go w.run()
 		}
@@ -237,11 +245,24 @@ func (n *Notifier) routeSafely(e engine.Event) {
 }
 
 func (n *Notifier) route(e engine.Event) {
+	e = n.redacted(e)
 	switch e.Type {
 	case engine.ActionStarted:
 		// Only remembered: the message goes out when the action ends, and says why it was started.
 		n.reasons[e.Key] = afterPrefix(e.Message, e.Attrs["action"]+": ")
 		return
+	}
+	switch {
+	case e.Type == engine.DriftBlocked:
+		n.foldNext[e.Key] = e.Attrs[engine.AttrIncident]
+	case e.Type == engine.Suspended && e.Attrs["reason"] == engine.ReasonDrift:
+		inc, fold := n.foldNext[e.Key]
+		delete(n.foldNext, e.Key)
+		if fold && inc == e.Attrs[engine.AttrIncident] {
+			return // the DriftBlocked just before it said all of this: one message, not two
+		}
+	case e.Type == engine.Unsuspended:
+		delete(n.foldNext, e.Key)
 	}
 	c := rctx{host: n.o.Host, dryRun: n.o.DryRun}
 	if e.Type == engine.ActionResult {
@@ -252,19 +273,68 @@ func (n *Notifier) route(e engine.Event) {
 	if !ok {
 		return
 	}
-	if id != "" && n.seen(id, e) {
+	if id != "" && n.usable && n.seen(id, e) {
 		return
 	}
 	// Suspended and unsuspended alternate within an incident; each is news again after the other, or the last word the
-	// user heard would be wrong.
+	// user heard would be wrong. Only once per incident (plan v3.13 item 18): the first Unsuspended after a Suspended and
+	// the first Suspended after that are sent; a healthcheck that keeps flipping does not use up the hourly budget.
 	switch e.Type {
-	case engine.Unsuspended:
-		n.forget(engine.Suspended, e.Key)
-	case engine.Suspended:
-		n.forget(engine.Unsuspended, e.Key)
+	case engine.Unsuspended, engine.Suspended:
+		if inc := e.Attrs[engine.AttrIncident]; !n.rearmed(e.Key, inc) {
+			if e.Type == engine.Unsuspended {
+				n.markRearmed(e.Key, inc)
+				n.forget(engine.Suspended, e.Key)
+			} else {
+				n.forget(engine.Unsuspended, e.Key)
+			}
+		}
 	}
 	for _, w := range n.targets {
 		w.offer(m)
+	}
+}
+
+// redacted is the event the templates see: its free text redacted, so no body carries a secret that an error quoted (and
+// URL #1's token is not pushed to URL #2's service). The rollback commands are pasted into a shell, so they are sent as
+// they were built or not at all: when the redactor would change either, both are withheld and the message says so.
+func (n *Notifier) redacted(e engine.Event) engine.Event {
+	tag, up := e.Attrs["rollback_tag"], e.Attrs["rollback_up"]
+	r := n.o.Redact.Event(e)
+	if tag != "" || up != "" {
+		if r.Attrs["rollback_tag"] == tag && r.Attrs["rollback_up"] == up {
+			return r
+		}
+		delete(r.Attrs, "rollback_tag")
+		delete(r.Attrs, "rollback_up")
+		r.Attrs[attrRollbackWithheld] = "true"
+	}
+	return r
+}
+
+// attrRollbackWithheld marks, inside the notifier only, an event whose rollback commands were withheld.
+const attrRollbackWithheld = "rollback_withheld"
+
+// rearmType is the ledger type of the "made each other news again" mark of an incident. It is its own type, so forgetting
+// the Suspended or Unsuspended rows of a key never drops it.
+const rearmType = "rearmed"
+
+func rearmID(key, incident string) string { return rearmType + "|" + key + "|" + incident }
+
+// rearmed reports whether an Unsuspended already made Suspended news again in this incident of the key.
+func (n *Notifier) rearmed(key, incident string) bool {
+	at, ok := n.sent[rearmID(key, incident)]
+	return ok && n.clk.Now().Sub(at) < n.o.DedupeFor
+}
+
+func (n *Notifier) markRearmed(key, incident string) {
+	if !n.usable {
+		return
+	}
+	now := n.clk.Now()
+	n.sent[rearmID(key, incident)] = now
+	if n.o.Ledger != nil {
+		n.o.Ledger.SaveNotified(rearmID(key, incident), rearmType, key, now)
 	}
 }
 
@@ -341,7 +411,7 @@ func (w *worker) offer(m Message) {
 		w.throttled[m.Class] = now
 	}
 	if w.suppressed > 0 {
-		m.Body = withNote(m.Body, fmt.Sprintf("(%d earlier messages were held back by the rate limit)", w.suppressed), MaxBody)
+		m.Body = withPinnedNote(m, fmt.Sprintf("(%d earlier messages were held back by the rate limit)", w.suppressed))
 		w.suppressed = 0
 	}
 	w.mu.Unlock()
@@ -359,7 +429,17 @@ func (w *worker) offer(m Message) {
 // line comes first and stays).
 func withNote(body, note string, max int) string {
 	room := max - utf8.RuneCountInString(note) - 1
-	return cut(body, room) + "\n" + note
+	return fit(strings.Split(body, "\n"), room) + "\n" + note
+}
+
+// withPinnedNote adds the note to a message's body. A message with pinned lines (the rollback commands) gets it before
+// them: the note and the details share the room the commands leave, and the commands stay whole and last.
+func withPinnedNote(m Message, note string) string {
+	if m.pinned == "" || !strings.HasSuffix(m.Body, m.pinned) {
+		return withNote(m.Body, note, MaxBody)
+	}
+	head := strings.TrimSuffix(m.Body, m.pinned)
+	return withNote(head, note, MaxBodyPinned-utf8.RuneCountInString(m.pinned)) + m.pinned
 }
 
 // run delivers one URL's messages in order.

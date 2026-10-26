@@ -172,7 +172,7 @@ func (r *dashboardRig) drive() {
 	h.d.Engine().Note(engine.Target{Key: "nas/p/web/1", Name: "p-web-1"}, engine.Upgraded, "nginx:1: aaaaaaaaaaaa -> bbbbbbbbbbbb; recreated", map[string]string{
 		"ref": "nginx:1", "old": "sha256:" + strings.Repeat("a", 64), "new": "sha256:" + strings.Repeat("b", 64), "old_image": "sha256:" + strings.Repeat("a", 64), "ok": "true",
 		"rollback_tag": "docker image tag sha256:" + strings.Repeat("a", 64) + " nginx:1",
-		"rollback_up":  "docker compose -p p --project-directory /opt/stacks/p -f /opt/stacks/p/compose.yaml up -d --no-deps --pull never web",
+		"rollback_up":  "docker compose -p p --project-directory /opt/stacks/p -f /opt/stacks/p/compose.yaml up -d --no-deps --pull never --no-build web",
 	})
 	// A compose temporary name, as an event of a recreate carries it.
 	h.d.Engine().Note(engine.Target{Key: "nas/p/side/1", Name: "0123456789ab_p-side-1"}, engine.ActionResult, "recreate ok", map[string]string{"ok": "true"})
@@ -692,7 +692,10 @@ func TestRollbackIsOneCommandPerLineWithACopyButton(t *testing.T) {
 	if len(blocks) != 2 {
 		t.Fatalf("want two command blocks with a copy button each, got %d:\n%s", len(blocks), section(body, "Last upgrade during heal"))
 	}
-	if !strings.HasPrefix(blocks[0][1], "docker image tag sha256:") || !strings.Contains(blocks[1][1], "up -d --no-deps --pull never web") || strings.Contains(blocks[0][1]+blocks[1][1], "\n") {
+	// Each block is the event's command as a whole, byte for byte.
+	wantTag := "docker image tag sha256:" + strings.Repeat("a", 64) + " nginx:1"
+	wantUp := "docker compose -p p --project-directory /opt/stacks/p -f /opt/stacks/p/compose.yaml up -d --no-deps --pull never --no-build web"
+	if blocks[0][1] != wantTag || blocks[1][1] != wantUp {
 		t.Errorf("each block is exactly one command: %q", blocks)
 	}
 	_, js := r.fetch(t, "/static/app.js", "")
@@ -902,5 +905,51 @@ func TestFriendlyTextsAndCards(t *testing.T) {
 	// The copy button is beside the code, not on top of it.
 	if !strings.Contains(css, ".cmd { display: flex;") || strings.Contains(css, ".copy { display: none; position: absolute") {
 		t.Error("the copy button must sit beside the scroll area")
+	}
+}
+
+// A rollback that the redactor would change is withheld on the page, with a sentence that says so, and no Copy button sits
+// next to masked text. The rig's notification URL is on 127.0.0.1, so a test-registry reference holds a fragment.
+func TestRollbackThatTheRedactorWouldChangeIsWithheld(t *testing.T) {
+	r := newRig(t, "")
+	r.drive()
+	ref := "127.0.0.1:5000/app:1"
+	old := "sha256:" + strings.Repeat("c", 64)
+	r.h.d.Engine().Note(engine.Target{Key: "nas/p/web/1", Name: "p-web-1"}, engine.Upgraded, ref+": cccccccccccc -> dddddddddddd; recreated", map[string]string{
+		"ref": ref, "old": old, "new": "sha256:" + strings.Repeat("d", 64), "old_image": old, "ok": "true",
+		"rollback_tag": "docker image tag " + old + " " + ref,
+		"rollback_up":  "docker compose -p p --project-directory /opt/stacks/p -f /opt/stacks/p/compose.yaml up -d --no-deps --pull never --no-build web",
+	})
+	_, body := r.fetch(t, "/containers/nas/p/web/1", "")
+	up := section(body, "Last upgrade during heal")
+	if strings.Contains(up, "data-copy") || strings.Contains(up, `class="rollback"`) {
+		t.Fatalf("a withheld rollback has no command block or Copy button:\n%s", up)
+	}
+	if !strings.Contains(up, "The rollback commands are withheld") {
+		t.Fatalf("the page must say the rollback is withheld:\n%s", up)
+	}
+	_, js := r.fetch(t, "/api/v1/containers/nas/p/web/1", "")
+	if strings.Contains(js, "docker image tag "+old) || strings.Contains(js, "docker image tag sha256:"+strings.Repeat("c", 64)+" ***") {
+		t.Fatalf("the API withholds it too:\n%s", js)
+	}
+}
+
+// The banner's unsuspend command is shell-quoted: the project label comes from the container (or its image), and the
+// operator pastes the line into a host shell.
+func TestUnsuspendHintIsShellQuoted(t *testing.T) {
+	r := newRig(t, "")
+	h := r.h
+	a := h.running(hexID("d4"), "p$(id)", "web")
+	h.set(a.ID, func(c *docker.Container) { c.Labels[config.LabelActions] = "restart" })
+	h.tick()
+	c := h.set(a.ID, unhealthy)
+	h.event(c, "health_status", "unhealthy")
+	h.advance(15 * time.Minute)
+	_, body := r.fetch(t, "/containers/nas/"+url.PathEscape("p$(id)")+"/web/1", "")
+	if !strings.Contains(body, "SUSPENDED") {
+		t.Fatalf("not suspended:\n%s", body)
+	}
+	if !strings.Contains(body, "unsuspend &#39;p$(id)/web&#39;") {
+		t.Fatalf("the unsuspend command must be quoted:\n%s", section(body, "SUSPENDED"))
 	}
 }
