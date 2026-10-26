@@ -69,5 +69,10 @@
       "ghcr.io",
       "registry.example.lan:5000"
     ]
+  },
+  "store": {
+    "errors": 2,
+    "last_error_at": "2026-10-19T12:30:00Z",
+    "last_error_op": "write event"
   }
 }

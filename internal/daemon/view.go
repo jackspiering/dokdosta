@@ -213,7 +213,7 @@ func (s apiSource) Status() api.StatusDoc {
 		EventsUp: d.eventsUp.Load(), Settled: d.settledFlag.Load(), DriftGuard: cs.DriftGuard,
 		Compose:      api.ComposeDoc{Binary: cs.Binary, Source: cs.Source, Version: cs.Version, Engine: cs.Engine, Arch: cs.EngineArch},
 		VersionGate:  api.VersionGateDoc{RecreateEnabled: cs.Rungs, DisabledRungs: cs.Disabled, Reason: cs.Reason, MinEngine: compose.MinEngine.String(), MinCompose: compose.MinCompose.String()},
-		RestoreUntil: ev.RestoreUntil, HistoryRetention: int64(d.cfg.HistoryRetention.Seconds()),
+		RestoreUntil: ev.RestoreUntil, HistoryRetention: int64(d.cfg.HistoryRetention.Seconds()), Store: d.storeDoc(),
 	}
 	st.RateLimit = api.RateLimitDoc{Limit: ev.RateLimit, Used: ev.ActionsLastH, NextSlot: ev.NextSlot}
 	if ev.RateLimit > 0 {

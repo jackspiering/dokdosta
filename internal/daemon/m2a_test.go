@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -435,7 +436,7 @@ func TestHeartbeatIsWrittenEveryFewSecondsAndAtTheEnd(t *testing.T) {
 	h := newHarnessOpts(t, nil, nil, nil)
 	h.start(h.withStore(st, "boot-A"))
 	last := func() int64 {
-		v, _ := st.Meta(MetaLastSeen)
+		v, _, _ := st.Meta(MetaLastSeen)
 		n, _ := strconv.ParseInt(v, 10, 64)
 		return n
 	}
@@ -922,4 +923,36 @@ func TestDependentsOfAParentLeftDownByPolicyStayDown(t *testing.T) {
 	h.d.StreamConnected()
 	h.advance(10 * time.Minute)
 	h.wantCalls() // neither is started
+}
+
+// failingMeta fails every read of one key, as a store whose disk went bad does; the rest is a map.
+type failingMeta struct {
+	m    map[string]string
+	fail string
+}
+
+func (f failingMeta) Meta(k string) (string, bool, error) {
+	if k == f.fail {
+		return "", false, errors.New("disk I/O error")
+	}
+	v, ok := f.m[k]
+	return v, ok, nil
+}
+func (f failingMeta) SetMeta(k, v string) { f.m[k] = v }
+
+// A boot id that cannot be read is not "no boot id yet": the stored one is kept for the next start to compare with,
+// instead of being overwritten with the current boot's (which would hide a reboot from mechanism (b) for good).
+func TestAnUnreadableBootIDIsNotOverwritten(t *testing.T) {
+	m := failingMeta{m: map[string]string{MetaBootID: "boot-A"}, fail: MetaBootID}
+	h := newHarnessOpts(t, nil, nil, func(o *Options) {
+		o.Meta = m
+		o.BootID = func() string { return "boot-B" }
+	})
+	h.tick()
+	if m.m[MetaBootID] != "boot-A" {
+		t.Fatalf("the stored boot id was overwritten: %q", m.m[MetaBootID])
+	}
+	if m.m[MetaLastSeen] == "" {
+		t.Fatal("the rest of the startup ran (last_seen is written)")
+	}
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -22,7 +23,14 @@ type Command struct {
 	ConfigDir string
 }
 
-func (c Command) String() string { return c.Bin + " " + strings.Join(c.Args, " ") }
+// String is the command line, each word quoted for a POSIX shell when it needs it.
+func (c Command) String() string {
+	words := make([]string, 0, 1+len(c.Args))
+	for _, w := range append([]string{c.Bin}, c.Args...) {
+		words = append(words, shellWord(w))
+	}
+	return strings.Join(words, " ")
+}
 
 // Result is what a command printed. Compose writes its progress, including the --progress json lines of the dry-run
 // oracle, to stderr, so both streams are kept.
@@ -65,14 +73,96 @@ func (r ExecRunner) Run(ctx context.Context, c Command) (Result, error) {
 		dir = c.ConfigDir
 	}
 	cmd.Env = ChildEnv(os.Environ(), dir)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
+	out, errb := &capped{max: maxOutput}, &capped{max: maxOutput}
+	cmd.Stdout, cmd.Stderr = out, errb
 	err := cmd.Run()
-	res := Result{Stdout: out.Bytes(), Stderr: errb.Bytes()}
+	res := Result{Stdout: out.buf.Bytes(), Stderr: errb.buf.Bytes()}
 	if err != nil {
-		return res, fmt.Errorf("%s: %w: %s", c, err, tail(errb.String()))
+		if ctx.Err() != nil {
+			err = fmt.Errorf("%w (%w)", err, ctx.Err())
+		}
+		return res, RunError(c, err, append(append([]byte(nil), res.Stderr...), errb.tail...))
 	}
 	return res, nil
+}
+
+// maxOutput caps what is kept of each stream of one command. The oracle's --progress json and a one-service config are
+// far smaller; a command that prints more is not one whalenurse needs all of.
+const maxOutput = 4 << 20
+
+// capped keeps the first max bytes written to it, and the last tailSize bytes apart, so a cause printed at the end of a
+// long output is still found. It never fails a write: an error would stop the copy and block or kill the command.
+type capped struct {
+	buf  bytes.Buffer
+	max  int
+	tail []byte
+	over bool
+}
+
+const tailSize = 8 << 10
+
+func (w *capped) Write(p []byte) (int, error) {
+	if room := w.max - w.buf.Len(); room > 0 {
+		w.buf.Write(p[:min(room, len(p))])
+	}
+	if w.over || w.buf.Len()+len(p) > w.max {
+		w.over = true
+		w.tail = append(w.tail, p...)
+		if len(w.tail) > tailSize {
+			w.tail = append([]byte(nil), w.tail[len(w.tail)-tailSize:]...)
+		}
+	}
+	return len(p), nil
+}
+
+// RunError is the error of a failed compose command. Compose's own output is not in it: a load error can quote a line of
+// the stack's .env or env_file (compose-go's dotenv parser puts the value into "unterminated quoted value ..."), and the
+// error reaches the events, the API, the store and the log (plan §3.9: the environment is never shown). Only the causes
+// below, which whalenurse names in its own words, are kept from stderr; otherwise the error says how to see the rest.
+func RunError(c Command, err error, stderr []byte) error {
+	if found := knownCauses(stderr); len(found) > 0 {
+		return fmt.Errorf("%s: %w: compose reported: %s", c, err, strings.Join(found, "; "))
+	}
+	return fmt.Errorf("%s: %w: compose's output is not shown, as it can quote the stack's .env; run `docker compose config` in the stack to see why", c, err)
+}
+
+// composeCauses are what an operator acts on, in a fixed order. Each is matched in compose's lowercased output and reported as
+// its fixed text, never as the line it was found in. The pull rung's ones are the registry answers that
+// docs/troubleshooting.md lists (the M7 positive control matches them in CI).
+var composeCauses = []struct {
+	re   *regexp.Regexp
+	text string
+}{
+	{regexp.MustCompile(`port is already allocated`), "port is already allocated"},
+	{regexp.MustCompile(`address already in use`), "address already in use"},
+	{regexp.MustCompile(`bind source path does not exist`), "bind source path does not exist"},
+	{regexp.MustCompile(`no such service`), "no such service"},
+	{regexp.MustCompile(`no such image`), "no such image"},
+	{regexp.MustCompile(`network \S+ not found`), "network not found"},
+	{regexp.MustCompile(`is already in use by container`), "the container name is already in use"},
+	{regexp.MustCompile(`no space left on device`), "no space left on device"},
+	{regexp.MustCompile(`pull access denied`), "pull access denied"},
+	{regexp.MustCompile(`no basic auth credentials`), "no basic auth credentials"},
+	{regexp.MustCompile(`unauthorized`), "unauthorized"},
+	{regexp.MustCompile(`authentication required`), "authentication required"},
+	{regexp.MustCompile(`requested access to the resource is denied`), "access denied"},
+	{regexp.MustCompile(`permission denied`), "permission denied"},
+	{regexp.MustCompile(`manifest unknown`), "manifest unknown"},
+	{regexp.MustCompile(`toomanyrequests`), "toomanyrequests"},
+	{regexp.MustCompile(`no such host`), "no such host"},
+	{regexp.MustCompile(`connection refused`), "connection refused"},
+	{regexp.MustCompile(`i/o timeout`), "i/o timeout"},
+}
+
+func knownCauses(stderr []byte) []string {
+	m := bytes.ToLower(stderr)
+	var out []string
+	for _, c := range composeCauses {
+		if c.re.Match(m) {
+			out = append(out, c.text)
+		}
+	}
+	return out
 }
 
 // Compose must always get a DOCKER_CONFIG: unset, the Docker CLI reads $HOME/.docker, and a config.json there brings
@@ -128,13 +218,4 @@ func ChildEnv(env []string, configDir string) []string {
 		out = append(out, kv)
 	}
 	return append(out, "DOCKER_CONFIG="+configDir, "NO_COLOR=1")
-}
-
-// tail keeps the end of compose's complaint: the cause is last.
-func tail(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if len(s) > 600 {
-		return "..." + s[len(s)-600:]
-	}
-	return s
 }

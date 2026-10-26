@@ -63,10 +63,10 @@ func TestStateSurvivesReopeningTheDatabase(t *testing.T) {
 	if len(snap.Actions) != 1 || !snap.Actions[0].Equal(t0.Add(-10*time.Minute)) {
 		t.Fatalf("only the last hour of actions counts: %+v", snap.Actions)
 	}
-	if v, ok := s.Meta("boot_id"); !ok || v != "abc" {
+	if v, ok, err := s.Meta("boot_id"); err != nil || !ok || v != "abc" {
 		t.Fatalf("%q %v", v, ok)
 	}
-	if _, ok := s.Meta("nope"); ok {
+	if _, ok, err := s.Meta("nope"); ok || err != nil {
 		t.Fatal("missing meta reported present")
 	}
 }
@@ -159,8 +159,8 @@ func TestOnlyOneOpenIncidentPerKey(t *testing.T) {
 	s.SaveKey(b) // a newer incident: the stale open row is closed, not left to violate the unique index
 	var open int
 	s.db.QueryRow(`SELECT count(*) FROM incidents WHERE closed_at IS NULL`).Scan(&open)
-	if open != 1 || s.WriteErrors() != 0 {
-		t.Fatalf("open=%d write errors=%d", open, s.WriteErrors())
+	if open != 1 || s.Errors() != 0 {
+		t.Fatalf("open=%d write errors=%d", open, s.Errors())
 	}
 }
 
@@ -199,7 +199,7 @@ func TestAWriteToAClosedStoreIsCountedNotFatal(t *testing.T) {
 	s := open(t, t.TempDir())
 	s.Close()
 	s.SaveKey(sampleKey())
-	if s.WriteErrors() == 0 {
+	if s.Errors() == 0 {
 		t.Fatal("a failed write must be counted")
 	}
 }
@@ -232,8 +232,8 @@ func TestNotificationLedgerSurvivesReopeningAndExpires(t *testing.T) {
 	if got, _ := s.LoadNotified(t0, 24*time.Hour); len(got) != 0 {
 		t.Fatalf("PruneNotified left %v", got)
 	}
-	if s.WriteErrors() != 0 {
-		t.Fatalf("%d write errors", s.WriteErrors())
+	if s.Errors() != 0 {
+		t.Fatalf("%d write errors", s.Errors())
 	}
 }
 
