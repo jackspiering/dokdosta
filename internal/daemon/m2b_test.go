@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1607,7 +1608,7 @@ func TestSidecarOptInFollowsItsNamespaceParentOnly(t *testing.T) {
 		h.noOptIn(dep.ID)
 		h.tick()
 		h.advance(time.Minute)
-		if v, ok, _ := st.Meta(metaNSParent + key("p", "dep")); !ok || v != "parent" {
+		if v, ok, _ := st.Meta(metaNSParent + key("p", "dep")); !ok || v != "network:parent" {
 			t.Fatalf("not persisted: %q %v", v, ok)
 		}
 		h.restartWithStore(st) // a new daemon on the same store and the same Docker
@@ -1650,5 +1651,38 @@ func TestNamespaceParentIsRekeyedToTheCurrentHost(t *testing.T) {
 	}
 	if _, ok, _ := st.Meta(metaNSParent + "old/p/dep/1"); ok {
 		t.Fatal("the old key is still there")
+	}
+}
+
+// A sidecar with a network parent and an ipc parent: when one is recreated and the other still resolves, what was learned
+// for the one that is gone is kept (its opt-in is what decides).
+func TestNamespaceParentIsKeptPerReference(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	a := h.svc(hexID("c1"), "p", "a") // opted in
+	b := h.svc(hexID("c2"), "p", "b")
+	h.noOptIn(b.ID)
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "a:service_started:true,b:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) {
+		c.NetworkMode, c.IpcMode = "container:"+a.ID, "container:"+b.ID
+	})
+	h.noOptIn(dep.ID)
+	var newA docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newA.ID })
+		return nil
+	}
+	h.tick()
+	h.advance(time.Minute)
+	newA = h.replace("p", "a", func(c *docker.Container) { c.Health = "healthy" })
+	h.event(newA, "create", "")
+	h.event(newA, "start", "")
+	h.advance(3 * time.Minute)
+	got := h.d.namespaceParents(key("p", "dep"))
+	slices.Sort(got)
+	if got := strings.Join(got, ","); got != "a,b" {
+		t.Fatalf("learned: %q", got)
+	}
+	if got := h.verbs(); got != "up dep" {
+		t.Fatalf("the network parent is opted in: %q", got)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/jackspiering/whalenurse/internal/compose"
+	"github.com/jackspiering/whalenurse/internal/config"
 	"github.com/jackspiering/whalenurse/internal/docker"
 )
 
@@ -18,6 +19,41 @@ type stub struct {
 	projects map[string]string // container -> compose project label
 	context  string
 	psOut    string
+	psRows   []psRow // when set, `docker ps` honours --filter label=<k>[=<v>] and --format over these rows
+}
+
+// psRow is a container as `docker ps -a` sees it: its ID, its project label and its whalenurse.enable value.
+type psRow struct{ id, project, enable string }
+
+// psFiltered answers `docker ps` the way Docker does: a label filter with a value matches that exact string, one
+// without matches the key; the --format string is rendered for the two labels and the ID the preflight reads.
+func (s *stub) psFiltered(args []string) string {
+	var key, val string
+	var hasVal bool
+	format := ""
+	for i, a := range args {
+		if a == "--filter" && i+1 < len(args) {
+			k, v, ok := strings.Cut(strings.TrimPrefix(args[i+1], "label="), "=")
+			key, val, hasVal = k, v, ok
+		}
+		if a == "--format" && i+1 < len(args) {
+			format = args[i+1]
+		}
+	}
+	var b strings.Builder
+	for _, r := range s.psRows {
+		if key == "whalenurse.enable" && r.enable == "" {
+			continue // the label is absent
+		}
+		if key == "whalenurse.enable" && hasVal && r.enable != val {
+			continue
+		}
+		line := strings.NewReplacer("{{.ID}}", r.id,
+			`{{.Label "com.docker.compose.project"}}`, r.project,
+			`{{.Label "whalenurse.enable"}}`, r.enable, `\t`, "\t").Replace(format)
+		b.WriteString(line + "\n")
+	}
+	return b.String()
 }
 
 func (s *stub) Run(_ context.Context, name string, args ...string) (string, error) {
@@ -35,6 +71,9 @@ func (s *stub) Run(_ context.Context, name string, args ...string) (string, erro
 	case strings.HasPrefix(line, "docker inspect --format {{.Id}}"):
 		return "id-" + args[len(args)-1] + "\n", nil
 	case strings.HasPrefix(line, "docker ps"):
+		if s.psRows != nil {
+			return s.psFiltered(args), nil
+		}
 		return s.psOut, nil
 	case strings.HasPrefix(line, "docker port"):
 		return "127.0.0.1:49153\n[::1]:49153\n", nil
@@ -186,15 +225,56 @@ func TestCleanEnvDropsRedirectingVariables(t *testing.T) {
 func TestPreflightFindsOptedInStrangers(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("WHALENURSE_MODE", "")
-	ok := &stub{psOut: "abc whalenurse-test-a\ndef whalenurse-test-b\n"}
+	ok := &stub{psRows: []psRow{{"abc", "whalenurse-test-a", "true"}, {"def", "whalenurse-test-b", "true"}}}
 	if err := (&Guard{R: ok}).PreflightNoStrangers(ctx); err != nil {
 		t.Fatal(err)
 	}
-	for _, out := range []string{"abc prod\n", "abc \n", "abc whalenurse-m0-x\n", "abc whalenurse-test-a\ndef media\n"} {
-		refused(t, (&Guard{R: &stub{psOut: out}}).PreflightNoStrangers(ctx))
+	for _, rows := range [][]psRow{
+		{{"abc", "prod", "true"}},
+		{{"abc", "", "true"}},
+		{{"abc", "whalenurse-m0-x", "true"}},
+		{{"abc", "whalenurse-test-a", "true"}, {"def", "media", "true"}},
+	} {
+		refused(t, (&Guard{R: &stub{psRows: rows}}).PreflightNoStrangers(ctx))
 	}
 	t.Setenv("WHALENURSE_MODE", "all")
 	refused(t, (&Guard{R: ok}).PreflightNoStrangers(ctx))
+}
+
+func optedIn(v string) bool {
+	c, _ := config.ParseLabels(map[string]string{config.LabelEnable: v}, config.ModeLabel)
+	return c.OptedIn
+}
+
+// The preflight must see every spelling whalenurse reads as an opt-in, not only the literal "true": the daemon lists every
+// container and decides with config.ParseLabels.
+func TestPreflightRefusesEveryOptInSpellingWhalenurseAccepts(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("WHALENURSE_MODE", "")
+	for _, v := range []string{"1", "t", "T", "TRUE", "True", "true", " true", "true "} {
+		if !optedIn(v) {
+			t.Fatalf("premise: %q is not an opt-in for whalenurse", v)
+		}
+		refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "prod", v}}}}).PreflightNoStrangers(ctx))
+	}
+	// Not an opt-in: not refused, whatever the project.
+	for _, v := range []string{"false", "0", "f", "no", "garbage", ""} {
+		if optedIn(v) {
+			t.Fatalf("premise: %q is an opt-in for whalenurse", v)
+		}
+		if err := (&Guard{R: &stub{psRows: []psRow{{"abc", "prod", v}}}}).PreflightNoStrangers(ctx); err != nil {
+			t.Fatalf("%q: %v", v, err)
+		}
+	}
+	// An opt-in inside a matching project is fine, whatever its spelling.
+	if err := (&Guard{R: &stub{psRows: []psRow{{"abc", "whalenurse-test-a", "1"}}}}).PreflightNoStrangers(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// A line that does not split into three fields (a newline in the value, a tab in a label) is not guessed at.
+	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "whalenurse-test-a", "\ntrue"}}}}).PreflightNoStrangers(ctx))
+	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "prod\tx", "true"}}}}).PreflightNoStrangers(ctx))
+	// No project label at all is a stranger.
+	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "", "T"}}}}).PreflightNoStrangers(ctx))
 }
 
 func TestGuardedActorRefusesOtherProjects(t *testing.T) {
