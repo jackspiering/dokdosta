@@ -12,6 +12,11 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A scaled service is healed at rung 1 only.** Every compose command names the service and acts on all of its containers,
+  so healing one unhealthy replica of a service with more than one container force-recreated the healthy ones as well, and
+  scaled a service started with `docker compose up --scale` back to its declared count (removing the container being healed,
+  without a notification). Rungs 2 and 3 are now unavailable for such a service, and the ladder ends with SUSPENDED after
+  the restart. `docker compose run` containers are not counted.
 - **The integration tests' host-safety preflight (and the M0b one) now sees every spelling of an opt-in.** It listed strangers
   with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
   it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps
