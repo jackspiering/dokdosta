@@ -151,6 +151,9 @@ type Daemon struct {
 	apiFailing atomic.Int64 // unix nanos since when the Docker API has been failing (apiError); 0 while it answers
 	lastTick   atomic.Int64
 	acting     atomic.Int64 // unix nanos when the action in progress started; 0 when none
+
+	lf   *docker.ImageLabelFilter // rd, as the filter that removes the labels an image ships (also used for events)
+	decl declaredCache
 }
 
 // New builds a Daemon.
@@ -163,7 +166,7 @@ func New(o Options) *Daemon {
 	}
 	g := o.Config
 	d := &Daemon{
-		o: o, cfg: g, rd: docker.WithReadTimeout(o.Reader, readTimeout), clk: o.Clock, log: o.Log,
+		o: o, cfg: g, clk: o.Clock, log: o.Log,
 		eng: engine.New(engine.Params{
 			Host: g.HostID, BaseCooldown: g.Cooldown, RateLimit: g.RateLimit, DryRun: g.DryRun,
 			RecoveryPeriod: g.RecoveryPeriod, CrashloopAfter: g.CrashloopAfter, FlapLimit: g.FlapLimit, FlapWindow: g.FlapWindow,
@@ -177,6 +180,8 @@ func New(o Options) *Daemon {
 		depGate: map[string]depGate{},
 		view:    newView(),
 	}
+	d.lf = d.newLabelFilter(docker.WithReadTimeout(o.Reader, readTimeout))
+	d.rd = d.lf
 	d.eng.Restore(o.Snapshot)
 	d.started = o.Clock.Now()
 	d.eventsDown.Store(d.started.UnixNano())
@@ -546,6 +551,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, ev docker.Event) {
 	if d.o.SelfID != "" && ev.ID == d.o.SelfID {
 		return
 	}
+	ev = d.lf.Event(ctx, ev)
 	cfg, _ := config.ParseLabels(ev.Labels, d.cfg.Mode)
 	if !cfg.OptedIn || docker.IsOneOff(ev.Labels) || ev.Labels[docker.LabelSwarmTaskID] != "" {
 		return
