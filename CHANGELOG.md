@@ -25,6 +25,11 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A created container that compose is holding back is no longer started out of order.** `docker compose up` creates every
+  container first and starts each when its `depends_on` conditions hold; whalenurse started a `created` container after
+  `GRACE` whatever the condition. A `created` container waiting on a `service_healthy` or `service_completed_successfully`
+  dependency that does not hold yet is now held, with no incident, and looked at again at each poll; `status` and the dashboard
+  say what it waits for.
 - **The integration tests' host-safety preflight (and the M0b one) now sees every spelling of an opt-in.** It listed strangers
   with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
   it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps

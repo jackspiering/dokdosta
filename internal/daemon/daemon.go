@@ -714,6 +714,7 @@ func (d *Daemon) process(ctx context.Context, key string) {
 		Evidence:           d.eng.Evidence(key),
 		// A container that stopped in a shutdown window was stopped by the host, whatever its exit code.
 		HostStopped: c.Status == "exited" && d.eng.HostStopped(c.FinishedAt),
+		WaitsFor:    d.waitsFor(ctx, c),
 	}
 	dec := rules.Classify(in)
 	if dec.Class == rules.ClassSkip {

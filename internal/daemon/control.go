@@ -26,6 +26,7 @@ type Status struct {
 	Notify       notify.Status `json:"notify"`    // counts per URL by position and scheme; never a URL
 	PullAuth     []string      `json:"pull_auth"` // registry hosts the pull rung has credentials for; never a user name or a secret
 	Store        *api.StoreDoc `json:"store,omitempty"`
+	Held         []HeldBack    `json:"held_back,omitempty"` // created containers that compose is holding back on a depends_on condition
 }
 
 // Status snapshots the daemon for the CLI.
@@ -35,6 +36,7 @@ func (d *Daemon) Status() any {
 		Host: d.cfg.HostID, Mode: string(d.cfg.Mode), DryRun: d.cfg.DryRun, Persistent: d.o.Persist != nil,
 		EventsUp: d.eventsUp.Load(), Settled: d.settledFlag.Load(), Healthy: ok, HealthDetail: detail,
 		Compose: d.composeStatus(), Engine: d.eng.Status(), PullAuth: pullAuthHosts(d.o.PullAuthHosts), Store: d.storeDoc(),
+		Held: d.view.heldBack(),
 	}
 	if d.o.NotifyStatus != nil {
 		st.Notify = d.o.NotifyStatus()

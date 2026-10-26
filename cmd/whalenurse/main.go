@@ -677,6 +677,12 @@ func printStatus(w io.Writer, st daemon.Status) {
 	if !e.RestoreUntil.IsZero() {
 		fmt.Fprintf(w, "restore window open until %s: starts are restores, kills set no marker\n", e.RestoreUntil.Local().Format(time.TimeOnly))
 	}
+	if len(st.Held) > 0 {
+		fmt.Fprintln(w, "\nHELD BACK by compose (not started: a depends_on condition does not hold yet)")
+		for _, h := range st.Held {
+			fmt.Fprintf(w, "  %s  waiting for %s\n", h.Key, h.WaitingFor)
+		}
+	}
 	if len(e.Pauses) > 0 {
 		fmt.Fprintln(w, "\nPAUSED")
 		for _, p := range e.Pauses {

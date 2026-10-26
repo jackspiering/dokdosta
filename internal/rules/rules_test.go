@@ -812,3 +812,21 @@ func TestHostStoppedContainersAreJudgedByTheirRestartPolicy(t *testing.T) {
 		})
 	}
 }
+
+// Plan v3.13 item 14: a created container that compose is holding back is not started and gets no incident; a failed start
+// (State.Error) is rule 1 whatever holds it.
+func TestCreatedContainerHeldBackByCompose(t *testing.T) {
+	c := docker.Container{ID: "a", Name: "web", Status: "created", Labels: map[string]string{config.LabelEnable: "true"}}
+	cfg, _ := config.ParseLabels(c.Labels, config.ModeLabel)
+	d := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, WaitsFor: "db (service_healthy)"})
+	if d.Class != rules.ClassHeldBack || d.Action != rules.ActionNone || !strings.Contains(d.Reason, "waiting for db (service_healthy)") {
+		t.Fatalf("%+v", d)
+	}
+	if d := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg}); d.Class != rules.ClassNeverStarted || d.Action != rules.ActionStart {
+		t.Fatalf("%+v", d)
+	}
+	c.Error = "port is already allocated"
+	if d := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, WaitsFor: "db (service_healthy)"}); d.Class != rules.ClassStartFailed {
+		t.Fatalf("%+v", d)
+	}
+}

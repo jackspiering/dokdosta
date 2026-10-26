@@ -26,7 +26,11 @@ Work down the list; `status` and the dashboard's container page say which one it
    the next free slot; a notification says when it is reached.
 6. **Is it just waiting?** After a trigger it waits `WHALENURSE_GRACE` (30 s) and then a cooldown between rungs (30 s, doubling).
    A parent with an open incident also holds its sidecars back.
-7. **Did a host shutdown stop it?** A container stopped by a daemon restart or reboot is judged by its restart policy:
+7. **Is compose holding it back?** A `created` container whose `depends_on` condition (`service_healthy`,
+   `service_completed_successfully`) does not hold yet is not started: `status` lists it under HELD BACK and the dashboard's
+   container page says what it waits for. It starts once the condition holds. Fix the dependency (a healthcheck that never turns
+   healthy, a one-shot job that keeps failing).
+8. **Did a host shutdown stop it?** A container stopped by a daemon restart or reboot is judged by its restart policy:
    `restart: "no"` stays down on purpose (one notification, its `network_mode` sidecars stay down with it);
    `always`/`unless-stopped`/`on-failure` are left to Docker's own restore. `whalenurse.heal-exited=always` starts it anyway.
 
