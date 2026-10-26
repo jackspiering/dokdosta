@@ -107,7 +107,21 @@ func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
 			out = append(out, Finding{CheckConfig, configDrift + g.upgraded(in)})
 		}
 	}
+	out = append(out, g.refHolderSkew(in)...)
 	return out
+}
+
+// refHolderSkew is check 3 for a reference holder, which has no check 1 to qualify it: the recreate always happens (the
+// parent it resolves changed, or its own rung 2 forces one), so a container made by another compose release than the
+// bundled one cannot be verified (plan §3.6 check 3; m2b-notes decision 7).
+func (g Guard) refHolderSkew(in GuardInput) []Finding {
+	if !in.RefHolder {
+		return nil
+	}
+	if msg := g.skew(in); msg != "" {
+		return []Finding{{CheckSkew, msg}}
+	}
+	return nil
 }
 
 // checkBeforePull is Check for rung 3: the config drift check and the version-skew check, not the image check.
@@ -131,6 +145,7 @@ func (g Guard) checkBeforePull(ctx context.Context, in GuardInput) []Finding {
 			out = append(out, Finding{CheckConfig, configDrift + g.upgraded(in)})
 		}
 	}
+	out = append(out, g.refHolderSkew(in)...)
 	return out
 }
 
@@ -181,6 +196,9 @@ func (g Guard) skew(in GuardInput) string {
 	have := strings.TrimSpace(in.Labels[LabelVersion])
 	if have == "" || SameRelease(have, b.Version) {
 		return ""
+	}
+	if in.RefHolder {
+		return fmt.Sprintf("can't verify drift (compose %s on host vs %s in whalenurse): the container was made by another compose release than the bundled one, and its own compose config is not checked", have, b.Version)
 	}
 	return fmt.Sprintf("can't verify drift (compose %s on host vs %s in whalenurse): the container was made by another compose release than the bundled one, and compose sees a change", have, b.Version)
 }

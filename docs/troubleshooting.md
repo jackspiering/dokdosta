@@ -73,7 +73,9 @@ a "can't verify" finding.
 whalenurse uses the compose that made your containers when it can: the host's plugin mounted read-only at
 `/host/docker-compose`. Without it, it falls back to the copy bundled in the image, and a container made by another compose
 release than the bundled one cannot be judged: compose sees a change, and whalenurse cannot tell an edit from a changed
-hash layout. It refuses rather than guess. Fix: **mount the host's plugin** (`docker info` shows its path; usually
+hash layout. It refuses rather than guess. This includes a sidecar (a service with `network_mode: service:<parent>`, `ipc`,
+`pid` or `volumes_from`): its own config is not checked, but the repair after its parent's recreate still needs a compose
+that can be trusted, so a sidecar made by another compose release is not recreated by the bundled one. Fix: **mount the host's plugin** (`docker info` shows its path; usually
 `/usr/libexec/docker/cli-plugins/docker-compose`). The same finding family also appears when a check could not be made at all:
 the container has no `com.docker.compose.config-hash` or `.image` label, or the dry run and `config --hash` both failed.
 The message says which.

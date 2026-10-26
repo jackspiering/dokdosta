@@ -314,3 +314,40 @@ func TestGuardBeforePullKeepsTheSkewCheck(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// A reference holder gets no config check, so the skew check stands alone for it: a recreate by a bundled compose of a
+// container another compose release made cannot be verified (plan §3.6 check 3; m2b-notes decision 7).
+func TestGuardSkewBlocksAReferenceHolderOnTheBundledCompose(t *testing.T) {
+	bundled := NewFake()
+	bundled.Bin = Binary{Path: BundledPath, Source: SourceBundled, Version: Version{5, 6, 0, ""}}
+	in := guardIn(true)
+	in.Labels[LabelVersion] = "5.2.0"
+	g := Guard{Compose: bundled, Images: fakeImages{"web:1|amd64": imgOld}}
+	got := g.Check(context.Background(), in)
+	if causes(got) != CheckSkew || !strings.Contains(got[0].Cause, "can't verify drift") {
+		t.Fatalf("a bundled-compose skew must block a reference holder: %v", got)
+	}
+	pin := pullIn(true)
+	pin.Labels[LabelVersion] = "5.2.0"
+	if got := g.Check(context.Background(), pin); causes(got) != CheckSkew {
+		t.Fatalf("skew must also block before the pull: %v", got)
+	}
+	if bundled.Count("dry-run")+bundled.Count("hash") != 0 {
+		t.Fatal("check 1 still does not run for a reference holder")
+	}
+	// The same release as the bundled one: nothing to say.
+	in.Labels[LabelVersion] = "5.6.0"
+	if got := g.Check(context.Background(), in); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+	// A host plugin is the compose that made the containers (or an upgrade of it): never a skew block.
+	host := NewFake()
+	in.Labels[LabelVersion] = "5.2.0"
+	if got := (Guard{Compose: host, Images: fakeImages{"web:1|amd64": imgOld}}).Check(context.Background(), in); len(got) != 0 {
+		t.Fatalf("%v", got)
+	}
+	// A moved tag is reported as well, not instead.
+	if got := (Guard{Compose: bundled, Images: fakeImages{"web:1|amd64": imgNew}}).Check(context.Background(), in); causes(got) != CheckImage+","+CheckSkew {
+		t.Fatalf("%v", got)
+	}
+}
