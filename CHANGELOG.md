@@ -10,6 +10,10 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- A sidecar without its own opt-in that shares its parent's `ipc` or `pid` namespace (not only `network_mode`) is now found and repaired when the parent restarts or is recreated while whalenurse runs, not only after a whalenurse restart.
+
 ### Changed
 
 - The test compose fake now empties a sidecar's `depends_on` label on a recreate, like `compose up --no-deps`, and a test guards that the pull rung still finds the sidecar of a parent's moved tag (tests only).
