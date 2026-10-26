@@ -316,6 +316,18 @@ func (e *Engine) Evidence(key string) rules.Evidence {
 	return rules.Evidence{}
 }
 
+// Keys lists every key the engine holds state for, sorted: a container, a marker, an incident, flap history.
+func (e *Engine) Keys() []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	out := make([]string, 0, len(e.keys))
+	for k := range e.keys {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Forget drops all state for a key whose container no longer exists.
 func (e *Engine) Forget(t Target) {
 	e.mu.Lock()
