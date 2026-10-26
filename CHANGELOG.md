@@ -10,6 +10,12 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-26
+
+Fixes from the code review of 21 Oct 2026 and the decisions of plan v3.13: compose's error output and event text no
+longer leak secrets, a dropped Docker events stream and hung Docker calls are noticed, a stop lets a heal in flight
+finish, a recreated whalenurse container keeps its state, and the notifications are quieter and exact.
+
 ### Security
 
 - **Compose's error output no longer reaches the dashboard, the API, the store or the log.** A compose load error can quote
@@ -287,7 +293,8 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.1
 [0.1.0]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0
