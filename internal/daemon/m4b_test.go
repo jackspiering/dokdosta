@@ -32,8 +32,8 @@ func TestPullRungRespectsPullPolicyNeverAndBuild(t *testing.T) {
 			}
 			breakAndRun(h, web.ID, 30*time.Minute)
 
-			if got := h.verbs(); got != "dry-run web, recreate web, policy web" {
-				t.Fatalf("compose calls = %q: the policy is read, and nothing is pulled or checked after it", got)
+			if got := h.verbs(); got != "policy web, dry-run web, recreate web, policy web" {
+				t.Fatalf("compose calls = %q: the policy is read before rung 2 and again for rung 3, and nothing is pulled or checked after it", got)
 			}
 			var skipped []engine.Event
 			for _, e := range h.events(engine.RungUnavailable) {
@@ -52,7 +52,7 @@ func TestPullRungRespectsPullPolicyNeverAndBuild(t *testing.T) {
 				t.Fatalf("restart and recreate only: %v", h.rec.Types())
 			}
 			h.advance(30 * time.Minute)
-			if h.cf.Count("policy") != 1 || h.cf.Count("pull") != 0 {
+			if h.cf.Count("policy") != 2 || h.cf.Count("pull") != 0 {
 				t.Fatalf("SUSPENDED: nothing more is read or pulled: %s", h.verbs())
 			}
 		})
@@ -97,7 +97,7 @@ func TestDryRunSaysThePullRungDoesNotApply(t *testing.T) {
 			t.Fatalf("a dry run must not say it would pull a service with pull_policy never: %+v", e)
 		}
 	}
-	if h.cf.Count("policy") != 1 || h.cf.Count("pull") != 0 || h.count(engine.Suspended) != 1 {
+	if h.cf.Count("policy") != 2 || h.cf.Count("pull") != 0 || h.count(engine.Suspended) != 1 {
 		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
 	}
 }
@@ -360,5 +360,53 @@ func TestSidecarFromAnotherImageIsStillBlocked(t *testing.T) {
 	}
 	if h.cf.Count("up") > 1 {
 		t.Fatalf("only the parent's up: %s", h.verbs())
+	}
+}
+
+// Rung 2 takes a moved tag only where the pull rung would apply: the allowance needs a readable pull_policy that is neither
+// never nor build. Otherwise the label's only effect would be to switch off the moved-tag block for a pinned or locally
+// built image (plan v3.13 item 5).
+func TestRung2BlocksAMovedTagWhenThePullPolicyForbidsThePull(t *testing.T) {
+	for _, policy := range []string{"never", "build"} {
+		t.Run(policy, func(t *testing.T) {
+			h, web := upgradeSetup(t, true)
+			h.cf.PolicyFn = func(compose.Project) (string, error) { return policy, nil }
+			breakAndRun(h, web.ID, 6*time.Minute)
+			b := h.events(engine.DriftBlocked)
+			if h.cf.Count("recreate") != 0 || len(b) != 1 || !strings.Contains(b[0].Message, "the tag moved") || h.count(engine.Upgraded) != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+			if h.count(engine.Suspended) != 1 || h.cf.Count("pull") != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+		})
+	}
+}
+
+func TestRung2BlocksAMovedTagWhenThePullPolicyCannotBeRead(t *testing.T) {
+	h, web := upgradeSetup(t, true)
+	h.cf.PolicyFn = func(compose.Project) (string, error) { return "", errors.New("exit status 1") }
+	breakAndRun(h, web.ID, 6*time.Minute)
+	b := h.events(engine.DriftBlocked)
+	if h.cf.Count("recreate") != 0 || len(b) != 1 || !strings.Contains(b[0].Message, "the tag moved") {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+}
+
+// Every other policy leaves the allowance as it was.
+func TestRung2TakesAMovedTagForEveryPolicyThePullRungAccepts(t *testing.T) {
+	for _, policy := range []string{"", "always", "missing", "if_not_present", "daily"} {
+		t.Run("policy="+policy, func(t *testing.T) {
+			h, web := upgradeSetup(t, true)
+			h.cf.PolicyFn = func(compose.Project) (string, error) { return policy, nil }
+			h.cf.OnRecreate = func(compose.Project) error {
+				h.replace("p", "web", func(c *docker.Container) { c.Health = "healthy"; c.ImageID = imgNewID })
+				return nil
+			}
+			breakAndRun(h, web.ID, 15*time.Minute)
+			if h.cf.Count("recreate") != 1 || h.count(engine.Upgraded) != 1 || h.count(engine.DriftBlocked) != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+		})
 	}
 }
