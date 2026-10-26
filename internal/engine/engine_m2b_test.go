@@ -221,3 +221,24 @@ func TestDependentStepDoesNotCountTowardTheFlapLimit(t *testing.T) {
 		t.Fatalf("its own incidents still count: %v", rec.Types())
 	}
 }
+
+// A dependent that waits for a service says so once per reason; once the service is ready (ClearWait) or the dependent
+// acts, the same reason is news again.
+func TestWaitIsSaidOncePerReasonUntilTheServiceIsReady(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	d := rules.Decision{Class: rules.ClassStaleParentGone, Action: rules.ActionRecreateStale}
+	e.Wait(tgt, d, "waiting for service db (exited)")
+	e.Wait(tgt, d, "waiting for service db (exited)")
+	if rec.Count(WaitingForParent) != 1 || rec.Count(ActionRefused) != 0 {
+		t.Fatalf("%v", rec.Types())
+	}
+	e.Wait(tgt, d, "waiting for service db (created)")
+	if rec.Count(WaitingForParent) != 2 {
+		t.Fatalf("another reason is news: %v", rec.Types())
+	}
+	e.ClearWait(tgt)
+	e.Wait(tgt, d, "waiting for service db (created)")
+	if rec.Count(WaitingForParent) != 3 {
+		t.Fatalf("after the service was ready the same wait is news again: %v", rec.Types())
+	}
+}

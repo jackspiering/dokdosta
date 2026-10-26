@@ -179,14 +179,16 @@ func (d *Daemon) refsRefusal(ctx context.Context, c docker.Container) string {
 	return ""
 }
 
-// staleParentRefusal is the check before a stale dependent is recreated: its old parent is gone (that is why it is
-// stale), so the services it depends on must have containers that run, or the new dependent would fail with "cannot join
-// network namespace" (plan §3.5, ordering). It reads the project's containers from the last list and the dependency names
-// from the compose depends_on label (network_mode: service:X counts as a dependency on X).
-func (d *Daemon) staleParentRefusal(c docker.Container) string {
+// staleParentRefusal is the check before a stale dependent is recreated: its old parent is gone (that is why it is stale), so
+// the services it depends on must have containers that run, or the new dependent would fail with "cannot join network
+// namespace" (plan §3.5, ordering). It reads the project's containers from the last list and the dependency names from
+// the compose depends_on label or what was learned (network_mode: service:X counts as a dependency on X). It returns why
+// the dependent has to wait, or "", and whether the wait is for a heal that is under way (a short retry) rather than for
+// a service that is down (looked at again with the next poll).
+func (d *Daemon) staleParentRefusal(c docker.Container) (why string, healing bool) {
 	project := c.Labels[docker.LabelProject]
 	if project == "" {
-		return ""
+		return "", false
 	}
 	for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
 		for _, s := range d.idx.all {
@@ -194,14 +196,14 @@ func (d *Daemon) staleParentRefusal(c docker.Container) string {
 				continue
 			}
 			if s.State != "running" {
-				return fmt.Sprintf("service %s that it depends on is %s; the parent is healed first", dep, s.State)
+				return fmt.Sprintf("waiting for service %s that it depends on (%s)", dep, s.State), false
 			}
 			if d.eng.Busy(d.keyOf(s)) {
-				return fmt.Sprintf("service %s that it depends on is being healed; waiting for it", dep)
+				return fmt.Sprintf("waiting for service %s that it depends on: it is being healed", dep), true
 			}
 		}
 	}
-	return ""
+	return "", false
 }
 
 // dependsOn reads the compose depends_on label: "svc:condition:restart,svc2:...".
@@ -289,10 +291,17 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 	}
 	stale := plan.Act == rules.ActionRecreateStale
 	if stale {
-		if why := d.staleParentRefusal(c); why != "" {
-			d.refuse(t, dec, why)
+		if why, healing := d.staleParentRefusal(c); why != "" {
+			// Not a failed action: the service it depends on is down or being healed. Say so once and look again.
+			d.eng.Wait(t, dec, why)
+			retry := d.cfg.PollInterval
+			if healing {
+				retry = depRetry
+			}
+			d.schedule(t.Key, d.clk.Now().Add(retry))
 			return
 		}
+		d.eng.ClearWait(t)
 	} else if why := d.refsRefusal(ctx, c); why != "" {
 		d.refuse(t, dec, why)
 		return

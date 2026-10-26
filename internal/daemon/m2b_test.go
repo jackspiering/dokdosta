@@ -1260,3 +1260,43 @@ func TestLearnRefsPrunesSkipsAndMovesPastAFailingInspect(t *testing.T) {
 		t.Fatal("the entry of an ID that left the list is dropped")
 	}
 }
+
+// A stale sidecar whose depended-on service is down waits for it: one WaitingForParent event, not an ActionRefused every
+// GRACE (WN-024). When the service runs again the sidecar is recreated.
+func TestStaleDependentWaitingForADownParentDoesNotRepeatRefusals(t *testing.T) {
+	for _, grace := range []time.Duration{0, 30 * time.Second} {
+		t.Run(grace.String(), func(t *testing.T) {
+			h := newCompose(t, func(c *config.Global) { c.Grace = grace }, nil, docker.ServerInfo{})
+			_, dep := h.pair()
+			// The service is down and nobody heals it (it is not opted in): a stopped database, a finished init container.
+			newParent := h.replace("p", "parent", func(c *docker.Container) {
+				c.Status, c.Running = "exited", false
+				delete(c.Labels, config.LabelEnable)
+			})
+			h.cf.OnUp = func(compose.Project) error {
+				h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+				return nil
+			}
+			h.tick()
+			h.advance(time.Hour)
+			if n := h.count(engine.ActionRefused); n != 0 {
+				t.Fatalf("%d ActionRefused in an hour", n)
+			}
+			if n := h.count(engine.WaitingForParent); n != 1 {
+				t.Fatalf("%d WaitingForParent events in an hour, want 1: %v", n, h.rec.Types())
+			}
+			if h.cf.Count("up") != 0 {
+				t.Fatalf("recreated against a parent that is not running: %s", h.verbs())
+			}
+			h.set(newParent.ID, func(c *docker.Container) { c.Status, c.Running = "running", true; c.StartedAt = h.clk.Now() })
+			h.event(newParent, "start", "")
+			h.advance(3 * time.Minute)
+			if h.cf.Count("up") != 1 || h.current("p", "dep").ID == dep.ID {
+				t.Fatalf("the sidecar is recreated once the service runs: %s", h.verbs())
+			}
+			if h.count(engine.Suspended) != 0 {
+				t.Fatalf("%v", h.rec.Types())
+			}
+		})
+	}
+}
