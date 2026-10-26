@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The integration tests' host-safety preflight (and the M0b one) now sees every spelling of an opt-in.** It listed strangers
+  with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
+  it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps
+  and which rely on the preflight alone.
+
 ## [0.1.3] - 2026-10-26
 
 Fixes from the code review of 21 Oct 2026 and the decisions of plan v3.13: compose's error output and event text no
