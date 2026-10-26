@@ -12,6 +12,7 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- A sidecar stopped by hand is no longer started again by the dependents step when its parent is recreated, also when the sidecar has no `whalenurse.enable` label of its own.
 - The store no longer grows an empty `parents:<key>` row for every removed container: forgetting a dependent deletes its row, other keys write none, and empty rows left by earlier versions are removed when the database is opened.
 - A stale sidecar whose depended-on service is down now waits with one `WaitingForParent` event instead of an `ActionRefused` every `GRACE` (which flooded the log and the event history).
 - A sidecar without its own opt-in that shares its parent's `ipc` or `pid` namespace (not only `network_mode`) is now found and repaired when the parent restarts or is recreated while whalenurse runs, not only after a whalenurse restart.
