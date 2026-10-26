@@ -97,11 +97,13 @@ $dirty"
 }
 
 # nurse_preflight_strangers: whalenurse would act on any opted-in container; refuse unless all of them are M0b ones.
+# whalenurse reads the value with strconv.ParseBool of the trimmed string (1, t, T, TRUE, true, True), and `docker ps
+# --filter label=k=v` matches the value exactly, so the filter is by key and the value is checked here.
 nurse_preflight_strangers() {
   local bad
-  bad=$(docker ps -a --filter 'label=whalenurse.enable=true' --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}' |
-    awk -F'\t' '$2 !~ /^whalenurse-m0-b-/ {print}')
-  [[ -z "$bad" ]] || m0_die "these containers carry whalenurse.enable=true but are not in a whalenurse-m0-b-* project, and the whalenurse under test would act on them:
+  bad=$(docker ps -a --filter 'label=whalenurse.enable' --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "whalenurse.enable"}}' |
+    awk -F'\t' 'NF != 3 || $3 ~ /^[[:space:]]*(1|t|T|TRUE|true|True)[[:space:]]*$/ && $2 !~ /^whalenurse-m0-b-/ {print}')
+  [[ -z "$bad" ]] || m0_die "these containers carry whalenurse.enable (a true value) but are not in a whalenurse-m0-b-* project, and the whalenurse under test would act on them:
 $bad"
 }
 
