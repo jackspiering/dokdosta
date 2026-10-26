@@ -35,6 +35,10 @@ type tagMove struct {
 	New      string    `json:"new"`       // ... and after
 	OldPlain string    `json:"old_plain"` // the same without a platform: the index digest on the containerd store
 	NewPlain string    `json:"new_plain"`
+	// Followed marks a move that was not made by whalenurse: rung 2 recreated a pull-enabled container onto the image the
+	// tag had been moved to by someone else (plan v3.13 item 6). The dependents step may take it like a pull's, but it is
+	// not named as the mover in a drift block of another stack.
+	Followed bool `json:"followed,omitempty"`
 }
 
 // normalizeRef makes `nginx`, `nginx:latest` and `docker.io/library/nginx:latest` the same reference, so a move recorded
@@ -120,7 +124,7 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 	for _, f := range fs {
 		text := f.String()
 		if f.Check == compose.CheckImage {
-			if m, ok := d.moverOf(ctx, c); ok {
+			if m, ok := d.moverOf(ctx, c); ok && !m.Followed { // a followed move was made by someone else
 				text += fmt.Sprintf(" (whalenurse moved this tag: %s pulled it at %s)", m.Key, m.At.UTC().Format(time.RFC3339))
 				extra = map[string]string{"moved_by": m.Key, "moved_at": m.At.UTC().Format(time.RFC3339), "moved_ref": m.Ref}
 			}
@@ -451,10 +455,24 @@ func (d *Daemon) noteUpgrade(ctx context.Context, t engine.Target, old docker.Co
 	if err != nil || cur.ImageID == "" || old.ImageID == "" || cur.ImageID == old.ImageID {
 		return
 	}
-	tag, up := compose.RollbackCommands(p, old.Image, old.ImageID)
+	// The tag moved under the container and rung 2 took it. Record it as a move that was followed, not made: the dependents
+	// step may take it for the sidecars of this container (plan v3.13 item 6), and the rollback names them.
+	var sidecars []string
+	if now, err := d.rd.ImageID(ctx, old.Image, d.cs().server.Arch); err == nil && now != "" {
+		nowPlain, _ := d.rd.ImageID(ctx, old.Image, "")
+		d.recordMove(tagMove{
+			Ref: normalizeRef(old.Image), Key: t.Key, At: d.clk.Now(), Followed: true,
+			Old: old.Labels[compose.LabelImage], OldPlain: old.ImageID, New: now, NewPlain: nowPlain,
+		})
+		sidecars = d.sidecarsSharing(ctx, old, old.Image, old.Labels[compose.LabelImage], old.ImageID)
+	}
+	tag, up := compose.RollbackCommands(p, old.Image, old.ImageID, sidecars...)
 	attrs := map[string]string{
 		"ref": old.Image, "old": old.ImageID, "new": cur.ImageID, "old_image": old.ImageID,
 		"rollback_tag": tag, "rollback_up": up, "ok": "true",
+	}
+	if len(sidecars) > 0 {
+		attrs["sidecars"] = strings.Join(sidecars, ",")
 	}
 	msg := fmt.Sprintf("%s: %s -> %s; recreated", old.Image, shortID(old.ImageID), shortID(cur.ImageID))
 	if recreateErr != nil {

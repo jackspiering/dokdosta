@@ -12,6 +12,7 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- A sidecar that shares its parent's image is no longer left stale and SUSPENDED when the parent is upgraded during heal by rung 2 (the recreate takes a tag someone else moved): it follows its parent, and the rollback in the "upgraded during heal" message names it.
 - Whether a sidecar without its own opt-in is repaired after its parent was recreated is decided by the service its `network_mode`/`ipc`/`pid` names, no longer by any opted-in service in its `depends_on`.
 - A sidecar is repaired after every change of its parent, also when the parent is restarted or recreated again within `RECOVERY_PERIOD` of the previous repair; it used to be sent to `--force-recreate` and then SUSPENDED, left without a network.
 - A sidecar stopped by hand is no longer started again by the dependents step when its parent is recreated, also when the sidecar has no `whalenurse.enable` label of its own.
