@@ -10,6 +10,10 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Changed
+
+- The test compose fake now empties a sidecar's `depends_on` label on a recreate, like `compose up --no-deps`, and a test guards that the pull rung still finds the sidecar of a parent's moved tag (tests only).
+
 ## [0.1.3] - 2026-10-26
 
 Fixes from the code review of 21 Oct 2026 and the decisions of plan v3.13: compose's error output and event text no
