@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"sync/atomic"
@@ -139,12 +140,12 @@ func TestDeclaredLabelsAreReadOncePerConfigHash(t *testing.T) {
 	h.fake.SetImageLabels(imgID, map[string]string{config.LabelEnable: "true"})
 	web := h.svc(hexID("a1"), "p", "web")
 	h.set(web.ID, func(c *docker.Container) { c.ImageID = imgID })
-	for range 5 {
+	for range 4 {
 		h.tick()
 		h.advance(2 * time.Minute)
 	}
 	if n := reads.Load(); n != 1 {
-		t.Fatalf("%d reads, want 1", n)
+		t.Fatalf("%d reads in 8 minutes, want 1", n)
 	}
 	if n := h.cf.Count("policy") + h.cf.Count("dry-run") + h.cf.Count("hash"); n != 0 {
 		t.Fatalf("the label read must not count as a rung's compose call: %s", h.verbs())
@@ -184,5 +185,54 @@ func TestParentOptInThatIsTheImagesDoesNotCountForItsSidecars(t *testing.T) {
 	h.advance(5 * time.Minute)
 	if h.cf.Count("up") != 0 || len(h.fake.Calls()) != 0 {
 		t.Fatalf("the sidecar was repaired for a parent whose opt-in is the image's: %s %v", h.verbs(), h.fake.Calls())
+	}
+}
+
+// The compose file can be edited after the container was made, in either direction: what it declares is read again after
+// ten minutes, and neither answer sticks for the life of the container.
+func TestDeclaredLabelsFollowAnEditOfTheComposeFile(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	declared := true
+	h.cf.DeclaredFn = func(compose.Project) ([]string, error) {
+		if declared {
+			return []string{config.LabelEnable}, nil
+		}
+		return nil, nil
+	}
+	h.fake.SetImageLabels(imgID, map[string]string{config.LabelEnable: "true"})
+	web := h.svc(hexID("a1"), "p", "web")
+	h.set(web.ID, func(c *docker.Container) { c.ImageID = imgID })
+	optedIn := func() bool {
+		c, _ := h.d.rd.Inspect(h.ctx, web.ID)
+		return c.Labels[config.LabelEnable] == "true"
+	}
+	if !optedIn() {
+		t.Fatal("declared: should be opted in")
+	}
+	declared = false
+	h.advance(11 * time.Minute)
+	if optedIn() {
+		t.Fatal("the label was removed from the compose file: it is the image's now")
+	}
+	declared = true
+	h.advance(11 * time.Minute)
+	if !optedIn() {
+		t.Fatal("declared again: should be opted in again")
+	}
+}
+
+// A compose that hangs is not asked again for every other service in turn.
+func TestAHungComposeReadStallsTheListOnlyOnce(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	var reads atomic.Int32
+	h.cf.DeclaredFn = func(compose.Project) ([]string, error) { reads.Add(1); return nil, context.DeadlineExceeded }
+	h.fake.SetImageLabels(imgID, map[string]string{config.LabelEnable: "true"})
+	for _, svc := range []string{"a", "b", "c"} {
+		c := h.svc(hexID("a"+svc), "p", svc)
+		h.set(c.ID, func(c *docker.Container) { c.ImageID = imgID })
+	}
+	_, _ = h.d.rd.List(h.ctx)
+	if n := reads.Load(); n != 1 {
+		t.Fatalf("%d reads for three services after a timeout, want 1", n)
 	}
 }

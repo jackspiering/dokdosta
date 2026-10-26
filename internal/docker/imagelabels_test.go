@@ -107,7 +107,9 @@ type failingImages struct {
 	err error
 }
 
-func (f failingImages) ImageLabels(context.Context, string) (map[string]string, error) { return nil, f.err }
+func (f failingImages) ImageLabels(context.Context, string) (map[string]string, error) {
+	return nil, f.err
+}
 
 func TestFilterListFailsWhenTheImageCannotBeReadForAnotherReason(t *testing.T) {
 	f := NewFake()

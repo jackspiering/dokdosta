@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Label namespaces whalenurse reads from a container.
@@ -26,8 +27,10 @@ const (
 //     (Declared); when the compose file cannot be read, or on any other container, every whalenurse.* label whose value is
 //     the image's own value for that key.
 //
-// What is removed is decided once per container: its labels never change. An image that is gone (ErrImageNotFound), or a
-// container with no image ID, has no image labels to compare with and keeps all of its own.
+// What is removed is decided once per container: its labels never change. The one decision that can change is one that
+// consulted the compose file (the file is edited): it is kept for DeclaredTTL and then made again. An image that is gone
+// (ErrImageNotFound), or a container with no image ID, has no image labels to compare with and keeps all of its own; the
+// image is looked for again on the next read.
 type ImageLabelFilter struct {
 	Reader
 	// Declared returns the whalenurse.* keys the compose file declares in the labels of the service of the compose
@@ -36,11 +39,41 @@ type ImageLabelFilter struct {
 	Declared func(ctx context.Context, labels map[string]string) (keys map[string]bool, ok bool)
 	// Warn is called once per container and set of removed keys.
 	Warn func(container, reason string, keys []string)
+	// Now is the clock for DeclaredTTL; nil means time.Now.
+	Now func() time.Time
 
 	mu      sync.Mutex
 	images  map[string]map[string]string // image ID -> the labels it ships
-	dropped map[string][]string          // container ID -> the label keys removed
+	dropped map[string]dropped           // container ID -> the label keys removed
 	warned  map[string]bool
+}
+
+// DeclaredTTL is how long a decision that read the compose file stays valid: the file can be edited after the container
+// was made, in either direction.
+const DeclaredTTL = 10 * time.Minute
+
+// dropped is the keys removed from one container; until is when the decision must be made again (zero: never).
+type dropped struct {
+	keys  []string
+	until time.Time
+}
+
+func (f *ImageLabelFilter) now() time.Time {
+	if f.Now != nil {
+		return f.Now()
+	}
+	return time.Now()
+}
+
+// cachedDrop returns the decision kept for a container, if it is still valid.
+func (f *ImageLabelFilter) cachedDrop(id string) ([]string, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.dropped[id]
+	if !ok || (!d.until.IsZero() && !f.now().Before(d.until)) {
+		return nil, false
+	}
+	return d.keys, true
 }
 
 var _ Reader = (*ImageLabelFilter)(nil)
@@ -57,19 +90,20 @@ func hasSteering(labels map[string]string) bool {
 	return false
 }
 
-func (f *ImageLabelFilter) imageLabels(ctx context.Context, imageID string) (map[string]string, error) {
+// imageLabels returns the labels an image ships; known is false when the image is gone.
+func (f *ImageLabelFilter) imageLabels(ctx context.Context, imageID string) (labels map[string]string, known bool, err error) {
 	f.mu.Lock()
 	l, ok := f.images[imageID]
 	f.mu.Unlock()
 	if ok {
-		return l, nil
+		return l, true, nil
 	}
-	l, err := f.Reader.ImageLabels(ctx, imageID)
+	l, err = f.Reader.ImageLabels(ctx, imageID)
 	if errors.Is(err, ErrImageNotFound) {
-		return nil, nil // not cached: the image may come back
+		return nil, false, nil // not cached: it is looked for again
 	}
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	f.mu.Lock()
 	if f.images == nil || len(f.images) >= maxImagesCached {
@@ -77,7 +111,7 @@ func (f *ImageLabelFilter) imageLabels(ctx context.Context, imageID string) (map
 	}
 	f.images[imageID] = l
 	f.mu.Unlock()
-	return l, nil
+	return l, true, nil
 }
 
 // resolve returns the keys to remove from the labels of one container.
@@ -85,16 +119,14 @@ func (f *ImageLabelFilter) resolve(ctx context.Context, id, name, imageID string
 	if imageID == "" || !hasSteering(labels) {
 		return nil, nil
 	}
-	f.mu.Lock()
-	drop, ok := f.dropped[id]
-	f.mu.Unlock()
-	if ok {
+	if drop, ok := f.cachedDrop(id); ok {
 		return drop, nil
 	}
-	img, err := f.imageLabels(ctx, imageID)
+	img, imageKnown, err := f.imageLabels(ctx, imageID)
 	if err != nil {
 		return nil, err
 	}
+	var drop []string
 	var identity, steering []string
 	for k, v := range labels {
 		switch {
@@ -108,7 +140,7 @@ func (f *ImageLabelFilter) resolve(ctx context.Context, id, name, imageID string
 	}
 	slices.Sort(identity)
 	slices.Sort(steering)
-	definitive := true
+	definitive, consulted := imageKnown, false
 	if len(identity) > 0 {
 		for k := range labels {
 			if strings.HasPrefix(k, composeLabelPrefix) {
@@ -124,7 +156,8 @@ func (f *ImageLabelFilter) resolve(ctx context.Context, id, name, imageID string
 		if isCompose && f.Declared != nil {
 			declared, known = f.Declared(ctx, labels)
 		}
-		definitive = !isCompose || known
+		consulted = isCompose && f.Declared != nil
+		definitive = definitive && (!isCompose || known)
 		var ignored []string
 		for _, k := range steering {
 			var from bool
@@ -149,11 +182,15 @@ func (f *ImageLabelFilter) resolve(ctx context.Context, id, name, imageID string
 	}
 	slices.Sort(drop)
 	if definitive {
+		e := dropped{keys: drop}
+		if consulted {
+			e.until = f.now().Add(DeclaredTTL)
+		}
 		f.mu.Lock()
 		if f.dropped == nil {
-			f.dropped = map[string][]string{}
+			f.dropped = map[string]dropped{}
 		}
-		f.dropped[id] = drop
+		f.dropped[id] = e
 		f.mu.Unlock()
 	}
 	return drop, nil
@@ -166,7 +203,7 @@ func (f *ImageLabelFilter) warn(name, reason string, keys []string) {
 	id := name + "|" + reason + "|" + strings.Join(keys, ",")
 	f.mu.Lock()
 	seen := f.warned[id]
-	if f.warned == nil {
+	if f.warned == nil || len(f.warned) >= 4096 {
 		f.warned = map[string]bool{}
 	}
 	f.warned[id] = true
@@ -236,9 +273,7 @@ func (f *ImageLabelFilter) Event(ctx context.Context, ev Event) Event {
 	if !hasSteering(ev.Labels) {
 		return ev
 	}
-	f.mu.Lock()
-	drop, ok := f.dropped[ev.ID]
-	f.mu.Unlock()
+	drop, ok := f.cachedDrop(ev.ID)
 	if !ok {
 		c, err := f.Reader.Inspect(ctx, ev.ID)
 		if err != nil {

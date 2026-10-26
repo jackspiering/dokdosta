@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -14,6 +15,9 @@ import (
 const (
 	declaredTimeout = 20 * time.Second
 	declaredRetry   = 5 * time.Minute
+	// declaredTTL is how long a good answer is kept. A little under docker.DeclaredTTL, so that a decision of the filter
+	// that expires finds the answer expired too.
+	declaredTTL = 9 * time.Minute
 )
 
 // declaredEntry is what one `compose config` read answered, for one service at one config-hash.
@@ -27,8 +31,9 @@ type declaredEntry struct {
 // config-hash, which compose writes on the container, so one read serves every poll until the service is recreated from an
 // edited file.
 type declaredCache struct {
-	mu sync.Mutex
-	m  map[string]declaredEntry
+	mu        sync.Mutex
+	m         map[string]declaredEntry
+	downUntil time.Time // after a read timed out, none is tried before this: a hung compose must not stall every service in turn
 }
 
 // declaredLabels is docker.ImageLabelFilter.Declared: the whalenurse.* keys that the compose file declares in the
@@ -46,9 +51,17 @@ func (d *Daemon) declaredLabels(ctx context.Context, labels map[string]string) (
 	now := d.clk.Now()
 	d.decl.mu.Lock()
 	e, hit := d.decl.m[key]
+	down := now.Before(d.decl.downUntil)
 	d.decl.mu.Unlock()
-	if hit && (e.ok || now.Sub(e.at) < declaredRetry) {
+	valid := declaredRetry
+	if e.ok {
+		valid = declaredTTL
+	}
+	if hit && now.Sub(e.at) < valid {
 		return e.keys, e.ok
+	}
+	if down {
+		return nil, false
 	}
 	rctx, cancel := context.WithTimeout(ctx, declaredTimeout)
 	defer cancel()
@@ -63,6 +76,9 @@ func (d *Daemon) declaredLabels(ctx context.Context, labels map[string]string) (
 		d.log.Debug("cannot read the labels the compose file declares", "service", p.Name+"/"+p.Service)
 	}
 	d.decl.mu.Lock()
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(rctx.Err(), context.DeadlineExceeded) {
+		d.decl.downUntil = now.Add(declaredRetry)
+	}
 	if d.decl.m == nil || len(d.decl.m) > 2048 {
 		d.decl.m = map[string]declaredEntry{}
 	}
@@ -79,5 +95,5 @@ func (d *Daemon) warnImageLabels(container, reason string, keys []string) {
 // newLabelFilter wraps the Docker reader: List and Inspect return the container's labels without those that come from its
 // image (docker.ImageLabelFilter).
 func (d *Daemon) newLabelFilter(r docker.Reader) *docker.ImageLabelFilter {
-	return &docker.ImageLabelFilter{Reader: r, Declared: d.declaredLabels, Warn: d.warnImageLabels}
+	return &docker.ImageLabelFilter{Reader: r, Declared: d.declaredLabels, Warn: d.warnImageLabels, Now: d.clk.Now}
 }
