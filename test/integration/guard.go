@@ -231,9 +231,10 @@ func (g *Guard) PreflightNoStrangers(ctx context.Context) error {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		f := strings.SplitN(line, "\t", 3)
-		for len(f) < 3 {
-			f = append(f, "")
+		f := strings.Split(line, "\t")
+		if len(f) != 3 {
+			// A tab in a label, or a newline in the value, shifts the fields: do not guess, fail closed.
+			return refuse("cannot read the opted-in container line %q", line)
 		}
 		id, project, value := f[0], f[1], f[2]
 		c, _ := config.ParseLabels(map[string]string{config.LabelEnable: value}, config.ModeLabel)

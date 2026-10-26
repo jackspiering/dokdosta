@@ -102,7 +102,7 @@ $dirty"
 nurse_preflight_strangers() {
   local bad
   bad=$(docker ps -a --filter 'label=whalenurse.enable' --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "whalenurse.enable"}}' |
-    awk -F'\t' '$3 ~ /^[[:space:]]*(1|t|T|TRUE|true|True)[[:space:]]*$/ && $2 !~ /^whalenurse-m0-b-/ {print}')
+    awk -F'\t' 'NF != 3 || $3 ~ /^[[:space:]]*(1|t|T|TRUE|true|True)[[:space:]]*$/ && $2 !~ /^whalenurse-m0-b-/ {print}')
   [[ -z "$bad" ]] || m0_die "these containers carry whalenurse.enable (a true value) but are not in a whalenurse-m0-b-* project, and the whalenurse under test would act on them:
 $bad"
 }

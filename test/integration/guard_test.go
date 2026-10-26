@@ -270,6 +270,9 @@ func TestPreflightRefusesEveryOptInSpellingWhalenurseAccepts(t *testing.T) {
 	if err := (&Guard{R: &stub{psRows: []psRow{{"abc", "whalenurse-test-a", "1"}}}}).PreflightNoStrangers(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// A line that does not split into three fields (a newline in the value, a tab in a label) is not guessed at.
+	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "whalenurse-test-a", "\ntrue"}}}}).PreflightNoStrangers(ctx))
+	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "prod\tx", "true"}}}}).PreflightNoStrangers(ctx))
 	// No project label at all is a stranger.
 	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "", "T"}}}}).PreflightNoStrangers(ctx))
 }
