@@ -2,11 +2,13 @@ package daemon
 
 import (
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/whalenurse/internal/rules"
 )
 
 // metaParents is the prefix of the store keys that remember which services a dependent hangs on.
@@ -108,4 +110,25 @@ func (d *Daemon) forgetParents(now time.Time) {
 			d.o.Meta.DeleteMeta(metaParents + key)
 		}
 	}
+}
+
+// parentIdentity names the parent a sidecar's repair is about, for the engine to tell a new parent change from the one it
+// already repaired against (plan v3.13 item 1): per container: reference, the ID and start time of the container it
+// resolves to, or that the reference is gone ("gone:<ref>": a recreated parent leaves the sidecar pointing at the ID it
+// had, and a further recreate leaves it pointing at the next one). Only the sidecar's own references count, so a restart
+// of some other service it depends on is no parent change. "" when a start time is not known.
+func parentIdentity(parents []rules.Parent) string {
+	var ids []string
+	for _, p := range parents {
+		switch {
+		case !p.Found:
+			ids = append(ids, "gone:"+p.Ref)
+		case p.StartedAt.IsZero():
+			return ""
+		default:
+			ids = append(ids, p.ID+"@"+strconv.FormatInt(p.StartedAt.UnixNano(), 10))
+		}
+	}
+	slices.Sort(ids)
+	return strings.Join(slices.Compact(ids), ";")
 }
