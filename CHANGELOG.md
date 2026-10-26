@@ -30,6 +30,20 @@ workflow refuses an undated section.
   not overwritten at startup. The event IDs are seeded from the highest one stored, and `run` refuses a store whose event
   sequence cannot be read. A data directory with `?`, `#` or `%` in its path now opens the database at that path.
 
+### Changed
+
+- **A stop of whalenurse lets a heal in flight finish, and no longer spends its rung.** A restart, recreate or the `up`
+  after a pull in flight when whalenurse is stopped (an upgrade, `systemctl restart`, a reboot) may finish for up to 30 s;
+  compose is then stopped with SIGTERM, not SIGKILL. An action cut short is recorded as interrupted (`ActionInterrupted`),
+  not failed, and runs again after the restart instead of the container being SUSPENDED. **Action:** give the container
+  `stop_grace_period: 60s` (the examples do), or the systemd unit `KillMode=mixed` and `TimeoutStopSec=60s`, then
+  `systemctl daemon-reload`.
+- **The systemd unit starts again with Docker.** After `systemctl stop docker` and a start, whalenurse stayed stopped
+  until a reboot. The unit is now also `WantedBy=docker.service`. **Action:** install the new unit, then
+  `systemctl daemon-reload && systemctl reenable whalenurse`.
+- A unit test now checks that the binary gives a dry run only the actors that change nothing, for the restart rung and
+  for the compose rungs; before, only the restart one was checked, by an integration test.
+
 ### Fixed
 
 - **Retention keeps the events of an incident that is still open.** A container SUSPENDED for longer than
@@ -62,6 +76,19 @@ workflow refuses an undated section.
   hangs fails for that container, which is tried again at the next poll, and the rest are still healed. `/healthz` (and so the
   image's health check and the uptime ping) now reports not ok when the Docker API has been failing for longer than twice the
   poll interval, also while an action is running.
+- `whalenurse run` refuses any argument other than `--dry-run`: `run dry-run` or `run -- --dry-run` started a live
+  healer. `whalenurse -h` and `--help` print the usage and exit 0 instead of exiting 1.
+- A second `whalenurse run` no longer takes over a running daemon's control socket (its exit left the live daemon
+  unreachable by the CLI and its health check): it refuses to start, and a second live run on the same data directory is
+  refused by a lock on it.
+- Under systemd, whalenurse no longer takes a container with `ipc: shareable` for its own container (it saw that
+  container's `/dev/shm` mount in the host's mount table) and so no longer skips healing it. Its own container ID is read
+  only from the `/etc/hostname`, `/etc/hosts` and `/etc/resolv.conf` binds.
+- **A recreate of the whalenurse container no longer loses its state.** In a container the default host ID is the
+  container's ID, so every upgrade gave every key a new host segment: SUSPENDED containers were healed again from the
+  start, hand-stopped ones could be started, and flap history was reset. At startup the stored state is now moved to the
+  current `WHALENURSE_HOST_ID` (on a collision, the more recent record wins). whalenurse warns when the host ID is its
+  own container ID, and the examples set `WHALENURSE_HOST_ID`.
 
 ## [0.1.2] - 2026-10-22
 
