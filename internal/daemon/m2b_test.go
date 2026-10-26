@@ -1300,3 +1300,42 @@ func TestStaleDependentWaitingForADownParentDoesNotRepeatRefusals(t *testing.T) 
 		})
 	}
 }
+
+// A container that was removed and never had a learned parent set leaves no parents:<key> row behind (WN-040); a removed
+// dependent's row is deleted an hour after it left the list.
+func TestARemovedContainerThatWasNoDependentLeavesNoParentsRow(t *testing.T) {
+	st := openStore(t)
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.restartWithStore(st)
+	h.tick()
+	var keys []string
+	for i := 0; i < 20; i++ {
+		c := docker.Container{ID: hexID(fmt.Sprintf("j%02d", i)), Name: fmt.Sprintf("job-%d", i),
+			Labels: map[string]string{config.LabelEnable: "true"}, Status: "exited", RestartPolicy: "no", NetworkMode: "bridge"}
+		h.fake.Put(c)
+		h.event(c, "die", "")
+		h.fake.Remove(c.ID)
+		keys = append(keys, host+"/"+c.Name)
+	}
+	parent := h.svc(hexID("c1"), "p", "parent")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+	depKey := key("p", "dep")
+	h.advance(2 * time.Minute)
+	if got := h.d.knownParents(depKey); len(got) == 0 {
+		t.Fatal("the dependent's parents should be learned")
+	}
+	if _, ok, _ := st.Meta(metaParents + depKey); !ok {
+		t.Fatal("the dependent's parents should be stored")
+	}
+	h.fake.Remove(dep.ID)
+	h.advance(63 * time.Minute) // GRACE, then the hour, then a poll
+	for _, k := range keys {
+		if v, ok, _ := st.Meta(metaParents + k); ok {
+			t.Errorf("%s: parents row %q for a key that never had a parent", k, v)
+		}
+	}
+	if v, ok, _ := st.Meta(metaParents + depKey); ok || len(h.d.knownParents(depKey)) != 0 {
+		t.Errorf("the removed dependent's row should be deleted, not emptied: %q %v", v, ok)
+	}
+}

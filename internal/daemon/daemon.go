@@ -59,6 +59,7 @@ const BootIDPath = "/proc/sys/kernel/random/boot_id"
 type Meta interface {
 	Meta(key string) (value string, ok bool, err error)
 	SetMeta(key, value string)
+	DeleteMeta(key string)
 }
 
 // StoreHealth is implemented by a Persist that can fail without stopping healing (internal/store): its error count, the

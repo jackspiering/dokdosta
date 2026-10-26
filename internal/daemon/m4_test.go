@@ -605,3 +605,4 @@ func (m memMetaSafe) Meta(k string) (string, bool, error) {
 	return v, ok, nil
 }
 func (m memMetaSafe) SetMeta(k, v string) { m.mu.Lock(); defer m.mu.Unlock(); m.m[k] = v }
+func (m memMetaSafe) DeleteMeta(k string) { m.mu.Lock(); defer m.mu.Unlock(); delete(m.m, k) }

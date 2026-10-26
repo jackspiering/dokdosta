@@ -100,10 +100,12 @@ func (d *Daemon) forgetParents(now time.Time) {
 		if now.Sub(since) < parentsGoneAfter {
 			continue
 		}
+		// Only a key that had a learned set has a row to delete (WN-040); the set may live in the store alone after a restart.
+		learned := len(d.knownParents(key)) > 0
 		delete(d.parents, key)
 		delete(d.parentsGone, key)
-		if d.o.Meta != nil {
-			d.o.Meta.SetMeta(metaParents+key, "")
+		if learned && d.o.Meta != nil {
+			d.o.Meta.DeleteMeta(metaParents + key)
 		}
 	}
 }
