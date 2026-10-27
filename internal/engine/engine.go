@@ -511,6 +511,12 @@ func (e *Engine) ObserveDockerEvent(t Target, ev docker.Event) (attributed bool)
 		return false
 	}
 
+	if ev.Action == "kill" && docker.IsReloadSignal(ev.Signal) {
+		// docker kill -s HUP and the like: the process is asked to reload, not to stop. Recorded, but no marker.
+		e.emit(t, SignalIgnored, "kill with a reload signal ("+strings.TrimSpace(ev.Signal)+"): not a stop, no manual-stop marker", map[string]string{"action": ev.Action, "signal": strings.TrimSpace(ev.Signal)})
+		return false
+	}
+
 	wasManual := st.tracker.Evidence().ManualStop
 	st.tracker.ApplyAt(ev.Action, ev.Detail, at)
 	isManual := st.tracker.Evidence().ManualStop

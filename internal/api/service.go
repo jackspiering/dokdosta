@@ -49,7 +49,7 @@ var allowedAttrs = map[string]bool{
 	"error": true, "findings": true, "held": true, "id": true, "image": true, "incident": true, "moved_at": true,
 	"moved_by": true, "moved_ref": true, "new": true, "not_applicable": true, "not_run": true, "ok": true, "old": true, "old_id": true,
 	"old_image": true, "opened": true, "outcome": true, "reason": true, "ref": true, "rollback_tag": true,
-	"rollback_up": true, "rung": true, "rungs": true, "scope": true, "sidecars": true, "until": true, "why": true,
+	"rollback_up": true, "rung": true, "rungs": true, "scope": true, "sidecars": true, "signal": true, "until": true, "why": true,
 }
 
 // AttrAllowed reports whether an event attribute key may leave whalenurse. The daemon's tests subscribe a checker that
@@ -99,8 +99,9 @@ func finalName(n string) string {
 }
 
 // NoiseTypes are the events the dashboard hides unless asked for them: one per Docker event that falls inside a
-// whalenurse action, which says nothing a person needs. The JSON API still returns them.
-var NoiseTypes = []engine.EventType{engine.EventAttributed}
+// whalenurse action, and one per kill with a reload signal (docker-gen sends them often),
+// which say nothing a person needs. The JSON API still returns them.
+var NoiseTypes = []engine.EventType{engine.EventAttributed, engine.SignalIgnored}
 
 // EventDoc converts and cleans an engine event.
 func (s *Service) EventDoc(e engine.Event) EventDoc {

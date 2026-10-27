@@ -3,6 +3,8 @@ package rules
 import (
 	"strings"
 	"time"
+
+	"github.com/jackspiering/whalenurse/internal/docker"
 )
 
 // QuarantineWindow is how far back a stream loss reaches: the daemon's shutdown
@@ -147,6 +149,7 @@ func (t *Tracker) Drop() bool {
 // EventLine is one event for Summarize. At is optional; StreamLost needs it.
 type EventLine struct {
 	Action, Detail string
+	Signal         string // of a kill: a reload signal is not a stop (plan v3.13 item 15)
 	At             time.Time
 }
 
@@ -158,7 +161,7 @@ func Summarize(seq []EventLine) Verdict {
 	last := VerdictNone
 	dies := 0
 	for _, e := range seq {
-		if strings.HasPrefix(e.Action, "exec_") {
+		if strings.HasPrefix(e.Action, "exec_") || (e.Action == "kill" && docker.IsReloadSignal(e.Signal)) {
 			continue
 		}
 		t.ApplyAt(e.Action, e.Detail, e.At)

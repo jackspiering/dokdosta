@@ -54,6 +54,9 @@ workflow refuses an undated section.
   set no marker, but the `die` after it was then taken for a crash, so a `docker stop` made within `STARTUP_SETTLE` of a
   reconnect, a daemon restart or a start of whalenurse was undone about `GRACE` later ("died with exit 143, no preceding
   kill"). The container is now judged without evidence: a signal exit (137/143) is notify-only.
+- **A reload signal no longer counts as a manual stop.** `docker kill -s HUP` (and docker-gen's `-notify-sighup`, SIGUSR1,
+  SIGUSR2, SIGWINCH) set a manual-stop marker, which then suppressed a later real heal of the container until its next
+  start. These kills are recorded (`SignalIgnored`) and set no marker; every other signal still does.
 - **A scaled service is healed at rung 1 only.** Every compose command names the service and acts on all of its containers,
   so healing one unhealthy replica of a service with more than one container force-recreated the healthy ones as well, and
   scaled a service started with `docker compose up --scale` back to its declared count (removing the container being healed,
