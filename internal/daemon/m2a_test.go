@@ -957,3 +957,39 @@ func TestAnUnreadableBootIDIsNotOverwritten(t *testing.T) {
 		t.Fatal("the rest of the startup ran (last_seen is written)")
 	}
 }
+
+// A pause on a scope that matches no watched container still stands, but the reply says so (resume and unsuspend answer
+// "not found" there), so a typo in the project name does not pass for a working pause.
+func TestPauseSaysWhenNoWatchedContainerIsInTheScope(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	h.running(hexID("a1"), "p", "web")
+	h.running(hexID("b1"), "q", "web", config.LabelEnable, "false")
+	h.tick()
+	const note = "(no watched container is in this scope now)"
+	for scope, want := range map[string]bool{"p": false, "p/web": false, "pp": true, "p/api": true, "q": true, "nope/web": true} {
+		msg, err := h.d.Pause(scope, time.Hour)
+		if err != nil {
+			t.Fatalf("%s: %v", scope, err)
+		}
+		if got := strings.Contains(msg, note); got != want {
+			t.Errorf("pause %s: %q, note wanted: %v", scope, msg, want)
+		}
+	}
+}
+
+// The one-at-a-time gate of a parent that no sibling asks about again is not kept for ever.
+func TestDependentGatesThatRanOutAreForgotten(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	h.d.depGate["old-parent"] = depGate{key: "h/p/side/1", until: h.clk.Now().Add(-time.Second)}
+	h.d.depGate["busy-parent"] = depGate{key: "h/p/side/2", until: h.clk.Now().Add(time.Minute)}
+	side := docker.Container{ID: hexID("c1"), NetworkMode: "container:new-parent"}
+	h.d.afterAction(engine.Target{Key: "h/p/side/3"}, side, time.Time{})
+	if _, ok := h.d.depGate["old-parent"]; ok {
+		t.Error("the expired gate is still there")
+	}
+	for _, ref := range []string{"busy-parent", "new-parent"} {
+		if _, ok := h.d.depGate[ref]; !ok {
+			t.Errorf("the gate for %s was dropped", ref)
+		}
+	}
+}

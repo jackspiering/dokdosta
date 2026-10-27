@@ -22,12 +22,6 @@ const (
 	CauseOther          Cause = "other"
 )
 
-// IsStaleReference reports whether the cause is one of the stale-reference
-// shapes, which need the parent or a recreate rather than a plain start.
-func (c Cause) IsStaleReference() bool {
-	return c == CauseParentGone || c == CauseParentStopped || c == CauseNetworkGone
-}
-
 // ClassifyStartError maps a non-empty State.Error to a Cause. The order
 // matters: the stale-reference strings are checked first.
 func ClassifyStartError(msg string) Cause {
