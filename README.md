@@ -14,7 +14,9 @@ containers you opt in. When one turns unhealthy or stays down, it restarts it. I
 stack's own compose files, sidecars included. If that fails too, it stops, tells you why, and leaves the container alone.
 
 It won't deploy something new by accident: before a recreate it checks that your compose file and image still match what's
-running, and it never pulls unless you ask.
+running, and it never pulls unless you ask. (For a service that shares another container's network, ipc or pid namespace, or
+uses `volumes_from`, only the image (and, with the bundled compose, its version) is checked: an edit to such a service's own definition that you have not deployed is
+deployed when whalenurse repairs it. See [labels.md](docs/labels.md#sidecars).)
 
 <p align="center">
   <picture>

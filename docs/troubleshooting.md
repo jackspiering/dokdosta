@@ -54,7 +54,10 @@ reboot, never clears it.
 Before it recreates a container, whalenurse asks whether the recreate would deploy something other than what is running. A
 recreate builds the container from the compose files on disk and the image in the local store *now*, so an edit you have not
 deployed yet, or an image tag that moved, would be deployed by a "heal". In `strict` mode (default) whalenurse refuses,
-says why and SUSPENDS. The messages:
+says why and SUSPENDS. The exception is a service that shares another container's network, ipc or pid namespace, or uses
+`volumes_from` (a sidecar): compose cannot be asked about an edit to it, so only its image (and the bundled compose's version)
+is checked, and an edit to its own definition that you have not deployed is deployed when it is repaired
+([labels.md](labels.md#sidecars)). The messages:
 
 | Message | Meaning | What to do |
 |---|---|---|

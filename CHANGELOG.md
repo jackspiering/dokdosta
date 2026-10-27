@@ -14,6 +14,13 @@ workflow refuses an undated section.
 
 - The test compose fake now empties a sidecar's `depends_on` label on a recreate, like `compose up --no-deps`, and a test guards that the pull rung still finds the sidecar of a parent's moved tag (tests only).
 
+### Changed
+
+- **The documentation says what the drift guard checks for a sidecar.** A service that shares another container's network,
+  ipc or pid namespace, or uses `volumes_from`, gets only the image check and (with the bundled compose) the version check,
+  not the compose-edit check; an edit to its own definition that was not deployed is deployed when whalenurse repairs it.
+  The README, `docs/configuration.md`, `docs/troubleshooting.md` and `docs/labels.md` now say so. No behaviour changes.
+
 ### Fixed
 
 - **The bundled compose's version skew now blocks a sidecar's recreate.** A `network_mode`/`ipc`/`pid` or `volumes_from`
