@@ -90,8 +90,10 @@ func (h *cfH) svc(id, project, service string, extra ...string) docker.Container
 	return c
 }
 
-// replace stands in for what compose does: the container of the service is removed and a new one, with the same labels and
-// a new ID, runs in its place.
+// replace stands in for what compose does: the container of the service is removed and a new one, with a new ID, runs in
+// its place. The labels are copied, except that compose's `up --no-deps` leaves com.docker.compose.depends_on empty
+// (docs/m6-notes.md; the integration test TestSidecarIsRepairedAgainWhenTheParentIsRecreatedASecondTime asserts it), so the
+// label is dropped here too. fn may put it back to stand in for a full `up`.
 func (h *cfH) replace(project, service string, fn func(*docker.Container)) docker.Container {
 	h.t.Helper()
 	list, _ := h.fake.List(h.ctx)
@@ -103,6 +105,8 @@ func (h *cfH) replace(project, service string, fn func(*docker.Container)) docke
 		h.fake.Remove(old.ID)
 		h.n++
 		nc := old
+		nc.Labels = maps.Clone(old.Labels) // the fake shares Labels with the snapshots the daemon still holds
+		delete(nc.Labels, compose.LabelDependsOn)
 		nc.ID = hexID(fmt.Sprintf("e%d", h.n))
 		nc.Status, nc.Running, nc.Health, nc.ExitCode, nc.Error = "running", true, "", 0, ""
 		nc.StartedAt, nc.Created, nc.RestartCount = h.clk.Now(), h.clk.Now(), 0

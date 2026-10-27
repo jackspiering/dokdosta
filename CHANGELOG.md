@@ -10,11 +10,9 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
-### Security
+### Changed
 
-- **The service name is always the operand after `--` in the compose commands whalenurse runs** (`up`, `pull` and the
-  `pull_policy` read). The name is already validated before it reaches a command line; `--` makes sure no compose release
-  can read it as a flag. The integration tests' compose filter accepts only that form.
+- The test compose fake now empties a sidecar's `depends_on` label on a recreate, like `compose up --no-deps`, and a test guards that the pull rung still finds the sidecar of a parent's moved tag (tests only).
 
 ### Fixed
 
@@ -35,6 +33,12 @@ workflow refuses an undated section.
 - **`/static/` is a 404, not a directory listing.** The dashboard's embedded asset directory could be listed.
 - **A container whose name has a `.` or `..` part gets no dashboard link** instead of a link the server would clean into
   another page. A multi-byte first letter in a reason is no longer cut in half.
+
+### Security
+
+- **The service name is always the operand after `--` in the compose commands whalenurse runs** (`up`, `pull` and the
+  `pull_policy` read). The name is already validated before it reaches a command line; `--` makes sure no compose release
+  can read it as a flag. The integration tests' compose filter accepts only that form.
 
 ## [0.1.3] - 2026-10-26
 
