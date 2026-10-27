@@ -44,6 +44,11 @@ func Handler(svc *api.Service) http.Handler {
 	mux.HandleFunc("GET /history", h.history)
 	fileServer := http.StripPrefix("/static/", http.FileServerFS(static))
 	mux.HandleFunc("GET /static/{file...}", func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("file") == "" || strings.HasSuffix(r.URL.Path, "/") {
+			// The file server would list the directory.
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Cache-Control", "private, max-age=300")
 		fileServer.ServeHTTP(w, r)
 	})
