@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// WithReadTimeout bounds List, Inspect and ImageID: each runs under a timeout of d unless ctx already ends sooner. A
+// WithReadTimeout bounds List, Inspect, ImageID and ImageLabels: each runs under a timeout of d unless ctx already ends sooner. A
 // read that never returns then fails like any other API error instead of holding its caller (plan v3.13 item 13).
 // Events, Ping and ServerVersion are passed through: a subscription is long-lived, and the others bound themselves.
 func WithReadTimeout(r Reader, d time.Duration) Reader { return timeoutReader{Reader: r, d: d} }
@@ -32,6 +32,12 @@ func (t timeoutReader) Inspect(ctx context.Context, ref string) (Container, erro
 	ctx, cancel := t.bound(ctx)
 	defer cancel()
 	return t.Reader.Inspect(ctx, ref)
+}
+
+func (t timeoutReader) ImageLabels(ctx context.Context, imageID string) (map[string]string, error) {
+	ctx, cancel := t.bound(ctx)
+	defer cancel()
+	return t.Reader.ImageLabels(ctx, imageID)
 }
 
 func (t timeoutReader) ImageID(ctx context.Context, ref, arch string) (string, error) {
