@@ -10,6 +10,12 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Security
+
+- **The service name is always the operand after `--` in the compose commands whalenurse runs** (`up`, `pull` and the
+  `pull_policy` read). The name is already validated before it reaches a command line; `--` makes sure no compose release
+  can read it as a flag. The integration tests' compose filter accepts only that form.
+
 ### Fixed
 
 - **The integration tests' host-safety preflight (and the M0b one) now sees every spelling of an opt-in.** It listed strangers

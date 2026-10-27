@@ -62,6 +62,10 @@ func New(bin Binary, r Runner) *Compose {
 
 func (c *Compose) Binary() Binary { return c.bin }
 
+// The service is the one operand of every command that names one, and it follows `--` (plan v3.13 item 11): the name comes
+// from a container label, which validation already limits to what compose could have written, and `--` makes sure no
+// release can read it as a flag.
+//
 // upArgs is the tail every `up` carries: detached, no dependencies, never pull, never build. Callers add
 // --force-recreate; nothing else can be added.
 func upArgs(p Project, force bool) []string {
@@ -69,7 +73,7 @@ func upArgs(p Project, force bool) []string {
 	if force {
 		args = append(args, "--force-recreate")
 	}
-	return append(args, "--no-deps", "--pull", "never", "--no-build", p.Service)
+	return append(args, "--no-deps", "--pull", "never", "--no-build", "--", p.Service)
 }
 
 func (c *Compose) cmd(p Project, rest ...string) Command {
@@ -103,7 +107,7 @@ func (c *Compose) PullPolicy(ctx context.Context, p Project) (string, error) {
 	if err := p.Validate(); err != nil {
 		return "", err
 	}
-	res, err := c.run.Run(ctx, c.cmd(p, "config", "--format", "json", "--no-env-resolution", p.Service))
+	res, err := c.run.Run(ctx, c.cmd(p, "config", "--format", "json", "--no-env-resolution", "--", p.Service))
 	if err != nil {
 		return "", err
 	}
@@ -134,7 +138,7 @@ func (c *Compose) Pull(ctx context.Context, p Project) error {
 	if err := p.Validate(); err != nil {
 		return err
 	}
-	cmd := c.cmd(p, "pull", "--policy", "always", p.Service)
+	cmd := c.cmd(p, "pull", "--policy", "always", "--", p.Service)
 	if c.authDir != "" {
 		// Compose reads the file itself on each pull, so it is checked again now: a file that went bad since startup is a
 		// failed pull with the reason, not a pull with whatever the file says.
