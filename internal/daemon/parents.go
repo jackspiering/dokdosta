@@ -204,3 +204,10 @@ func parentIdentity(parents []rules.Parent) string {
 	slices.Sort(ids)
 	return strings.Join(slices.Compact(ids), ";")
 }
+
+// dependsOnConditions is the raw depends_on label, for the one reader that needs the conditions and not only the names
+// (waitsFor, plan v3.13 item 14). A created container that whalenurse has not recreated still has the compose-written label;
+// an emptied one has no condition to wait on, so nothing holds it.
+func dependsOnConditions(labels map[string]string) string {
+	return labels[compose.LabelDependsOn]
+}

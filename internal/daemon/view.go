@@ -50,6 +50,27 @@ func (v *view) forget(key string) {
 	delete(v.seen, key)
 }
 
+// HeldBack is a created container that compose is holding back (plan v3.13 item 14), and what it waits for.
+type HeldBack struct {
+	Key        string `json:"key"`
+	Container  string `json:"container"`
+	WaitingFor string `json:"waiting_for"`
+}
+
+// heldBack lists the containers whose last classification was "held back", sorted by key.
+func (v *view) heldBack() []HeldBack {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	var out []HeldBack
+	for k, s := range v.seen {
+		if s.dec.Class == rules.ClassHeldBack {
+			out = append(out, HeldBack{Key: k, Container: s.c.Name, WaitingFor: strings.TrimPrefix(s.dec.Reason, "compose is holding it back: waiting for ")})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out
+}
+
 func (v *view) snapshot() ([]docker.Summary, map[string]seen) {
 	v.mu.RLock()
 	defer v.mu.RUnlock()

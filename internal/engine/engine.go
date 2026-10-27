@@ -616,7 +616,7 @@ func (e *Engine) settle(t Target, st *keyState, d rules.Decision, cfg config.Con
 	switch d.Class {
 	case rules.ClassOK:
 		return e.recovering(t, st, inc, o, now)
-	case rules.ClassStarting, rules.ClassRestarting:
+	case rules.ClassStarting, rules.ClassRestarting, rules.ClassHeldBack:
 		// Not recovered yet and not failing: look again after the cooldown.
 		if inc.recovering {
 			inc.recovering = false

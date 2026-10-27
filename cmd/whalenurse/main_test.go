@@ -451,3 +451,14 @@ func TestOpenStoreRekeysToTheHostID(t *testing.T) {
 		t.Fatalf("loaded %+v", snap.Keys)
 	}
 }
+
+func TestPrintStatusListsContainersComposeIsHoldingBack(t *testing.T) {
+	var b bytes.Buffer
+	printStatus(&b, daemon.Status{Host: "h", Mode: "label", Healthy: true, EventsUp: true, Settled: true,
+		Held: []daemon.HeldBack{{Key: "h/p/web/1", Container: "p-web-1", WaitingFor: "db (service_healthy)"}}})
+	for _, want := range []string{"HELD BACK by compose", "h/p/web/1  waiting for db (service_healthy)"} {
+		if !strings.Contains(b.String(), want) {
+			t.Errorf("status output lacks %q:\n%s", want, b.String())
+		}
+	}
+}

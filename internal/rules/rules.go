@@ -42,6 +42,7 @@ const (
 	ClassCrashLoop            Class = "crash-loop" // restarting longer than CRASHLOOP_AFTER
 	ClassRetriesExhausted     Class = "retries-exhausted"
 	ClassNeverStarted         Class = "never-started"
+	ClassHeldBack             Class = "held-back"    // created, and compose is holding it back on a depends_on condition that does not hold yet
 	ClassStartFailed          Class = "start-failed" // State.Error is set
 	ClassExitedCrashed        Class = "exited-crashed"
 	ClassExitedOOM            Class = "exited-oom"
@@ -109,6 +110,9 @@ type Input struct {
 	// HostStopped: the container stopped inside a shutdown window (plan §3.3 rule 4): between 30 s before the
 	// previous run's last_seen, or the events-stream loss, and the daemon's restore. Whatever its exit code.
 	HostStopped bool
+	// WaitsFor is set by the caller for a `created` container that compose is holding back on its depends_on conditions
+	// (plan v3.13 item 14): what it waits for, in words ("db (service_healthy)"). Empty: nothing holds it.
+	WaitsFor string
 }
 
 // Loop is the verdict of the crash-loop tracker (internal/engine): at least 3
@@ -221,6 +225,11 @@ func classifyState(in Input) Decision {
 	case "dead":
 		return Decision{Class: ClassDead, Action: ActionNotify, Reason: "container is dead; it cannot be started"}
 	case "created":
+		if in.WaitsFor != "" {
+			// `up` creates every container first and starts each when its dependencies hold. Starting this one now would
+			// run it out of order. No incident: it is looked at again on each poll, and starts once the condition holds.
+			return Decision{Class: ClassHeldBack, Action: ActionNone, Reason: "compose is holding it back: waiting for " + in.WaitsFor}
+		}
 		return Decision{Class: ClassNeverStarted, Action: ActionStart, Reason: "created but never started"}
 	case "restarting":
 		return classifyRestarting(in)
