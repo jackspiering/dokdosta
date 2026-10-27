@@ -10,12 +10,16 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-27
+
+The second batch of the review decisions of plan v3.13 (items 1 to 17): labels that come from an image no longer steer
+whalenurse, the drift guard and the pull rung check again before they act, a created container held back by a
+`depends_on` condition is left alone, a reload signal or a reboot no longer costs a manual stop, an `on-failure`
+container Docker will not restore stays down by policy, and the state of containers that are gone is forgotten.
+
 ### Changed
 
 - The test compose fake now empties a sidecar's `depends_on` label on a recreate, like `compose up --no-deps`, and a test guards that the pull rung still finds the sidecar of a parent's moved tag (tests only).
-
-### Changed
-
 - **The documentation says what the drift guard checks for a sidecar.** A service that shares another container's network,
   ipc or pid namespace, or uses `volumes_from`, gets only the image check and (with the bundled compose) the version check,
   not the compose-edit check; an edit to its own definition that was not deployed is deployed when whalenurse repairs it.
@@ -392,7 +396,8 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jackspiering/whalenurse/releases/tag/v0.2.0
 [0.1.3]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.2
 [0.1.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.1
