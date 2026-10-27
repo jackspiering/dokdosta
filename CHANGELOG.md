@@ -23,6 +23,12 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **`whalenurse.heal.pull` no longer lets rung 2 replace a pinned or locally built image.** Rung 2 of a container with the
+  label took a moved image tag in its recreate (and said "upgraded during heal"), even for a service whose
+  `pull_policy` is `never` or `build`, where the pull rung can never apply: the label's only effect was to switch off the
+  moved-tag block. The allowance now needs a readable `pull_policy` that is neither; otherwise a moved tag blocks and
+  SUSPENDS as for a container without the label. whalenurse reads the policy (`docker compose config`) once more per heal
+  of such a container.
 - **The state of a container that is gone is forgotten.** A container removed while it was exited or SUSPENDED sends only
   `destroy`, and one removed while whalenurse was down is never listed again, so its SUSPENDED incident, manual-stop marker
   and flap history stayed in `whalenurse status` and the store for ever, and a new container under the same name inherited

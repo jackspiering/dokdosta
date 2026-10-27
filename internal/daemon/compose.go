@@ -335,11 +335,16 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 	}
 
 	// The drift guard, before the recreate (plan §3.6). It runs in dry-run too: it only reads.
-	// An image-only move is let through for a container that opted in to the pull rung (the heal may take the newer
-	// image: config drift still blocks) and for a sidecar taking the tag its parent's own pull just moved (plan v3.8).
-	allow := cfg.HasRung(config.RungPull)
-	if stale {
+	// An image-only move is let through for a container that opted in to the pull rung when the rung would apply (the
+	// heal may take the newer image: config drift still blocks) and for a sidecar taking the tag its parent's own pull just moved (plan v3.8).
+	allow := false
+	switch {
+	case stale:
 		allow = d.dependentMayTakeMove(ctx, c)
+	case cfg.HasRung(config.RungPull):
+		// Only where the pull rung would apply: a pull_policy of never or build, or one that cannot be read, gives no
+		// allowance, so the label does not switch off the moved-tag block for a pinned or locally built image (plan v3.13).
+		allow = d.pullPolicyRefusal(ctx, p) == ""
 	}
 	if !d.guardVerdict(ctx, t, c, dec, p, allow) || ctx.Err() != nil {
 		return

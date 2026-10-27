@@ -81,7 +81,7 @@ func TestPullFindsNoNewerImageAndSuspends(t *testing.T) {
 	breakAndRun(h, web.ID, 30*time.Minute)
 
 	// Rung 2 and rung 3 each run the guard first (the oracle); the pull is last and no up follows it.
-	if got := h.verbs(); got != "dry-run web, recreate web, policy web, dry-run web, pull web" {
+	if got := h.verbs(); got != "policy web, dry-run web, recreate web, policy web, dry-run web, pull web" {
 		t.Fatalf("compose calls = %q", got)
 	}
 	if h.count(engine.TagMoved) != 0 {
