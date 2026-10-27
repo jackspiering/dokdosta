@@ -120,7 +120,8 @@ func (d *Daemon) composeStatus() ComposeStatus {
 }
 
 // recreateBlocker says why rung 2 cannot run for this container, or "" when it can. It covers the version gate, a
-// container that compose did not make, and compose inputs that are missing or unreadable (plan §3.4 *Fallbacks*).
+// container that compose did not make, a service with more than one container (every compose command names the service
+// and acts on all of its containers) and compose inputs that are missing or unreadable (plan §3.4 *Fallbacks*).
 func (d *Daemon) recreateBlocker(c docker.Container) string {
 	cs := d.cs()
 	if !cs.gate.Recreate {
@@ -136,7 +137,28 @@ func (d *Daemon) recreateBlocker(c docker.Container) string {
 	if err := p.Readable(d.o.Stat); err != nil {
 		return err.Error()
 	}
+	if n := d.replicas(c); n > 1 {
+		return fmt.Sprintf("service %s has %d containers (scaled): a compose recreate acts on all of them, so only rung 1 applies", c.Labels[docker.LabelService], n)
+	}
 	return ""
+}
+
+// replicas counts the replicas compose sees for c's service in its project, from the last list (which includes the
+// stopped ones, as compose counts them): the distinct container numbers. A one-off container (`compose run`) is not a
+// replica, and the old and new container of a recreate in progress, or left over by a failed one, share a number.
+func (d *Daemon) replicas(c docker.Container) int {
+	project, service := c.Labels[docker.LabelProject], c.Labels[docker.LabelService]
+	numbers := map[string]bool{}
+	for _, s := range d.idx.all {
+		if s.Labels[docker.LabelProject] == project && s.Labels[docker.LabelService] == service && !docker.IsOneOff(s.Labels) {
+			n := s.Labels[docker.LabelNumber]
+			if n == "" {
+				n = "1"
+			}
+			numbers[n] = true
+		}
+	}
+	return len(numbers)
 }
 
 // unavailable builds Obs.Unavailable for a container.
@@ -401,8 +423,14 @@ func (d *Daemon) afterAction(t engine.Target, c docker.Container, recheck time.T
 		d.schedule(t.Key, recheck)
 		d.requestDependentSweep(recheck)
 	}
+	now := d.clk.Now()
+	for ref, g := range d.depGate {
+		if !now.Before(g.until) {
+			delete(d.depGate, ref) // the settle time is over; siblingBusy would delete it on its next look
+		}
+	}
 	if key := firstRef(c); key != "" {
-		d.depGate[key] = depGate{key: t.Key, until: d.clk.Now().Add(depSettle)}
+		d.depGate[key] = depGate{key: t.Key, until: now.Add(depSettle)}
 	}
 }
 

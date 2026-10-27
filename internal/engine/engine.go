@@ -372,6 +372,28 @@ func (e *Engine) AddShutdownWindow(from, to time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.shutdowns = append(e.shutdowns, shutdownWindow{from: from, to: to})
+	e.trimShutdowns()
+}
+
+// maxShutdownWindows bounds the list over a long run with a flaky events stream. A window is only read for a container
+// that finished inside it, so the newest ones are the ones that matter.
+const maxShutdownWindows = 100
+
+// trimShutdowns drops the oldest closed windows beyond maxShutdownWindows. The caller holds e.mu.
+func (e *Engine) trimShutdowns() {
+	drop := len(e.shutdowns) - maxShutdownWindows
+	if drop <= 0 {
+		return
+	}
+	kept := e.shutdowns[:0:0]
+	for _, w := range e.shutdowns {
+		if drop > 0 && !w.open {
+			drop--
+			continue
+		}
+		kept = append(kept, w)
+	}
+	e.shutdowns = kept
 }
 
 // OpenShutdownWindow starts a window at an events-stream loss; it has no end until CloseShutdownWindow.
@@ -384,6 +406,7 @@ func (e *Engine) OpenShutdownWindow(from time.Time) {
 		}
 	}
 	e.shutdowns = append(e.shutdowns, shutdownWindow{from: from, open: true})
+	e.trimShutdowns()
 }
 
 // CloseShutdownWindow ends the open window when the stream is back: the daemon has restored its containers.

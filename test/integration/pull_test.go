@@ -350,7 +350,7 @@ func TestPullRungWithNoNewerImageEndsInSuspended(t *testing.T) {
 	if got := joined(started); got != "restart,recreate,pull" {
 		t.Fatalf("actions = %s, want restart,recreate,pull", got)
 	}
-	if pulls := r.Compose.Pulls(); len(pulls) != 1 || !strings.Contains(pulls[0], "pull --policy always app") {
+	if pulls := r.Compose.Pulls(); len(pulls) != 1 || !strings.Contains(pulls[0], "pull --policy always -- app") {
 		t.Fatalf("compose pull ran %v", pulls)
 	}
 	// The drift check came before the pull, and no up followed it.
@@ -433,7 +433,7 @@ func TestPullRungUpgradesRepairsTheSidecarAndNotifiesWithTheRollback(t *testing.
 	log := r.Compose.Log()
 	pullAt := -1
 	for i, l := range log {
-		if strings.Contains(l, " pull --policy always app") {
+		if strings.Contains(l, " pull --policy always -- app") {
 			pullAt = i
 		}
 	}
@@ -442,7 +442,7 @@ func TestPullRungUpgradesRepairsTheSidecarAndNotifiesWithTheRollback(t *testing.
 	}
 	oracleBefore := false
 	for _, l := range log[:pullAt] {
-		oracleBefore = oracleBefore || strings.Contains(l, "--dry-run --progress json up -d --no-deps --pull never --no-build app")
+		oracleBefore = oracleBefore || strings.Contains(l, "--dry-run --progress json up -d --no-deps --pull never --no-build -- app")
 	}
 	if !oracleBefore {
 		t.Fatalf("drift check 1 must run before the pull: %v", log)
@@ -454,7 +454,7 @@ func TestPullRungUpgradesRepairsTheSidecarAndNotifiesWithTheRollback(t *testing.
 			break
 		}
 	}
-	if !strings.Contains(up, "up -d --no-deps --pull never --no-build app") || strings.Contains(up, "--force-recreate") {
+	if !strings.Contains(up, "up -d --no-deps --pull never --no-build -- app") || strings.Contains(up, "--force-recreate") {
 		t.Fatalf("after the pull: a non-forced up of app, got %q (log %v)", up, log)
 	}
 	if n := imagePulls(t, g, since); n < 1 {
@@ -722,7 +722,7 @@ func TestPullRungRespectsPullPolicyNever(t *testing.T) {
 	}
 	read := false
 	for _, l := range r.Compose.Log() {
-		read = read || strings.HasSuffix(l, "config --format json --no-env-resolution app")
+		read = read || strings.HasSuffix(l, "config --format json --no-env-resolution -- app")
 	}
 	if !read {
 		t.Fatalf("the policy was not read: %v", r.Compose.Log())
@@ -763,7 +763,7 @@ func TestPullRungOverridesPullPolicyMissing(t *testing.T) {
 	if v := s.version("app"); v != "v2" {
 		t.Fatalf("the container runs %s, want v2", v)
 	}
-	if pulls := r.Compose.Pulls(); len(pulls) != 1 || !strings.Contains(pulls[0], "pull --policy always app") {
+	if pulls := r.Compose.Pulls(); len(pulls) != 1 || !strings.Contains(pulls[0], "pull --policy always -- app") {
 		t.Fatalf("%v", pulls)
 	}
 	if n := imagePulls(t, g, since); n < 1 {

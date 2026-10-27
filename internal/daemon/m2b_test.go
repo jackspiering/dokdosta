@@ -1445,3 +1445,71 @@ func TestReplacedSidecarsStartClearsTheMarkerOfTheOneBefore(t *testing.T) {
 		t.Fatal("the start of the new container should clear the marker")
 	}
 }
+
+// ---- a service with more than one container ---------------------------------------------------------------------
+
+// Every compose command names the service, and compose acts on all of its containers: a forced recreate replaces every
+// replica, and a plain up converges a CLI-scaled service back to its declared count. A scaled service gets rung 1 only.
+func TestScaledServiceGetsRung1Only(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	w1 := h.svc(hexID("a1"), "p", "web")
+	w2 := h.svc(hexID("a2"), "p", "web", docker.LabelNumber, "2")
+	h.set(w2.ID, func(c *docker.Container) { c.Name = "p-web-2" })
+	h.tick()
+	h.set(w2.ID, unhealthy)
+	h.advance(6 * time.Minute)
+
+	h.wantCalls("restart " + w2.ID) // rung 1, by ID
+	if h.cf.Count("recreate") != 0 || h.cf.Count("up") != 0 || h.cf.Count("dry-run") != 0 || h.cf.Count("pull") != 0 {
+		t.Fatalf("compose ran for a scaled service: %q", h.verbs())
+	}
+	un := h.events(engine.RungUnavailable)
+	if len(un) == 0 || !strings.Contains(un[0].Message, "2 containers") {
+		t.Fatalf("rung 2 should be unavailable and say why: %+v", un)
+	}
+	if h.count(engine.Suspended) != 1 {
+		t.Fatalf("one restart, then SUSPENDED: %v", h.rec.Types())
+	}
+	if got, _ := h.fake.Inspect(h.ctx, w1.ID); got.ID == "" {
+		t.Fatal("the healthy replica must not be touched")
+	}
+}
+
+// A one-off container (docker compose run) is not a replica; a stopped replica is, because compose counts it; the old and
+// the new container of one recreate share a number and are one replica.
+func TestOneOffAndLoneSurvivorAreNotScaled(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	web := h.svc(hexID("a1"), "p", "web", docker.LabelNumber, "2") // a lone survivor of a scale-down
+	h.set(web.ID, func(c *docker.Container) { c.Name = "p-web-2" })
+	h.svc(hexID("b1"), "p", "web", docker.LabelOneOff, "True", config.LabelEnable, "false")
+	_ = h.d.refresh(h.ctx)
+	if why := h.d.recreateBlocker(web); why != "" {
+		t.Fatalf("a single container with a one-off beside it is not scaled: %q", why)
+	}
+	h.svc(hexID("a3"), "p", "web", docker.LabelNumber, "3")
+	_ = h.d.refresh(h.ctx)
+	if why := h.d.recreateBlocker(web); !strings.Contains(why, "2 containers") {
+		t.Fatalf("two replicas are scaled: %q", why)
+	}
+	other := h.svc(hexID("c1"), "q", "web") // the same service name in another project is another service
+	_ = h.d.refresh(h.ctx)
+	if why := h.d.recreateBlocker(other); why != "" {
+		t.Fatalf("%q", why)
+	}
+}
+
+func TestTheTwoContainersOfOneRecreateAreOneReplica(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	web := h.svc(hexID("a1"), "p", "web")
+	old := h.svc(hexID("a2"), "p", "web") // compose's renamed old container of number 1, left stopped
+	h.set(old.ID, func(c *docker.Container) { c.Name, c.Status, c.Running = "abcdef012345_p-web-1", "exited", false })
+	_ = h.d.refresh(h.ctx)
+	if why := h.d.recreateBlocker(web); why != "" {
+		t.Fatalf("one replica with a leftover of the same number is not scaled: %q", why)
+	}
+	h.set(old.ID, func(c *docker.Container) { c.Labels[docker.LabelNumber] = "2" })
+	_ = h.d.refresh(h.ctx)
+	if why := h.d.recreateBlocker(web); !strings.Contains(why, "2 containers") {
+		t.Fatalf("a stopped replica of another number counts: %q", why)
+	}
+}
