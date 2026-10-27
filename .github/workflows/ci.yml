@@ -8,23 +8,29 @@ on:
 permissions:
   contents: read
 
-# A pull request's new push cancels its older run. Every push to main has its own group, so a merge never cancels the run of
-# the merge before it: each commit on main gets a finished run.
+# A pull request's new push cancels its older run. Pushes to main share one group that cancels nothing in progress: the run
+# that has started finishes, and of the pushes waiting behind it only the newest runs (GitHub cancels a pending run when a
+# newer one joins the group). A burst of merges costs two full runs, not one per merge, and main's head commit always gets a
+# finished run (plan section 6, v3.14). Runner capacity is the limit: 20 jobs at once for the account, ~120 runner-minutes a
+# full run.
 concurrency:
-  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   scope:
     # What this run has to test. A pull request that changes only documentation (scripts/ci/changes.sh: *.md anywhere, and
     # docs/) skips every job except `go`, whose tests check the documentation; the required checks report "skipped", which
-    # counts as passed (the integration and image-drift legs pass explicitly). Pushes to main always run everything. And
-    # when the latest compose release is one the matrix pins, the "compose latest" shards stop early
-    # (scripts/ci/compose-latest.sh). Plan section 6, *CI matrix*.
-    name: scope (documentation only? is compose latest pinned?)
+    # counts as passed (the integration and image-drift legs pass explicitly). Pushes to main always run everything. A pull
+    # request into another branch (a layer of a stack) runs the light set only: go, scripts, workflows, examples (`full`
+    # is false). Main's ruleset does not apply to it, and the stack's PR into main runs everything. And when the latest
+    # compose release is one the matrix pins, the "compose latest" shards stop early (scripts/ci/compose-latest.sh). Plan
+    # section 6, *CI matrix*.
+    name: scope (documentation only? stack layer? is compose latest pinned?)
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.changes.outputs.code }}
+      full: ${{ steps.layer.outputs.full }}
       compose_latest: ${{ steps.compose.outputs.version }}
       latest_pinned: ${{ steps.compose.outputs.pinned }}
     steps:
@@ -54,6 +60,23 @@ jobs:
             echo "code=false" >>"$GITHUB_OUTPUT"
           else
             echo "code=true" >>"$GITHUB_OUTPUT"
+          fi
+      # The light set skips the image, demo, GoReleaser snapshot, image-drift and integration jobs. The integration and
+      # image-drift jobs are matrices skipped as a whole, so their required checks are not reported at all: a layer that is
+      # retargeted to main stays blocked until a run with main as its base (a push, or closing and reopening the pull
+      # request) has run them. Re-running the old run keeps the old base and does not help.
+      - name: Stack layer? (a pull request into a branch other than main runs the light set)
+        id: layer
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          if [ "$EVENT" = pull_request ] && [ "$BASE" != "$DEFAULT" ]; then
+            echo "::notice::Pull request into $BASE, not $DEFAULT: a stack layer, so only go, scripts, workflows and examples run. The required checks are reported once a run with $DEFAULT as its base has run."
+            echo "full=false" >>"$GITHUB_OUTPUT"
+          else
+            echo "full=true" >>"$GITHUB_OUTPUT"
           fi
       - name: Is compose latest a release the matrix pins?
         id: compose
@@ -168,7 +191,7 @@ jobs:
     name: GoReleaser snapshot (builds everything, publishes nothing)
     runs-on: ubuntu-latest
     needs: [go, scope]
-    if: needs.scope.outputs.code == 'true'
+    if: needs.scope.outputs.code == 'true' && needs.scope.outputs.full == 'true'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -267,7 +290,7 @@ jobs:
     name: image (built once for the integration tests and the demo)
     runs-on: ubuntu-latest
     needs: [scope]
-    if: needs.scope.outputs.code == 'true'
+    if: needs.scope.outputs.code == 'true' && needs.scope.outputs.full == 'true'
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -296,7 +319,7 @@ jobs:
     name: demo (examples/demo, break bop and watch the ladder)
     runs-on: ubuntu-latest
     needs: [scope, image]
-    if: needs.scope.outputs.code == 'true'
+    if: needs.scope.outputs.code == 'true' && needs.scope.outputs.full == 'true'
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -328,7 +351,7 @@ jobs:
     name: integration shard ${{ matrix.shard }} (${{ matrix.store }} store, compose ${{ matrix.compose }})
     runs-on: ubuntu-latest
     needs: [scope, image]
-    if: needs.scope.outputs.code == 'true'
+    if: needs.scope.outputs.code == 'true' && needs.scope.outputs.full == 'true'
     timeout-minutes: 60
     env:
       SKIP: ${{ matrix.compose == 'latest' && needs.scope.outputs.latest_pinned == 'true' }}
@@ -398,11 +421,14 @@ jobs:
     # The six checks the repository ruleset requires, under their old names: each is green when every shard is. (A needs
     # on a matrix is all of its jobs, so one red shard turns all six red; the red shard's own name says which leg.) On a
     # documentation-only pull request the shards are skipped, and that is green only if the scope job succeeded and said
-    # so: a failed scope job skips everything, and turns these six red.
+    # so: a failed scope job skips everything, and turns these six red. On a stack layer (full is false) this job is
+    # skipped as a whole, on purpose: a skipped matrix reports none of the six names, so they are not green on the layer's
+    # head commit, and the layer cannot merge into main on the light set. A failed scope job leaves `full` empty, which
+    # runs this job, and it fails.
     name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, whalenurse-test-* projects only)
     runs-on: ubuntu-latest
     needs: [scope, integration-shard]
-    if: ${{ always() }}
+    if: ${{ always() && needs.scope.outputs.full != 'false' }}
     strategy:
       matrix:
         store: [classic, containerd]
@@ -421,10 +447,12 @@ jobs:
 
   image-drift:
     # Required checks of a matrix: on a documentation-only pull request the job runs and skips its steps, because a job
-    # skipped as a whole does not report the matrix's names.
+    # skipped as a whole does not report the matrix's names. That is what a stack layer wants (full is false): the job is
+    # skipped as a whole, so its two required checks stay unreported, as the integration job's do.
     name: image-drift check (${{ matrix.store }} store)
     runs-on: ubuntu-latest
     needs: [scope]
+    if: needs.scope.outputs.full == 'true'
     timeout-minutes: 15
     env:
       RUN: ${{ needs.scope.outputs.code }}
