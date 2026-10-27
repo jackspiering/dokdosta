@@ -35,6 +35,43 @@ type tagMove struct {
 	New      string    `json:"new"`       // ... and after
 	OldPlain string    `json:"old_plain"` // the same without a platform: the index digest on the containerd store
 	NewPlain string    `json:"new_plain"`
+	// Followed marks a move that was not made by whalenurse: rung 2 recreated a pull-enabled container onto the image the
+	// tag had been moved to by someone else (plan v3.13 item 6). The dependents step may take it like a pull's, but it is
+	// not named as the mover in a drift block of another stack.
+	Followed bool `json:"followed,omitempty"`
+	// Followers are other pull-enabled containers whose rung 2 took the same result (same New): each with its own old image,
+	// so that their sidecars may take it too, and none of them replaces the mover or the others.
+	Followers []mover `json:"followers,omitempty"`
+}
+
+// mover is one container's part in a move: who, when, and the image it was running (as the compose image label and as the
+// image ID), which its sidecars were created from.
+type mover struct {
+	Key      string    `json:"key"`
+	At       time.Time `json:"at"`
+	Old      string    `json:"old"`
+	OldPlain string    `json:"old_plain"`
+}
+
+func (m tagMove) movers() []mover {
+	return append([]mover{{Key: m.Key, At: m.At, Old: m.Old, OldPlain: m.OldPlain}}, m.Followers...)
+}
+
+// recordFollowed remembers that rung 2 of the container took a tag that someone else moved. When the record of the tag
+// already stands for the same result (a pull of another container, or another container's followed move), the container
+// is added to it and nothing is replaced; otherwise it is the record.
+func (d *Daemon) recordFollowed(ref string, by mover, now, nowPlain string) {
+	ref = normalizeRef(ref)
+	if cur, ok := d.moveOf(ref); ok && cur.New == now && cur.NewPlain == nowPlain {
+		if cur.Key == by.Key {
+			return
+		}
+		cur.Followers = slices.DeleteFunc(slices.Clone(cur.Followers), func(f mover) bool { return f.Key == by.Key })
+		cur.Followers = append(cur.Followers, by)
+		d.recordMove(cur)
+		return
+	}
+	d.recordMove(tagMove{Ref: ref, Key: by.Key, At: by.At, Followed: true, Old: by.Old, OldPlain: by.OldPlain, New: now, NewPlain: nowPlain})
 }
 
 // normalizeRef makes `nginx`, `nginx:latest` and `docker.io/library/nginx:latest` the same reference, so a move recorded
@@ -120,7 +157,7 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 	for _, f := range fs {
 		text := f.String()
 		if f.Check == compose.CheckImage {
-			if m, ok := d.moverOf(ctx, c); ok {
+			if m, ok := d.moverOf(ctx, c); ok && !m.Followed { // a followed move was made by someone else
 				text += fmt.Sprintf(" (whalenurse moved this tag: %s pulled it at %s)", m.Key, m.At.UTC().Format(time.RFC3339))
 				extra = map[string]string{"moved_by": m.Key, "moved_at": m.At.UTC().Format(time.RFC3339), "moved_ref": m.Ref}
 			}
@@ -418,17 +455,22 @@ func labelIsOneOf(label string, ids []string) bool {
 // been created from the image that pull replaced. Anything else about the tag is still image drift.
 func (d *Daemon) dependentMayTakeMove(ctx context.Context, c docker.Container) bool {
 	m, ok := d.moverOf(ctx, c)
-	if !ok || !labelIsOneOf(c.Labels[compose.LabelImage], []string{m.Old, m.OldPlain}) {
+	if !ok {
 		return false
 	}
 	project := c.Labels[docker.LabelProject]
-	for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
-		for _, s := range d.idx.all {
-			if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || d.keyOf(s) != m.Key {
-				continue
-			}
-			if opened, open := d.eng.IncidentOpenedAt(m.Key); open && !m.At.Before(opened) {
-				return true
+	for _, mv := range m.movers() {
+		if !labelIsOneOf(c.Labels[compose.LabelImage], []string{mv.Old, mv.OldPlain}) {
+			continue
+		}
+		for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
+			for _, s := range d.idx.all {
+				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || d.keyOf(s) != mv.Key {
+					continue
+				}
+				if opened, open := d.eng.IncidentOpenedAt(mv.Key); open && !mv.At.Before(opened) {
+					return true
+				}
 			}
 		}
 	}
@@ -451,10 +493,21 @@ func (d *Daemon) noteUpgrade(ctx context.Context, t engine.Target, old docker.Co
 	if err != nil || cur.ImageID == "" || old.ImageID == "" || cur.ImageID == old.ImageID {
 		return
 	}
-	tag, up := compose.RollbackCommands(p, old.Image, old.ImageID)
+	// The tag moved under the container and rung 2 took it. Record it as a move that was followed, not made: the dependents
+	// step may take it for the sidecars of this container (plan v3.13 item 6), and the rollback names them.
+	var sidecars []string
+	if now, err := d.rd.ImageID(ctx, old.Image, d.cs().server.Arch); err == nil && now != "" {
+		nowPlain, _ := d.rd.ImageID(ctx, old.Image, "")
+		d.recordFollowed(old.Image, mover{Key: t.Key, At: d.clk.Now(), Old: old.Labels[compose.LabelImage], OldPlain: old.ImageID}, now, nowPlain)
+		sidecars = d.sidecarsSharing(ctx, old, old.Image, old.Labels[compose.LabelImage], old.ImageID)
+	}
+	tag, up := compose.RollbackCommands(p, old.Image, old.ImageID, sidecars...)
 	attrs := map[string]string{
 		"ref": old.Image, "old": old.ImageID, "new": cur.ImageID, "old_image": old.ImageID,
 		"rollback_tag": tag, "rollback_up": up, "ok": "true",
+	}
+	if len(sidecars) > 0 {
+		attrs["sidecars"] = strings.Join(sidecars, ",")
 	}
 	msg := fmt.Sprintf("%s: %s -> %s; recreated", old.Image, shortID(old.ImageID), shortID(cur.ImageID))
 	if recreateErr != nil {
