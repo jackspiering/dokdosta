@@ -16,6 +16,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A container stopped by hand just after a reconnect or a reboot stays stopped.** Inside the restore window the `kill`
+  set no marker, but the `die` after it was then taken for a crash, so a `docker stop` made within `STARTUP_SETTLE` of a
+  reconnect, a daemon restart or a start of whalenurse was undone about `GRACE` later ("died with exit 143, no preceding
+  kill"). The container is now judged without evidence: a signal exit (137/143) is notify-only.
 - **A scaled service is healed at rung 1 only.** Every compose command names the service and acts on all of its containers,
   so healing one unhealthy replica of a service with more than one container force-recreated the healthy ones as well, and
   scaled a service started with `docker compose up --scale` back to its declared count (removing the container being healed,

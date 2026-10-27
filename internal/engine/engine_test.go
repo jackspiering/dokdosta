@@ -639,6 +639,23 @@ func TestRefuseDoesNotConsumeTheRung(t *testing.T) {
 	}
 }
 
+// A kill inside the restore window sets no marker, and the die that follows it is not a crash: the kill did precede it.
+func TestKillThenDieInsideTheRestoreWindowIsNotACrash(t *testing.T) {
+	e, _, _ := newEngine(t, 100)
+	tg := Target{Key: "h/p/s/1"}
+	e.OpenRestoreWindow(2*time.Minute, "test")
+	e.ObserveDockerEvent(tg, docker.Event{Action: "kill"})
+	e.ObserveDockerEvent(tg, docker.Event{Action: "die"})
+	if ev := e.Evidence(tg.Key); ev.Crashed || ev.ManualStop || !ev.Known {
+		t.Fatalf("%+v", ev)
+	}
+	// The die used the kill up: a later die with no kill before it is a crash again, whether a start came between or not.
+	e.ObserveDockerEvent(tg, docker.Event{Action: "die"})
+	if ev := e.Evidence(tg.Key); !ev.Crashed {
+		t.Fatalf("%+v", ev)
+	}
+}
+
 // The list of shutdown windows does not grow with every stream loss of a long run, and the open window and the newest
 // closed ones stay.
 func TestShutdownWindowsAreBounded(t *testing.T) {
