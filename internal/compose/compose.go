@@ -19,6 +19,10 @@ type Reader interface {
 	// has none). Only that one field is read: the rest of the rendered config (which can hold interpolated secrets) is
 	// dropped, never logged.
 	PullPolicy(ctx context.Context, p Project) (string, error)
+	// DeclaredLabels runs the same `config --format json --no-env-resolution -- <svc>` and returns the whalenurse.* label
+	// keys that the service's `labels:` declare (plan v3.13 item 10): a label of the container that the compose file does
+	// not declare was not put there by the operator. Only those keys are kept, never a value.
+	DeclaredLabels(ctx context.Context, p Project) ([]string, error)
 }
 
 // Actor is the mutating half. Both methods deploy what is on disk and in the local image store now, so the drift guard
@@ -111,6 +115,17 @@ func (c *Compose) PullPolicy(ctx context.Context, p Project) (string, error) {
 		return "", err
 	}
 	return ParsePullPolicy(res.Stdout, p.Service)
+}
+
+func (c *Compose) DeclaredLabels(ctx context.Context, p Project) ([]string, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	res, err := c.run.Run(ctx, c.cmd(p, "config", "--format", "json", "--no-env-resolution", "--", p.Service))
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeclaredLabels(res.Stdout, p.Service)
 }
 
 func (c *Compose) Recreate(ctx context.Context, p Project) error {

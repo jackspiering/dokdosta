@@ -43,6 +43,13 @@ workflow refuses an undated section.
 
 ### Security
 
+- **Labels that come from an image no longer steer whalenurse.** Docker copies an image's own labels onto the containers
+  made from it, so an image could opt itself in (`whalenurse.enable=true`), turn on the pull rung, start itself after a
+  `docker stop`, or claim a compose identity. whalenurse now reads the image's labels by image ID: on a compose container a
+  `whalenurse.*` label counts only if the compose file declares it; on any other container one with the image's own value
+  is ignored; a container whose `com.docker.compose.*` labels are the image's is treated as not made by compose (restart
+  rung only). One warning names the ignored labels. To opt in a container whose image ships the same value, declare the label
+  in the compose file or use `WHALENURSE_MODE=all`.
 - **The service name is always the operand after `--` in the compose commands whalenurse runs** (`up`, `pull` and the
   `pull_policy` read). The name is already validated before it reaches a command line; `--` makes sure no compose release
   can read it as a flag. The integration tests' compose filter accepts only that form.
