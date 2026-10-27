@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -1141,6 +1143,121 @@ func TestUpgradedHostPluginIsNotedInTheDriftMessage(t *testing.T) {
 	h2.advance(6 * time.Minute)
 	if h2.cf.Count("recreate") != 1 || h2.count(engine.DriftWarned) != 1 {
 		t.Fatalf("%v", h2.rec.Types())
+	}
+}
+
+// A sidecar that holds an ipc: or pid: reference is found like a network_mode one. The container list carries only
+// NetworkMode, so the poll and the dependents sweep must learn the other references from an inspect (WN-023).
+func TestNotOptedInIpcOrPidSidecarFollowsItsOptedInParent(t *testing.T) {
+	for _, kind := range []string{"ipc", "pid", "network"} {
+		setRef := func(c *docker.Container, ref string) {
+			switch kind {
+			case "ipc":
+				c.IpcMode = ref
+			case "pid":
+				c.PidMode = ref
+			default:
+				c.NetworkMode = ref
+			}
+		}
+		t.Run(kind, func(t *testing.T) {
+			h := newCompose(t, nil, nil, docker.ServerInfo{})
+			parent := h.svc(hexID("c1"), "p", "parent")
+			dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true")
+			h.set(dep.ID, func(c *docker.Container) { setRef(c, "container:"+parent.ID) })
+			h.noOptIn(dep.ID)
+			var newParent docker.Container
+			h.cf.OnUp = func(compose.Project) error {
+				h.replace("p", "dep", func(c *docker.Container) { setRef(c, "container:"+newParent.ID) })
+				return nil
+			}
+			h.tick() // the startup sweep schedules every key whatever it holds; the restart below happens after it
+			newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+			h.event(newParent, "create", "")
+			h.event(newParent, "start", "")
+			h.advance(3 * time.Minute)
+			if got := h.verbs(); got != "up dep" {
+				t.Fatalf("%q", got)
+			}
+		})
+	}
+}
+
+// A sidecar that appears after the startup sweep is found too: the daemon inspects each new container ID of a compose
+// service once, because the list does not show its ipc or pid reference. A container with no reference and no opt-in is
+// inspected once when it is new and then left alone by the poll.
+func TestNotOptedInSidecarCreatedAfterStartupIsFoundAndPlainContainersAreNotPolled(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent := h.svc(hexID("c1"), "p", "parent")
+	plain := h.svc(hexID("f1"), "p", "plain")
+	h.noOptIn(plain.ID)
+	h.tick()
+	inspects := map[string]int{}
+	h.fake.AfterInspect = func(_ *docker.Fake, ref string) { inspects[ref]++ }
+
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) { c.IpcMode = "container:" + parent.ID })
+	h.noOptIn(dep.ID)
+	var newParent docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) { c.IpcMode = "container:" + newParent.ID })
+		return nil
+	}
+	h.advance(3 * time.Minute) // polls: the new ID is inspected once
+	newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.event(newParent, "create", "")
+	h.event(newParent, "start", "")
+	h.advance(3 * time.Minute)
+	if got := h.verbs(); got != "up dep" {
+		t.Fatalf("%q", got)
+	}
+	if n := inspects[plain.ID]; n != 0 {
+		t.Fatalf("a container with no reference and no opt-in is not inspected by the poll: %d", n)
+	}
+}
+
+// What learnRefs remembers follows the list, skips what cannot be a sidecar, and does not get stuck behind one inspect that
+// fails.
+func TestLearnRefsPrunesSkipsAndMovesPastAFailingInspect(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent := h.svc(hexID("c1"), "p", "parent")
+	h.tick()
+	mk := func(id, svc string, fn func(*docker.Container)) docker.Container {
+		c := h.svc(hexID(id), "p", svc)
+		c = h.set(c.ID, func(c *docker.Container) {
+			c.IpcMode = "container:" + parent.ID
+			delete(c.Labels, config.LabelEnable)
+			fn(c)
+		})
+		return c
+	}
+	bad := mk("a1", "bad", func(*docker.Container) {})
+	good := mk("a2", "good", func(*docker.Container) {})
+	off := mk("a3", "off", func(c *docker.Container) { c.Labels[config.LabelEnable] = "false" })
+	once := mk("a4", "once", func(c *docker.Container) { c.Labels[docker.LabelOneOff] = "True" })
+	h.fake.InspectWait = func(_ context.Context, ref string) error {
+		if ref == bad.ID {
+			return errors.New("boom")
+		}
+		return nil
+	}
+	h.advance(61 * time.Second) // a poll: bad fails and ends this refresh, good waits for the next one
+	h.advance(61 * time.Second)
+	if _, ok := h.d.refs[good.ID]; !ok {
+		t.Fatalf("a failing inspect must not keep the others from being learned: %v", h.d.refs)
+	}
+	if _, ok := h.d.refs[bad.ID]; ok {
+		t.Fatal("a failed inspect learns nothing")
+	}
+	for _, c := range []docker.Container{off, once} {
+		if _, ok := h.d.refs[c.ID]; ok {
+			t.Fatalf("%s must not be inspected for references", c.Name)
+		}
+	}
+	h.fake.Remove(good.ID)
+	h.advance(61 * time.Second)
+	if _, ok := h.d.refs[good.ID]; ok {
+		t.Fatal("the entry of an ID that left the list is dropped")
 	}
 }
 

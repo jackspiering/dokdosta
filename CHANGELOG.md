@@ -33,6 +33,7 @@ workflow refuses an undated section.
 - **`/static/` is a 404, not a directory listing.** The dashboard's embedded asset directory could be listed.
 - **A container whose name has a `.` or `..` part gets no dashboard link** instead of a link the server would clean into
   another page. A multi-byte first letter in a reason is no longer cut in half.
+- A sidecar without its own opt-in that shares its parent's `ipc` or `pid` namespace (not only `network_mode`) is now found and repaired when the parent restarts or is recreated while whalenurse runs, not only after a whalenurse restart.
 
 ### Security
 

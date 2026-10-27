@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -144,6 +145,8 @@ type Daemon struct {
 	view        *view                        // what the API reads
 	parents     map[string][]string          // per key: the services a dependent depends on, learned (also kept in the store's meta; parents.go)
 	parentsGone map[string]time.Time         // keys that were not in the last list, and since when
+	refs        map[string][]string          // per container ID: its container: references (network_mode, ipc, pid) as the last inspect showed them
+	refsRetry   map[string]time.Time         // IDs whose inspect for refs failed, and when learnRefs may try again
 	moves       map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
 
 	eventsUp   atomic.Bool
@@ -177,6 +180,7 @@ func New(o Options) *Daemon {
 		pend:      map[string]pending{},
 		warned:    map[string]bool{},
 		parents:   map[string][]string{}, parentsGone: map[string]time.Time{},
+		refs: map[string][]string{}, refsRetry: map[string]time.Time{},
 		depGate: map[string]depGate{},
 		view:    newView(),
 	}
@@ -617,7 +621,7 @@ func (d *Daemon) sweepDependents(ctx context.Context) {
 		return
 	}
 	for _, s := range d.idx.all {
-		if hasRef(s) {
+		if d.holdsRef(s) {
 			d.schedule(d.keyOf(s), d.clk.Now())
 		}
 	}
@@ -636,7 +640,7 @@ func (d *Daemon) poll(ctx context.Context) {
 	d.forgetParents(now)
 	for _, s := range d.idx.all {
 		cfg, _ := config.ParseLabels(s.Labels, d.cfg.Mode)
-		if !cfg.OptedIn && (cfg.Disabled || !hasRef(s)) {
+		if !cfg.OptedIn && (cfg.Disabled || !d.holdsRef(s)) {
 			continue // a sidecar that is not opted in is still looked at: its opted-in parent may have left it stale
 		}
 		d.schedule(d.keyOf(s), now.Add(d.cfg.Grace))
@@ -661,7 +665,7 @@ func (d *Daemon) processDue(ctx context.Context) {
 	// Parents before dependents: a dependent's ladder is held back while its
 	// parent has an incident open, so the parent must get to open it first.
 	sort.SliceStable(due, func(i, j int) bool {
-		return !hasRef(d.idx.byKey[due[i]]) && hasRef(d.idx.byKey[due[j]])
+		return !d.holdsRef(d.idx.byKey[due[i]]) && d.holdsRef(d.idx.byKey[due[j]])
 	})
 	for _, k := range due {
 		delete(d.pend, k)
@@ -695,6 +699,7 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	d.apiOK()
 	t.ID, t.Name = c.ID, c.Name
 	now := d.clk.Now()
+	d.refs[c.ID] = containerRefs(c)
 
 	d.learnParents(key, c)
 	cfg, warns := config.ParseLabels(c.Labels, d.cfg.Mode)
@@ -768,7 +773,7 @@ func (d *Daemon) adjust(c docker.Container, cfg config.Container, dec rules.Deci
 	if dec.Class == rules.ClassExitedHostStopped {
 		if deps := d.dependentNames(c); len(deps) > 0 {
 			dec.Dependents = deps
-			dec.Reason += "; its network_mode dependents (" + strings.Join(deps, ", ") + ") stay down with it"
+			dec.Reason += "; its dependents (" + strings.Join(deps, ", ") + ") stay down with it"
 		}
 	}
 	return dec
@@ -862,12 +867,42 @@ func (d *Daemon) keyOf(s docker.Summary) string {
 
 func hasRef(s docker.Summary) bool { return docker.ContainerRef(s.NetworkMode) != "" }
 
-// dependentNames lists the containers (from the last list) whose network_mode points at c.
+// containerRefs lists the container: references of a container, raw: network_mode, ipc and pid.
+func containerRefs(c docker.Container) []string {
+	out := []string{}
+	for _, m := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
+		if r := docker.ContainerRef(m); r != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// refsOf is every container: reference the daemon knows a listed container holds. The list carries only NetworkMode; the
+// ipc and pid references are known from an inspect (process, learnRefs) and are those of the last one.
+func (d *Daemon) refsOf(s docker.Summary) []string {
+	refs := d.refs[s.ID]
+	if r := docker.ContainerRef(s.NetworkMode); r != "" && !slices.Contains(refs, r) {
+		return append(slices.Clone(refs), r)
+	}
+	return refs
+}
+
+// holdsRef reports whether a listed container holds a container: reference of any kind (WN-023).
+func (d *Daemon) holdsRef(s docker.Summary) bool { return hasRef(s) || len(d.refs[s.ID]) > 0 }
+
+// dependentNames lists the containers (from the last list) whose network_mode, ipc or pid points at c.
 func (d *Daemon) dependentNames(c docker.Container) []string {
 	var out []string
 	for _, s := range d.idx.all {
-		if s.ID != c.ID && docker.MatchesRef(c.ID, c.Name, docker.ContainerRef(s.NetworkMode)) {
-			out = append(out, s.Name)
+		if s.ID == c.ID {
+			continue
+		}
+		for _, ref := range d.refsOf(s) {
+			if docker.MatchesRef(c.ID, c.Name, ref) {
+				out = append(out, s.Name)
+				break
+			}
 		}
 	}
 	sort.Strings(out)
@@ -875,6 +910,51 @@ func (d *Daemon) dependentNames(c docker.Container) []string {
 }
 
 func (d *Daemon) hasDependents(c docker.Container) bool { return len(d.dependentNames(c)) > 0 }
+
+// learnRefs inspects each container ID that is new in the list once, when it is a compose service without an opt-in of
+// its own: it may hold an ipc: or pid: reference to an opted-in parent, which the list does not show, and the poll and the
+// dependents sweep look at such a sidecar (WN-023). An opted-in container is inspected by the poll anyway (process), and
+// one with no compose service cannot be a dependent. What is remembered for IDs that left the list is dropped.
+func (d *Daemon) learnRefs(ctx context.Context, list []docker.Summary) {
+	live := make(map[string]struct{}, len(list))
+	for _, s := range list {
+		live[s.ID] = struct{}{}
+	}
+	for id := range d.refs {
+		if _, ok := live[id]; !ok {
+			delete(d.refs, id)
+		}
+	}
+	for id := range d.refsRetry {
+		if _, ok := live[id]; !ok {
+			delete(d.refsRetry, id)
+		}
+	}
+	now := d.clk.Now()
+	for _, s := range list {
+		if _, seen := d.refs[s.ID]; seen || hasRef(s) || s.ID == d.o.SelfID || s.Labels[docker.LabelService] == "" ||
+			docker.IsOneOff(s.Labels) || s.Labels[docker.LabelSwarmTaskID] != "" {
+			continue
+		}
+		if cfg, _ := config.ParseLabels(s.Labels, d.cfg.Mode); cfg.OptedIn || cfg.Disabled {
+			continue
+		}
+		if at, ok := d.refsRetry[s.ID]; ok && now.Before(at) {
+			continue
+		}
+		c, err := d.rd.Inspect(ctx, s.ID)
+		if errors.Is(err, docker.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			// Not this one again before the next poll; and no more inspects in this refresh, the API may be struggling.
+			d.refsRetry[s.ID] = now.Add(d.cfg.PollInterval)
+			return
+		}
+		delete(d.refsRetry, s.ID)
+		d.refs[s.ID] = containerRefs(c)
+	}
+}
 
 // refresh reloads the container list. When two containers share a key (compose
 // renames the old one while it recreates), the newest wins.
@@ -894,6 +974,7 @@ func (d *Daemon) refresh(ctx context.Context) error {
 		}
 	}
 	d.idx = idx
+	d.learnRefs(ctx, list)
 	d.view.setList(list)
 	return nil
 }
