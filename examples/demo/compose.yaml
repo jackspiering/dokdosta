@@ -43,14 +43,14 @@ services:
   # bop: healthy until told otherwise. `bop unhealthy sticky=true` makes /healthz fail and survive a restart, so the restart
   # rung cannot fix it and the recreate rung has to.
   bop:
-    image: ghcr.io/jackspiering/bop:0.1.0
+    image: ghcr.io/jackspiering/bop:0.2.0
     restart: unless-stopped
     labels:
       whalenurse.enable: "true"
 
   # A sidecar in bop's network namespace. When bop is recreated it loses that namespace; whalenurse recreates it too.
   bop-sidecar:
-    image: ghcr.io/jackspiering/bop:0.1.0
+    image: ghcr.io/jackspiering/bop:0.2.0
     restart: unless-stopped
     network_mode: service:bop
     command: ["sidecar", "--target=http://127.0.0.1:8080"]
