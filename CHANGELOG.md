@@ -14,8 +14,46 @@ workflow refuses an undated section.
 
 - The test compose fake now empties a sidecar's `depends_on` label on a recreate, like `compose up --no-deps`, and a test guards that the pull rung still finds the sidecar of a parent's moved tag (tests only).
 
+### Changed
+
+- **The documentation says what the drift guard checks for a sidecar.** A service that shares another container's network,
+  ipc or pid namespace, or uses `volumes_from`, gets only the image check and (with the bundled compose) the version check,
+  not the compose-edit check; an edit to its own definition that was not deployed is deployed when whalenurse repairs it.
+  The README, `docs/configuration.md`, `docs/troubleshooting.md` and `docs/labels.md` now say so. No behaviour changes.
+
 ### Fixed
 
+- **A sidecar's own compose edit is now checked when it heals itself.** For a `network_mode`/`ipc`/`pid` or `volumes_from`
+  container that is opted in and heals itself while what it references is current, the drift guard now asks compose's dry
+  run, so an edit to its own definition that you have not deployed blocks the recreate instead of being deployed. The check
+  is still not made when the sidecar is repaired after its parent was recreated, in the pull rung's image-move mode, or with
+  compose v5.2.0, whose dry run said "recreate" for unchanged holders in the CI test.
+- **A pull that took minutes no longer acts on a stale check.** After the pull rung's pull moved the image, the `up` ran on
+  the pause and drift checks made before the pull. Now both are checked again first: a container paused meanwhile, or a
+  compose file edited meanwhile, gets no `up`. The "upgraded during heal" message then says the recreate was not run (with the
+  rollback, since the tag has moved), a pause follows the pause rules, and a finding is a drift block and SUSPENDED.
+- **`whalenurse.heal.pull` no longer lets rung 2 replace a pinned or locally built image.** Rung 2 of a container with the
+  label took a moved image tag in its recreate (and said "upgraded during heal"), even for a service whose
+  `pull_policy` is `never` or `build`, where the pull rung can never apply: the label's only effect was to switch off the
+  moved-tag block. The allowance now needs a readable `pull_policy` that is neither; otherwise a moved tag blocks and
+  SUSPENDS as for a container without the label. whalenurse reads the policy (`docker compose config`) once more per heal
+  of such a container.
+- **The state of a container that is gone is forgotten.** A container removed while it was exited or SUSPENDED sends only
+  `destroy`, and one removed while whalenurse was down is never listed again, so its SUSPENDED incident, manual-stop marker
+  and flap history stayed in `whalenurse status` and the store for ever, and a new container under the same name inherited
+  them. After each successful container list the poll and the startup sweep now forget every key without a container, and
+  its open incident closes with the outcome `gone`. A list that is empty is believed only the second time, and a failed list
+  forgets nothing. **Note:** forgetting wipes the key's SUSPENDED state and its flap history, so a container removed and
+  created again more than `WHALENURSE_GRACE` apart starts with a clean slate (as a running one already did).
+- **The bundled compose's version skew now blocks a sidecar's recreate.** A `network_mode`/`ipc`/`pid` or `volumes_from`
+  container made by another compose release than the bundled one (no host plugin mounted) was recreated by the bundled
+  compose with no check, by the dependents step after its parent's recreate and by its own rung 2 and pull. The guard now
+  says "can't verify drift" and the container is not recreated (the block stays also with `WHALENURSE_DRIFT_GUARD=warn`).
+  **Action:** mount the host's compose plugin at `/host/docker-compose`, as the examples do.
+- **A container stopped by hand just after a reconnect or a reboot stays stopped.** Inside the restore window the `kill`
+  set no marker, but the `die` after it was then taken for a crash, so a `docker stop` made within `STARTUP_SETTLE` of a
+  reconnect, a daemon restart or a start of whalenurse was undone about `GRACE` later ("died with exit 143, no preceding
+  kill"). The container is now judged without evidence: a signal exit (137/143) is notify-only.
 - **A reboot no longer makes whalenurse forget a `docker stop` from long before it.** A changed boot id dropped every
   manual-stop marker, so a container you had stopped on purpose was started again after a reboot. Now, with the previous
   run's `last_seen` known, only the markers set in the 30 s before it (the shutdown's own kills) are dropped; older ones are
@@ -50,10 +88,8 @@ workflow refuses an undated section.
   `GRACE` whatever the condition. A `created` container waiting on a `service_healthy` or `service_completed_successfully`
   dependency that does not hold yet is now held, with no incident, and looked at again at each poll; `status` and the dashboard
   say what it waits for.
-- **The integration tests' host-safety preflight (and the M0b one) now sees every spelling of an opt-in.** It listed strangers
-  with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
-  it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps
-  and which rely on the preflight alone.
+- Whether a sidecar without its own opt-in is repaired after its parent was recreated is decided by the service its `network_mode`/`ipc`/`pid` names, no longer by any opted-in service in its `depends_on`.
+- A sidecar that shares its parent's image is no longer left stale and SUSPENDED when the parent is upgraded during heal by rung 2 (the recreate takes a tag someone else moved): it follows its parent, and the rollback in the "upgraded during heal" message names it.
 
 ### Security
 

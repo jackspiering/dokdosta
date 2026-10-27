@@ -126,29 +126,31 @@ type Daemon struct {
 	clk clock.Clock
 	log *slog.Logger
 
-	started     time.Time
-	lastBeat    time.Time // when last_seen was last written
-	settled     bool
-	settledFlag atomic.Bool // settled, readable from the control socket
-	nextPoll    time.Time
-	sweepAt     time.Time // dependents sweep requested by a parent start/create
-	reconnectAt time.Time // full sweep after a reconnect that followed a lost stream
-	streamLost  bool      // the stream ended and has not been re-established yet
-	streamSeen  bool      // a stream has been established at least once
-	apiDown     bool
-	pend        map[string]pending
-	warned      map[string]bool
-	idx         index
-	compState   atomic.Pointer[composeState] // the startup version gate, readable from the control socket
-	depGate     map[string]depGate           // one dependent at a time per parent, keyed by the raw container: reference
-	beatEvery   time.Duration                // how often last_seen is written during an action (heartbeatEvery; tests shorten it)
-	stopGrace   time.Duration                // how long an action in flight may run on after the stop (shutdownGrace)
-	view        *view                        // what the API reads
-	parents     map[string][]string          // per key: the services a dependent depends on, learned (also kept in the store's meta; parents.go)
-	parentsGone map[string]time.Time         // keys that were not in the last list, and since when
-	refs        map[string][]string          // per container ID: its container: references (network_mode, ipc, pid) as the last inspect showed them
-	refsRetry   map[string]time.Time         // IDs whose inspect for refs failed, and when learnRefs may try again
-	moves       map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
+	started      time.Time
+	lastBeat     time.Time // when last_seen was last written
+	settled      bool
+	settledFlag  atomic.Bool // settled, readable from the control socket
+	nextPoll     time.Time
+	sweepAt      time.Time // dependents sweep requested by a parent start/create
+	reconnectAt  time.Time // full sweep after a reconnect that followed a lost stream
+	streamLost   bool      // the stream ended and has not been re-established yet
+	streamSeen   bool      // a stream has been established at least once
+	apiDown      bool
+	listWasEmpty bool // the last successful list had no container (scheduleAbsent)
+	pend         map[string]pending
+	warned       map[string]bool
+	idx          index
+	compState    atomic.Pointer[composeState] // the startup version gate, readable from the control socket
+	depGate      map[string]depGate           // one dependent at a time per parent, keyed by the raw container: reference
+	beatEvery    time.Duration                // how often last_seen is written during an action (heartbeatEvery; tests shorten it)
+	stopGrace    time.Duration                // how long an action in flight may run on after the stop (shutdownGrace)
+	view         *view                        // what the API reads
+	parents      map[string][]string          // per key: the services a dependent depends on, learned (also kept in the store's meta; parents.go)
+	nsParents    map[string][]string          // per key: the services its container: references resolved to (also kept in the store's meta; parents.go)
+	parentsGone  map[string]time.Time         // keys that were not in the last list, and since when
+	refs         map[string][]string          // per container ID: its container: references (network_mode, ipc, pid) as the last inspect showed them
+	refsRetry    map[string]time.Time         // IDs whose inspect for refs failed, and when learnRefs may try again
+	moves        map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
 
 	eventsUp   atomic.Bool
 	eventsDown atomic.Int64 // unix nanos when the stream went down; 0 while up
@@ -180,7 +182,7 @@ func New(o Options) *Daemon {
 		stopGrace: shutdownGrace,
 		pend:      map[string]pending{},
 		warned:    map[string]bool{},
-		parents:   map[string][]string{}, parentsGone: map[string]time.Time{},
+		parents:   map[string][]string{}, nsParents: map[string][]string{}, parentsGone: map[string]time.Time{},
 		refs: map[string][]string{}, refsRetry: map[string]time.Time{},
 		depGate: map[string]depGate{},
 		view:    newView(),
@@ -635,6 +637,26 @@ func (d *Daemon) sweep(ctx context.Context) {
 	for _, s := range d.idx.all {
 		d.schedule(d.keyOf(s), d.clk.Now())
 	}
+	d.scheduleAbsent(d.clk.Now().Add(d.cfg.Grace))
+}
+
+// scheduleAbsent schedules every key the engine holds state for whose container is not in the list, so that process
+// forgets it (closing its incident as "gone"): a container removed while it was exited or SUSPENDED sends only `destroy`,
+// and one removed while whalenurse was down is never listed again. It runs only after a successful List, and not after an
+// empty one the first time: Forget wipes SUSPENDED state, and an empty list is more likely a daemon that is not ready than
+// a host with no containers. A second empty list in a row is believed.
+func (d *Daemon) scheduleAbsent(at time.Time) {
+	empty := len(d.idx.all) == 0
+	skip := empty && !d.listWasEmpty
+	d.listWasEmpty = empty
+	if skip {
+		return
+	}
+	for _, k := range d.eng.Keys() {
+		if _, ok := d.idx.byKey[k]; !ok {
+			d.schedule(k, at)
+		}
+	}
 }
 
 func (d *Daemon) sweepDependents(ctx context.Context) {
@@ -666,6 +688,7 @@ func (d *Daemon) poll(ctx context.Context) {
 		}
 		d.schedule(d.keyOf(s), now.Add(d.cfg.Grace))
 	}
+	d.scheduleAbsent(now.Add(d.cfg.Grace))
 }
 
 func (d *Daemon) processDue(ctx context.Context) {

@@ -984,6 +984,155 @@ func TestAnUnreadableBootIDIsNotOverwritten(t *testing.T) {
 	}
 }
 
+// A stop by hand inside the restore window: the kill sets no marker, but it did precede the die, so the die is not a crash
+// either. The container is judged without evidence (a signal exit is notify-only), not started again.
+func TestAStopByHandInsideTheRestoreWindowIsNotHealed(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	a := h.running(hexID("a1"), "p", "web")
+	h.advance(time.Second)
+	h.d.Engine().OpenRestoreWindow(2*time.Minute, "test")
+	h.event(a, "kill", "")
+	h.set(a.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.FinishedAt = "exited", false, 143, h.clk.Now()
+	})
+	h.event(a, "die", "")
+	h.advance(time.Minute)
+	h.wantCalls()
+	if ev := h.d.Engine().Evidence(key("p", "web")); ev.Crashed || ev.ManualStop {
+		t.Fatalf("a kill then a die is neither a crash nor a marker in the window: %+v", ev)
+	}
+}
+
+// The positive control: a die with no kill before it inside the window is still a crash and is healed.
+func TestACrashInsideTheRestoreWindowIsStillHealed(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	a := h.running(hexID("a1"), "p", "web")
+	h.advance(time.Second)
+	h.d.Engine().OpenRestoreWindow(2*time.Minute, "test")
+	h.set(a.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.FinishedAt = "exited", false, 1, h.clk.Now()
+	})
+	h.event(a, "die", "")
+	h.advance(time.Minute)
+	h.wantCalls("start " + a.ID)
+}
+
+// ---- the state of a container that is gone -----------------------------------------------------------------------
+
+func suspendedSnapshot(k string) engine.Snapshot {
+	return engine.Snapshot{Keys: []engine.KeyRecord{{Key: k, Name: "p-gone-1", Incident: &engine.IncidentRecord{
+		Opened: time.Unix(0, 0), Class: "unhealthy", Spent: true, SpentReason: engine.ReasonLadder, Suspended: true}}}}
+}
+
+// A key restored from the store whose container was removed while whalenurse was down is never listed again: the sweep
+// forgets it, and its open incident closes as gone. (An empty list is believed only the second time: see the next test.)
+func TestRestoredKeyWithoutContainerIsForgotten(t *testing.T) {
+	k := key("p", "gone")
+	h := newHarnessOpts(t, nil, nil, func(o *Options) { o.Snapshot = suspendedSnapshot(k) })
+	h.running(hexID("b1"), "p", "other")
+	h.tick()
+	h.advance(time.Minute)
+	if open, _ := h.d.Engine().IncidentOpen(k); open || len(h.d.Engine().Status().Keys) != 0 {
+		t.Fatalf("the restored key of a removed container must be forgotten: %+v", h.d.Engine().Status().Keys)
+	}
+	if got := closedEvents(h); len(got) != 1 || got[0].Attrs["reason"] != "gone" {
+		t.Fatalf("%v", h.rec.Types())
+	}
+}
+
+// One empty list is more likely a daemon that is not ready than a host with no containers: nothing is forgotten from it.
+func TestAnEmptyListForgetsNothingTheFirstTime(t *testing.T) {
+	k := key("p", "gone")
+	h := newHarnessOpts(t, nil, nil, func(o *Options) { o.Snapshot = suspendedSnapshot(k) })
+	h.tick()
+	h.advance(10 * time.Second)
+	if open, susp := h.d.Engine().IncidentOpen(k); !open || !susp {
+		t.Fatal("forgotten after one empty list")
+	}
+	h.advance(3 * time.Minute) // later polls keep seeing an empty list
+	if open, _ := h.d.Engine().IncidentOpen(k); open {
+		t.Fatal("a list that stays empty is believed")
+	}
+}
+
+// A failed List forgets nothing.
+func TestAFailedListForgetsNothing(t *testing.T) {
+	k := key("p", "gone")
+	h := newHarnessOpts(t, nil, nil, func(o *Options) { o.Snapshot = suspendedSnapshot(k) })
+	h.running(hexID("b1"), "p", "other")
+	h.fake.ListErr = errors.New("daemon not ready")
+	h.tick()
+	h.advance(3 * time.Minute)
+	if open, _ := h.d.Engine().IncidentOpen(k); !open {
+		t.Fatal("forgotten after a failed list")
+	}
+}
+
+// A container that ended SUSPENDED and was then removed sends only `destroy`: it used to stay in `status` for ever.
+func TestARemovedStoppedContainerIsForgotten(t *testing.T) {
+	h := newHarness(t, func(c *config.Global) { c.PollInterval = time.Hour }, nil)
+	a := h.running(hexID("a1"), "p", "web")
+	h.running(hexID("b1"), "p", "other")
+	h.tick()
+	h.set(a.ID, unhealthy)
+	h.event(a, "health_status", "unhealthy")
+	h.advance(10 * time.Minute)
+	if !h.d.Engine().Suspended(key("p", "web")) {
+		t.Fatalf("setup: %v", h.rec.Types())
+	}
+	h.fake.Remove(a.ID)
+	h.event(a, "destroy", "")
+	h.advance(3 * time.Minute)
+	if h.count(engine.IncidentClosed) != 0 {
+		t.Fatal("nothing looks at a removed container before the next poll")
+	}
+	h.clk.Advance(time.Hour)
+	h.advance(time.Minute)
+	if open, _ := h.d.Engine().IncidentOpen(key("p", "web")); open || len(h.d.Engine().Status().Keys) != 0 {
+		t.Fatalf("%+v", h.d.Engine().Status().Keys)
+	}
+	if got := closedEvents(h); len(got) != 1 || got[0].Attrs["reason"] != "gone" {
+		t.Fatalf("%v", h.rec.Types())
+	}
+}
+
+func closedEvents(h *harness) []engine.Event {
+	var out []engine.Event
+	for _, e := range h.rec.Events() {
+		if e.Type == engine.IncidentClosed {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// A hand recreate (the container gone for a moment, then back under the same key) keeps the key's state: process looks at the
+// list again Grace after the poll that missed it.
+func TestAKeyThatIsBackWithinGraceIsNotForgotten(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	a := h.running(hexID("a1"), "p", "web")
+	h.running(hexID("b1"), "p", "other")
+	h.tick()
+	h.set(a.ID, unhealthy)
+	h.event(a, "health_status", "unhealthy")
+	h.advance(10 * time.Minute)
+	if !h.d.Engine().Suspended(key("p", "web")) {
+		t.Fatalf("setup: %v", h.rec.Types())
+	}
+	h.advance(40 * time.Second) // the keys scheduled by the last poll have been looked at
+	h.fake.Remove(a.ID)
+	for np := h.d.nextPoll; h.d.nextPoll.Equal(np); { // up to the poll that misses it
+		h.advance(time.Second)
+	}
+	h.advance(5 * time.Second)
+	h.running(hexID("a2"), "p", "web", config.LabelEnable, "true")
+	h.set(hexID("a2"), unhealthy)
+	h.advance(time.Minute)
+	if !h.d.Engine().Suspended(key("p", "web")) || len(closedEvents(h)) != 0 {
+		t.Fatalf("%v %+v", h.rec.Types(), closedEvents(h))
+	}
+}
+
 // A pause on a scope that matches no watched container still stands, but the reply says so (resume and unsuspend answer
 // "not found" there), so a typo in the project name does not pass for a working pause.
 func TestPauseSaysWhenNoWatchedContainerIsInTheScope(t *testing.T) {

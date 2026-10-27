@@ -33,8 +33,8 @@ func TestPullRungRespectsPullPolicyNeverAndBuild(t *testing.T) {
 			}
 			breakAndRun(h, web.ID, 30*time.Minute)
 
-			if got := h.verbs(); got != "dry-run web, recreate web, policy web" {
-				t.Fatalf("compose calls = %q: the policy is read, and nothing is pulled or checked after it", got)
+			if got := h.verbs(); got != "policy web, dry-run web, recreate web, policy web" {
+				t.Fatalf("compose calls = %q: the policy is read before rung 2 and again for rung 3, and nothing is pulled or checked after it", got)
 			}
 			var skipped []engine.Event
 			for _, e := range h.events(engine.RungUnavailable) {
@@ -53,7 +53,7 @@ func TestPullRungRespectsPullPolicyNeverAndBuild(t *testing.T) {
 				t.Fatalf("restart and recreate only: %v", h.rec.Types())
 			}
 			h.advance(30 * time.Minute)
-			if h.cf.Count("policy") != 1 || h.cf.Count("pull") != 0 {
+			if h.cf.Count("policy") != 2 || h.cf.Count("pull") != 0 {
 				t.Fatalf("SUSPENDED: nothing more is read or pulled: %s", h.verbs())
 			}
 		})
@@ -98,7 +98,7 @@ func TestDryRunSaysThePullRungDoesNotApply(t *testing.T) {
 			t.Fatalf("a dry run must not say it would pull a service with pull_policy never: %+v", e)
 		}
 	}
-	if h.cf.Count("policy") != 1 || h.cf.Count("pull") != 0 || h.count(engine.Suspended) != 1 {
+	if h.cf.Count("policy") != 2 || h.cf.Count("pull") != 0 || h.count(engine.Suspended) != 1 {
 		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
 	}
 }
@@ -292,7 +292,7 @@ func TestSidecarTakesTheTagItsParentsPullMoved(t *testing.T) {
 		t.Fatalf("nothing may be blocked: %+v", e)
 	}
 	verbs := h.verbs()
-	if !strings.Contains(verbs, "pull web, up web") || !strings.HasSuffix(verbs, "up side") {
+	if !strings.Contains(verbs, "pull web, dry-run web, up web") || !strings.HasSuffix(verbs, "up side") {
 		t.Fatalf("compose calls = %q: the sidecar is recreated after the parent's up", verbs)
 	}
 	if now := h.current("p", "side"); now.NetworkMode != "container:"+h.current("p", "web").ID || !now.Running {
@@ -362,6 +362,54 @@ func TestSidecarFromAnotherImageIsStillBlocked(t *testing.T) {
 	}
 }
 
+// Rung 2 takes a moved tag only where the pull rung would apply: the allowance needs a readable pull_policy that is neither
+// never nor build. Otherwise the label's only effect would be to switch off the moved-tag block for a pinned or locally
+// built image (plan v3.13 item 5).
+func TestRung2BlocksAMovedTagWhenThePullPolicyForbidsThePull(t *testing.T) {
+	for _, policy := range []string{"never", "build"} {
+		t.Run(policy, func(t *testing.T) {
+			h, web := upgradeSetup(t, true)
+			h.cf.PolicyFn = func(compose.Project) (string, error) { return policy, nil }
+			breakAndRun(h, web.ID, 6*time.Minute)
+			b := h.events(engine.DriftBlocked)
+			if h.cf.Count("recreate") != 0 || len(b) != 1 || !strings.Contains(b[0].Message, "the tag moved") || h.count(engine.Upgraded) != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+			if h.count(engine.Suspended) != 1 || h.cf.Count("pull") != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+		})
+	}
+}
+
+func TestRung2BlocksAMovedTagWhenThePullPolicyCannotBeRead(t *testing.T) {
+	h, web := upgradeSetup(t, true)
+	h.cf.PolicyFn = func(compose.Project) (string, error) { return "", errors.New("exit status 1") }
+	breakAndRun(h, web.ID, 6*time.Minute)
+	b := h.events(engine.DriftBlocked)
+	if h.cf.Count("recreate") != 0 || len(b) != 1 || !strings.Contains(b[0].Message, "the tag moved") {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+}
+
+// Every other policy leaves the allowance as it was.
+func TestRung2TakesAMovedTagForEveryPolicyThePullRungAccepts(t *testing.T) {
+	for _, policy := range []string{"", "always", "missing", "if_not_present", "daily"} {
+		t.Run("policy="+policy, func(t *testing.T) {
+			h, web := upgradeSetup(t, true)
+			h.cf.PolicyFn = func(compose.Project) (string, error) { return policy, nil }
+			h.cf.OnRecreate = func(compose.Project) error {
+				h.replace("p", "web", func(c *docker.Container) { c.Health = "healthy"; c.ImageID = imgNewID })
+				return nil
+			}
+			breakAndRun(h, web.ID, 15*time.Minute)
+			if h.cf.Count("recreate") != 1 || h.count(engine.Upgraded) != 1 || h.count(engine.DriftBlocked) != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+		})
+	}
+}
+
 // compose's `up --no-deps` leaves a sidecar's depends_on label empty, so after one repair the readers of the pull rung find
 // the parent only through the learned set (plan v3.11). The fake's replace empties the label like compose does.
 func TestSidecarRecreatedOnceStillTakesItsParentsMovedTag(t *testing.T) {
@@ -383,5 +431,110 @@ func TestSidecarRecreatedOnceStillTakesItsParentsMovedTag(t *testing.T) {
 	moved := h.events(engine.TagMoved)
 	if len(moved) != 1 || moved[0].Attrs["sidecars"] != "side" || !strings.HasSuffix(moved[0].Attrs["rollback_up"], "up -d --no-deps --pull never --no-build web side") {
 		t.Fatalf("%v / %+v", h.rec.Types(), moved)
+	}
+}
+
+// ---- plan v3.13 item 6: a sidecar follows its parent's rung-2 upgrade, and the rollback names it -----------------
+
+// upgradeWithSidecar: web (pull-enabled) is recreated by rung 2 onto an image the tag moved to under it, and a sidecar in
+// its network namespace runs the same reference, created from the image that is replaced.
+func upgradeWithSidecar(t *testing.T) (*cfH, docker.Container, docker.Container) {
+	t.Helper()
+	h, web := upgradeSetup(t, true)
+	side := h.svc(hexID("d1"), "p", "side", compose.LabelDependsOn, "web:service_started:true")
+	side = h.set(side.ID, func(c *docker.Container) {
+		c.NetworkMode, c.Image, c.ImageID = "container:"+web.ID, "web:1", imgOldID
+		c.Labels[compose.LabelImage] = imgLabel("web")
+	})
+	var newWeb docker.Container
+	h.cf.OnRecreate = func(compose.Project) error {
+		newWeb = h.replace("p", "web", func(c *docker.Container) { c.Health = "healthy"; c.ImageID = imgNewID })
+		return nil
+	}
+	h.cf.OnUp = func(p compose.Project) error {
+		if p.Service == "side" {
+			h.replace("p", "side", func(c *docker.Container) {
+				c.NetworkMode = "container:" + newWeb.ID
+				c.ImageID = h.fakeImageID("web:1")
+			})
+		}
+		return nil
+	}
+	return h, web, side
+}
+
+func TestSidecarFollowsItsParentsRung2UpgradeAndTheRollbackNamesIt(t *testing.T) {
+	h, web, side := upgradeWithSidecar(t)
+	breakAndRun(h, web.ID, 6*time.Minute)
+
+	for _, e := range h.events(engine.DriftBlocked) {
+		t.Fatalf("nothing may be blocked: %+v", e)
+	}
+	if h.count(engine.Suspended) != 0 || h.cf.Count("recreate") != 1 || h.cf.Count("up") != 1 {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+	if now := h.current("p", "side"); now.ID == side.ID || now.NetworkMode != "container:"+h.current("p", "web").ID {
+		t.Fatalf("the sidecar must follow the new parent: %+v", now)
+	}
+	up := h.events(engine.Upgraded)
+	if len(up) != 1 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+	a := up[0].Attrs
+	if a["sidecars"] != "side" || !strings.HasSuffix(a["rollback_up"], "up -d --no-deps --pull never --no-build web side") {
+		t.Fatalf("the rollback must name the sidecar: %+v", a)
+	}
+}
+
+// Only the sidecars that share the image and were created from the replaced one follow; the move is no one's pull.
+func TestFollowedMoveIsNotNamedAsAnotherStacksMoverAndOnlyServesTheParentsSidecars(t *testing.T) {
+	h, web, _ := upgradeWithSidecar(t)
+	breakAndRun(h, web.ID, 6*time.Minute)
+
+	m, ok := h.d.moveOf("web:1")
+	if !ok || !m.Followed || m.Key != key("p", "web") {
+		t.Fatalf("a followed move is recorded for the parent: %+v %v", m, ok)
+	}
+	// Another stack's container on the same reference is image-drifted by this move; the drift block must not say that
+	// whalenurse pulled it.
+	other := h.svc(hexID("f1"), "q", "app")
+	other = h.set(other.ID, func(c *docker.Container) {
+		c.Image, c.ImageID = "web:1", imgOldID
+		c.Labels[compose.LabelImage] = imgLabel("web")
+	})
+	h.set(other.ID, unhealthy)
+	h.advance(10 * time.Minute)
+	for _, e := range h.events(engine.DriftBlocked) {
+		if e.Key == key("q", "app") {
+			if e.Attrs["moved_by"] != "" || strings.Contains(e.Message, "whalenurse moved this tag") {
+				t.Fatalf("someone else moved that tag: %+v", e)
+			}
+			return
+		}
+	}
+	t.Fatalf("the other stack should have been blocked by the moved tag: %v", h.rec.Types())
+}
+
+// A followed move never replaces the record of the pull it follows, and several containers may follow the same result: each
+// keeps its own part, so every one of their sidecars can take it (plan v3.13 item 6).
+func TestFollowedMoveIsAddedToTheRecordNotReplacingIt(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	d := h.d
+	d.recordMove(tagMove{Ref: "web:1", Key: key("p", "web"), At: h.clk.Now(), Old: "old-a", OldPlain: "plain-a", New: "new", NewPlain: "new-plain"})
+	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "old-b", OldPlain: "plain-b"}, "new", "new-plain")
+	d.recordFollowed("web:1", mover{Key: key("r", "job"), At: h.clk.Now(), Old: "old-c"}, "new", "new-plain")
+	m, ok := d.moveOf("web:1")
+	if !ok || m.Key != key("p", "web") || m.Followed || len(m.Followers) != 2 || len(m.movers()) != 3 {
+		t.Fatalf("%+v", m)
+	}
+	// Following again updates the follower, it does not add a second one.
+	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "old-b2"}, "new", "new-plain")
+	if m, _ := d.moveOf("web:1"); len(m.Followers) != 2 {
+		t.Fatalf("%+v", m)
+	}
+	// A different result is a new record.
+	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "new"}, "newer", "newer-plain")
+	if m, _ := d.moveOf("web:1"); m.Key != key("q", "api") || !m.Followed || len(m.Followers) != 0 {
+		t.Fatalf("%+v", m)
 	}
 }
