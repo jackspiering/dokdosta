@@ -35,6 +35,7 @@ workflow refuses an undated section.
   another page. A multi-byte first letter in a reason is no longer cut in half.
 - A sidecar without its own opt-in that shares its parent's `ipc` or `pid` namespace (not only `network_mode`) is now found and repaired when the parent restarts or is recreated while whalenurse runs, not only after a whalenurse restart.
 - A stale sidecar whose depended-on service is down now waits with one `WaitingForParent` event instead of an `ActionRefused` every `GRACE` (which flooded the log and the event history).
+- The store no longer grows an empty `parents:<key>` row for every removed container: forgetting a dependent deletes its row, other keys write none, and empty rows left by earlier versions are removed when the database is opened.
 
 ### Security
 
