@@ -122,7 +122,7 @@ func TestEventsThatAreNotListedAreNotNotified(t *testing.T) {
 	for _, typ := range []engine.EventType{
 		engine.IncidentOpened, engine.IncidentClosed, engine.ActionStarted, engine.RungUnavailable,
 		engine.WaitingForParent, engine.ActionRefused, engine.EventAttributed, engine.ManualStopMarked,
-		engine.ManualStopCleared, engine.MarkersQuarantined, engine.RestoreWindowOpened, engine.RestoreEvent, engine.DependentPostCheck,
+		engine.ManualStopCleared, engine.MarkersQuarantined, engine.RestoreWindowOpened, engine.RestoreEvent, engine.SignalIgnored, engine.DependentPostCheck,
 	} {
 		if _, _, ok := render(ev(typ, webKey, "x", nil), rctx{}); ok {
 			t.Errorf("%s should stay in the log", typ)

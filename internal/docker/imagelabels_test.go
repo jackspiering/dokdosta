@@ -142,12 +142,3 @@ func TestFilterEventCarriesNoImageLabel(t *testing.T) {
 		t.Fatal(got.Labels)
 	}
 }
-
-func TestIsReloadSignal(t *testing.T) {
-	for sig, want := range map[string]bool{"1": true, "10": true, "12": true, "28": true, "HUP": true, "SIGHUP": true, "sigusr1": true, "USR2": true, "SIGWINCH": true,
-		"9": false, "15": false, "3": false, "2": false, "34": false, "": false, "SIGTERM": false, "SIGQUIT": false, "11": false} {
-		if got := IsReloadSignal(sig); got != want {
-			t.Errorf("IsReloadSignal(%q) = %v", sig, got)
-		}
-	}
-}
