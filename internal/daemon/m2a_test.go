@@ -975,3 +975,20 @@ func TestPauseSaysWhenNoWatchedContainerIsInTheScope(t *testing.T) {
 		}
 	}
 }
+
+// The one-at-a-time gate of a parent that no sibling asks about again is not kept for ever.
+func TestDependentGatesThatRanOutAreForgotten(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	h.d.depGate["old-parent"] = depGate{key: "h/p/side/1", until: h.clk.Now().Add(-time.Second)}
+	h.d.depGate["busy-parent"] = depGate{key: "h/p/side/2", until: h.clk.Now().Add(time.Minute)}
+	side := docker.Container{ID: hexID("c1"), NetworkMode: "container:new-parent"}
+	h.d.afterAction(engine.Target{Key: "h/p/side/3"}, side, time.Time{})
+	if _, ok := h.d.depGate["old-parent"]; ok {
+		t.Error("the expired gate is still there")
+	}
+	for _, ref := range []string{"busy-parent", "new-parent"} {
+		if _, ok := h.d.depGate[ref]; !ok {
+			t.Errorf("the gate for %s was dropped", ref)
+		}
+	}
+}

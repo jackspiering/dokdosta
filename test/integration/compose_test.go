@@ -687,16 +687,27 @@ volumes:
 	return s, img
 }
 
+// imageStatusOf runs `whalenurse status` in the container. The control socket appears a moment after the container
+// starts, so a failure is retried until a bounded deadline instead of failing the test on the first try.
 func imageStatusOf(t *testing.T, g *Guard, s *stack) imageStatus {
 	t.Helper()
-	out, err := g.Ctr(context.Background(), "exec", s.container("whalenurse").ID, "/whalenurse", "status", "--json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	id := s.container("whalenurse").ID
 	var st imageStatus
-	if err := json.Unmarshal([]byte(out), &st); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
+	var last error
+	waitFor(t, "whalenurse status to answer on the control socket", 60*time.Second, func() bool {
+		out, err := g.Ctr(context.Background(), "exec", id, "/whalenurse", "status", "--json")
+		if err == nil {
+			if err = json.Unmarshal([]byte(out), &st); err == nil {
+				return true
+			}
+			err = fmt.Errorf("%w\n%s", err, out)
+		}
+		if last == nil || last.Error() != err.Error() {
+			t.Logf("status not ready: %v", err)
+		}
+		last = err
+		return false
+	})
 	return st
 }
 
