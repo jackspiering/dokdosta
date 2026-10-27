@@ -23,6 +23,13 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **The state of a container that is gone is forgotten.** A container removed while it was exited or SUSPENDED sends only
+  `destroy`, and one removed while whalenurse was down is never listed again, so its SUSPENDED incident, manual-stop marker
+  and flap history stayed in `whalenurse status` and the store for ever, and a new container under the same name inherited
+  them. After each successful container list the poll and the startup sweep now forget every key without a container, and
+  its open incident closes with the outcome `gone`. A list that is empty is believed only the second time, and a failed list
+  forgets nothing. **Note:** forgetting wipes the key's SUSPENDED state and its flap history, so a container removed and
+  created again more than `WHALENURSE_GRACE` apart starts with a clean slate (as a running one already did).
 - **The bundled compose's version skew now blocks a sidecar's recreate.** A `network_mode`/`ipc`/`pid` or `volumes_from`
   container made by another compose release than the bundled one (no host plugin mounted) was recreated by the bundled
   compose with no check, by the dependents step after its parent's recreate and by its own rung 2 and pull. The guard now
