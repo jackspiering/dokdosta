@@ -215,6 +215,14 @@ func (d *Daemon) checkStartup() {
 	if read == nil {
 		read = readBootID
 	}
+	// The previous run's end, when it is known: it decides how many markers a reboot costs (below) and is the shutdown window.
+	var seen time.Time
+	lastSeenV, lastSeenOK, lastSeenErr := d.o.Meta.Meta(MetaLastSeen)
+	if lastSeenOK {
+		if n, err := strconv.ParseInt(lastSeenV, 10, 64); err == nil && n > 0 {
+			seen = time.Unix(0, n)
+		}
+	}
 	bootChanged := false
 	if id := strings.TrimSpace(read()); id != "" {
 		prev, had, err := d.o.Meta.Meta(MetaBootID)
@@ -227,35 +235,40 @@ func (d *Daemon) checkStartup() {
 		}
 		if had && prev != id {
 			bootChanged = true
-			d.log.Info("new boot id: dropping manual-stop markers", "previous", prev, "current", id)
-			d.eng.DropAllMarkers("boot id changed: the host rebooted")
+			// A reboot stops whalenurse and the containers in the same second, so the kills of the shutdown can be in the
+			// markers with no event in this run to tell them from a person's. With the previous run's end known, only the
+			// markers set in the 30 s before it can be such kills, and the last_seen step below discards exactly those; the
+			// older ones are deliberate stops from before the reboot and are kept (plan v3.13 item 16). Without it, all go.
+			if seen.IsZero() {
+				d.log.Info("new boot id: dropping manual-stop markers (the previous run's end is unknown)", "previous", prev, "current", id)
+				d.eng.DropAllMarkers("boot id changed: the host rebooted")
+			} else {
+				d.log.Info("new boot id: dropping the manual-stop markers set in the 30 s before the previous run ended, keeping older ones",
+					"previous", prev, "current", id, "last_seen", seen.UTC().Format(time.RFC3339))
+			}
 			d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "new boot id")
 		}
 	}
-	v, ok, err := d.o.Meta.Meta(MetaLastSeen)
-	if err != nil {
-		d.log.Warn("cannot read the persisted last_seen: the previous run's end is unknown, so no shutdown window is opened", "error", err.Error())
+	if lastSeenErr != nil {
+		d.log.Warn("cannot read the persisted last_seen: the previous run's end is unknown, so no shutdown window is opened", "error", lastSeenErr.Error())
 	}
-	if ok {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			seen := time.Unix(0, n)
-			gap := now.Sub(seen)
-			if cleared := d.eng.QuarantineMarkers(seen); len(cleared) > 0 {
-				d.log.Info("the previous run ended: manual-stop markers set in the 30s before it are discarded (it may have been the daemon's shutdown)",
-					"last_seen", seen.UTC().Format(time.RFC3339), "count", len(cleared))
-			}
-			// Containers that stopped between 30 s before last_seen and the daemon's restore were stopped by the host.
-			// After a reboot the restore is whenever we are back; within one boot a daemon restart is over in
-			// minutes, so the window is capped (a crash while whalenurse was down for hours is not a shutdown).
-			end := now
-			if !bootChanged && seen.Add(shutdownSpan).Before(now) {
-				end = seen.Add(shutdownSpan)
-			}
-			d.eng.AddShutdownWindow(seen.Add(-rules.QuarantineWindow), end)
-			if gap > d.cfg.PollInterval {
-				d.log.Info("whalenurse was not running for a while: the daemon may be restoring containers", "gap", gap.Round(time.Second).String())
-				d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "whalenurse was down for "+gap.Round(time.Second).String())
-			}
+	if !seen.IsZero() {
+		gap := now.Sub(seen)
+		if cleared := d.eng.QuarantineMarkers(seen); len(cleared) > 0 {
+			d.log.Info("the previous run ended: manual-stop markers set in the 30s before it are discarded (it may have been the daemon's shutdown)",
+				"last_seen", seen.UTC().Format(time.RFC3339), "count", len(cleared))
+		}
+		// Containers that stopped between 30 s before last_seen and the daemon's restore were stopped by the host.
+		// After a reboot the restore is whenever we are back; within one boot a daemon restart is over in
+		// minutes, so the window is capped (a crash while whalenurse was down for hours is not a shutdown).
+		end := now
+		if !bootChanged && seen.Add(shutdownSpan).Before(now) {
+			end = seen.Add(shutdownSpan)
+		}
+		d.eng.AddShutdownWindow(seen.Add(-rules.QuarantineWindow), end)
+		if gap > d.cfg.PollInterval {
+			d.log.Info("whalenurse was not running for a while: the daemon may be restoring containers", "gap", gap.Round(time.Second).String())
+			d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "whalenurse was down for "+gap.Round(time.Second).String())
 		}
 	}
 	d.heartbeat(true)
