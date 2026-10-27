@@ -143,8 +143,8 @@ func (d *Daemon) moverOf(ctx context.Context, c docker.Container) (tagMove, bool
 
 // guardVerdict runs the drift guard (plan §3.6) before a recreate or a pull and says whether the action may go ahead. When it may not, the container is SUSPENDED (Blocked); when the findings were
 // verified drift and WHALENURSE_DRIFT_GUARD=warn, the action goes ahead and says so. It runs in dry-run too: it only reads.
-func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project, allowImageMove bool) bool {
-	fs := d.driftFindings(ctx, c, p, allowImageMove)
+func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project, allowImageMove, own bool) bool {
+	fs := d.driftFindings(ctx, c, p, allowImageMove, own)
 	if len(fs) == 0 {
 		return true
 	}
@@ -221,7 +221,7 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 		d.schedule(t.Key, d.clk.Now().Add(d.cfg.Grace))
 		return
 	}
-	if !d.guardVerdict(ctx, t, c, dec, p, true) {
+	if !d.guardVerdict(ctx, t, c, dec, p, true, true) {
 		return
 	}
 
@@ -337,7 +337,7 @@ func (d *Daemon) upRefusal(ctx context.Context, t engine.Target, c docker.Contai
 	if paused, _ := d.eng.Paused(t.Key); paused {
 		return "the container was paused while the pull ran"
 	}
-	if !d.guardVerdict(ctx, t, c, dec, p, true) {
+	if !d.guardVerdict(ctx, t, c, dec, p, true, true) {
 		if ctx.Err() != nil {
 			return "the drift guard could not be checked again after the pull: the action was cut short"
 		}

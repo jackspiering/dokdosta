@@ -51,6 +51,11 @@ type GuardInput struct {
 	// RefHolder: network_mode, ipc, pid or volumes_from names another service or container. Compose hashes those after
 	// resolving them, so neither the oracle nor `config --hash` can be trusted for it (E4, E5) and check 1 is skipped.
 	RefHolder bool
+	// RefsCurrent: on the holder's own failure, every container it references is the current, running container of its
+	// service. Compose's resolved hash then matches the one it recorded, so the dry-run oracle can be trusted for a
+	// reference holder too: a Recreate means config drift (plan v3.13 item 4). The hash stays skipped (E4: it hashes the
+	// unresolved form), and so does the oracle in image-move mode, where a Recreate cannot be told from a moved tag.
+	RefsCurrent bool
 	// AllowImageMove: the check before rung 3's pull, before rung 2's recreate of a container that opted in to the pull
 	// rung, and before a sidecar takes a tag its parent's pull just moved (plan §3.7, v3.8). Checks 1 and 3 run; check 2
 	// is not a finding, because the caller deploys the moved image on purpose. Compose's dry-run says "Recreate" for a
@@ -75,6 +80,7 @@ func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
 	// Check 1: config drift. The oracle is compose's own decision and covers config and image drift together;
 	// `config --hash` is the fallback when its output cannot be read. Skipped for reference holders.
 	var configDrift string
+	oracleAnswered := false
 	explicitImage := in.RefHolder // where check 1 cannot be used, the explicit image comparison is the check
 	if !in.RefHolder {
 		var f *Finding
@@ -82,6 +88,8 @@ func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
 		if f != nil {
 			out = append(out, *f)
 		}
+	} else if in.RefsCurrent && g.trustsOracleForRefHolders() {
+		configDrift, oracleAnswered = g.refHolderOracle(ctx, in)
 	}
 
 	// Check 2: image drift, the explicit comparison. Mandatory where the oracle is not used or not trusted; when the
@@ -107,8 +115,45 @@ func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
 			out = append(out, Finding{CheckConfig, configDrift + g.upgraded(in)})
 		}
 	}
-	out = append(out, g.refHolderSkew(in)...)
+	if !oracleAnswered {
+		// A reference holder whose check 1 was not made: check 3 stands alone for it. Once the oracle has answered, skew
+		// qualifies its Recreate as it does for any service, and an answer of "nothing to change" is not second-guessed.
+		out = append(out, g.refHolderSkew(in)...)
+	}
 	return out
+}
+
+// refHolderOracle is check 1 for a reference holder whose references are current: the dry-run oracle only. It returns the
+// drift message (empty for none) and whether the oracle answered. An oracle that fails or cannot be read leaves the check
+// unmade, as it has always been for a reference holder (no `config --hash`).
+func (g Guard) refHolderOracle(ctx context.Context, in GuardInput) (drift string, answered bool) {
+	o, err := g.Compose.DryRunUp(ctx, in.Project, in.ContainerName)
+	if err != nil {
+		return "", false
+	}
+	if !o.WouldRecreate() {
+		return "", true
+	}
+	return fmt.Sprintf("compose would recreate this container (its dry-run says: %s): the compose file, an env file or the image changed since it was created", strings.Join(o.Texts(), ", ")), true
+}
+
+// refHolderOracleExcluded lists the compose releases for which the CI matrix showed that the oracle does not agree for a
+// reference holder with current references (it says Recreate for an unchanged one, or none after an edit). The CI matrix
+// decides (TestOracleForAReferenceHolderWithCurrentReferences): a release for which it fails is added here with the reason
+// in docs/m2b-notes.md (v3.13 item 4). For a release listed here the check stays skipped.
+//
+// 5.2.0: the CI run of the test showed a Recreate for an unchanged holder of every kind (network_mode, ipc, pid,
+// volumes_from) with the parent current, on both image stores. 5.6.0 and the latest release (5.6.1) agreed for all four.
+var refHolderOracleExcluded = map[string]bool{"5.2.0": true}
+
+// RefHolderOracleExcluded reports whether the check stays skipped for this compose release (the integration test reads it).
+func RefHolderOracleExcluded(v Version) bool { return refHolderOracleExcluded[v.String()] }
+
+// trustsOracleForRefHolders reports whether the compose in use is one for which the oracle may be asked about a reference
+// holder: a known release that is not excluded.
+func (g Guard) trustsOracleForRefHolders() bool {
+	v := g.Compose.Binary().Version
+	return !v.IsZero() && !RefHolderOracleExcluded(v)
 }
 
 // refHolderSkew is check 3 for a reference holder, which has no check 1 to qualify it: the recreate always happens (the

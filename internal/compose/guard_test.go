@@ -368,3 +368,105 @@ func TestGuardDoesNotCheckAReferenceHoldersOwnComposeEdit(t *testing.T) {
 		t.Fatal("neither the oracle nor the hash may run for a reference holder")
 	}
 }
+
+// Check 1 for a reference holder whose references are current (plan v3.13 item 4): the oracle only, never the hash.
+func TestGuardAsksTheOracleForAReferenceHolderWithCurrentReferences(t *testing.T) {
+	ctx := context.Background()
+	in := guardIn(true)
+	in.RefsCurrent = true
+	img := fakeImages{"web:1|amd64": imgOld}
+
+	// An edit: the oracle says Recreate and the tag has not moved: config drift.
+	f := NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	f.HashFn = func(Project) (string, error) { return "never-matches", nil }
+	got := (Guard{Compose: f, Images: img}).Check(ctx, in)
+	if causes(got) != CheckConfig || !strings.Contains(got[0].Cause, "Recreate, Recreated") {
+		t.Fatalf("%v", got)
+	}
+	if f.Count("hash") != 0 {
+		t.Fatal("config --hash hashes the unresolved form: it never runs for a reference holder")
+	}
+	// Unchanged: nothing to find.
+	f = NewFake()
+	if got := (Guard{Compose: f, Images: img}).Check(ctx, in); len(got) != 0 || f.Count("dry-run") != 1 {
+		t.Fatalf("%v %s", got, f.Calls())
+	}
+	// The tag moved as well: the finding says image, once.
+	f = NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	if got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgNew}}).Check(ctx, in); causes(got) != CheckImage {
+		t.Fatalf("%v", got)
+	}
+	// An oracle that fails or cannot be read leaves check 1 unmade, as before: the image check still runs.
+	f = NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Oracle{}, ErrUnparseable }
+	if got := (Guard{Compose: f, Images: img}).Check(ctx, in); len(got) != 0 || f.Count("hash") != 0 {
+		t.Fatalf("%v", got)
+	}
+	// References that are not current: skipped, as before.
+	f = NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	stale := guardIn(true)
+	if got := (Guard{Compose: f, Images: img}).Check(ctx, stale); len(got) != 0 || f.Count("dry-run") != 0 {
+		t.Fatalf("%v", got)
+	}
+	// Image-move mode never asks it: a Recreate cannot be told from the moved tag without the hash.
+	f = NewFake()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	pin := pullIn(true)
+	pin.RefsCurrent = true
+	if got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgNew}}).Check(ctx, pin); len(got) != 0 || f.Count("dry-run") != 0 {
+		t.Fatalf("%v", got)
+	}
+}
+
+// With the bundled compose another release made the container, so a Recreate may be a hash layout that moved: the skew
+// finding replaces the config one, once.
+func TestGuardSkewReplacesTheConfigFindingForAReferenceHolder(t *testing.T) {
+	f := NewFake()
+	f.Bin = Binary{Path: BundledPath, Source: SourceBundled, Version: Version{5, 6, 0, ""}}
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	in := guardIn(true)
+	in.RefsCurrent = true
+	in.Labels[LabelVersion] = "5.2.0"
+	if got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgOld}}).Check(context.Background(), in); causes(got) != CheckSkew {
+		t.Fatalf("%v", got)
+	}
+}
+
+// A release the matrix excluded keeps the check skipped.
+func TestGuardKeepsTheSkipForAnExcludedRelease(t *testing.T) {
+	refHolderOracleExcluded["5.6.0"] = true
+	defer delete(refHolderOracleExcluded, "5.6.0")
+	f := NewFake()
+	f.Bin.Version = Version{5, 6, 0, ""}
+	f.OracleFn = func(Project, string) (Oracle, error) { return Recreated("wn-web-1"), nil }
+	in := guardIn(true)
+	in.RefsCurrent = true
+	if got := (Guard{Compose: f, Images: fakeImages{"web:1|amd64": imgOld}}).Check(context.Background(), in); len(got) != 0 || f.Count("dry-run") != 0 {
+		t.Fatalf("%v", got)
+	}
+}
+
+// Once the oracle has answered "nothing to change" for a reference holder, skew has nothing to qualify (it does not fire
+// for a plain service either): no finding. Without an answer (the oracle failed) check 3 stands alone, as for any holder.
+func TestGuardSkewNeedsAChangeOnceTheOracleAnsweredForAReferenceHolder(t *testing.T) {
+	bundled := func() *Fake {
+		f := NewFake()
+		f.Bin = Binary{Path: BundledPath, Source: SourceBundled, Version: Version{5, 6, 0, ""}}
+		return f
+	}
+	in := guardIn(true)
+	in.RefsCurrent = true
+	in.Labels[LabelVersion] = "5.2.0"
+	img := fakeImages{"web:1|amd64": imgOld}
+	if got := (Guard{Compose: bundled(), Images: img}).Check(context.Background(), in); len(got) != 0 {
+		t.Fatalf("the oracle said nothing changes: %v", got)
+	}
+	f := bundled()
+	f.OracleFn = func(Project, string) (Oracle, error) { return Oracle{}, ErrUnparseable }
+	if got := (Guard{Compose: f, Images: img}).Check(context.Background(), in); causes(got) != CheckSkew {
+		t.Fatalf("no answer from the oracle: check 3 stands alone: %v", got)
+	}
+}
