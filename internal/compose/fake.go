@@ -17,10 +17,13 @@ type Fake struct {
 	mu    sync.Mutex
 	calls []Call
 
-	Bin        Binary
-	OracleFn   func(p Project, containerName string) (Oracle, error) // default: an unchanged container
-	HashFn     func(p Project) (string, error)
-	PolicyFn   func(p Project) (string, error) // default: no pull_policy
+	Bin      Binary
+	OracleFn func(p Project, containerName string) (Oracle, error) // default: an unchanged container
+	HashFn   func(p Project) (string, error)
+	PolicyFn func(p Project) (string, error) // default: no pull_policy
+	// DeclaredFn answers DeclaredLabels (the whalenurse.* keys the compose file declares for the service); the default
+	// is an error, "cannot be read". It is not recorded in Calls: it is a read for the label filter, not a rung's step.
+	DeclaredFn func(p Project) ([]string, error)
 	OnRecreate func(p Project) error
 	OnUp       func(p Project) error
 	OnPull     func(p Project) error
@@ -81,6 +84,13 @@ func (f *Fake) PullPolicy(_ context.Context, p Project) (string, error) {
 		return f.PolicyFn(p)
 	}
 	return "", nil
+}
+
+func (f *Fake) DeclaredLabels(_ context.Context, p Project) ([]string, error) {
+	if f.DeclaredFn != nil {
+		return f.DeclaredFn(p)
+	}
+	return nil, ErrUnparseable
 }
 
 func (f *Fake) Recreate(ctx context.Context, p Project) error {

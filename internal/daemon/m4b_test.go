@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"errors"
+	"maps"
 	"strings"
 	"testing"
 	"time"
@@ -309,18 +310,16 @@ func TestSidecarTakesTheTagItsParentsPullMoved(t *testing.T) {
 		t.Fatal("one upgrade message: the sidecar's recreate says nothing of its own")
 	}
 
-	// And only that: each condition on its own turns the allowance off.
-	cur := h.current("p", "side")
+	// And only that: each condition on its own turns the allowance off. The predicate runs on the sidecar as it was before
+	// its recreate (compose's --no-deps empties the depends_on label of the recreated one, and the fake leaves its image label alone).
+	pre := side
+	pre.Labels = maps.Clone(side.Labels)
 	m, _ := h.d.moveOf("web:1")
-	if !h.d.dependentMayTakeMove(h.ctx, cur) {
-		// (the label of the recreated sidecar still names the image the move replaced)
+	if !h.d.dependentMayTakeMove(h.ctx, pre) {
 		t.Fatalf("the parent's incident is open and the move is this one's: must be allowed (%+v)", m)
 	}
-	other := cur
-	other.Labels = map[string]string{}
-	for k, v := range cur.Labels {
-		other.Labels[k] = v
-	}
+	other := pre
+	other.Labels = maps.Clone(pre.Labels)
 	other.Labels[compose.LabelImage] = "sha256:someotherimage000000000000000000000000000000000000000000000000"
 	if h.d.dependentMayTakeMove(h.ctx, other) {
 		t.Error("a sidecar created from some other image than the one the pull replaced is drifted for another reason")
@@ -331,7 +330,7 @@ func TestSidecarTakesTheTagItsParentsPullMoved(t *testing.T) {
 		t.Error("the move was made by a service the sidecar does not depend on")
 	}
 	h.fake.SetImage("web:1", "sha256:movedagain0000000000000000000000000000000000000000000000000000")
-	if h.d.dependentMayTakeMove(h.ctx, cur) {
+	if h.d.dependentMayTakeMove(h.ctx, pre) {
 		t.Error("the tag moved again since that pull: nothing may be taken")
 	}
 	h.fake.SetImage("web:1", imgNewID)
@@ -341,7 +340,7 @@ func TestSidecarTakesTheTagItsParentsPullMoved(t *testing.T) {
 	if open, _ := h.d.Engine().IncidentOpen(key("p", "web")); open {
 		t.Fatal("the parent's incident should have closed")
 	}
-	if h.d.dependentMayTakeMove(h.ctx, cur) {
+	if h.d.dependentMayTakeMove(h.ctx, pre) {
 		t.Error("outside the parent's incident a moved tag is plain image drift")
 	}
 }
@@ -360,5 +359,29 @@ func TestSidecarFromAnotherImageIsStillBlocked(t *testing.T) {
 	}
 	if h.cf.Count("up") > 1 {
 		t.Fatalf("only the parent's up: %s", h.verbs())
+	}
+}
+
+// compose's `up --no-deps` leaves a sidecar's depends_on label empty, so after one repair the readers of the pull rung find
+// the parent only through the learned set (plan v3.11). The fake's replace empties the label like compose does.
+func TestSidecarRecreatedOnceStillTakesItsParentsMovedTag(t *testing.T) {
+	h, web, side, _ := sidecarStack(t, imgLabel("web"))
+	h.tick()
+	h.advance(time.Minute) // the parents are learned from the label
+	h.set(side.ID, func(c *docker.Container) {
+		c.Labels = maps.Clone(c.Labels)
+		delete(c.Labels, compose.LabelDependsOn) // the state a previous `up --no-deps` repair leaves
+	})
+	h.advance(time.Minute)
+	breakAndRun(h, web.ID, 6*time.Minute)
+
+	for _, e := range h.events(engine.DriftBlocked) {
+		if e.Key == key("p", "side") {
+			t.Fatalf("the sidecar must take its parent's moved tag: %+v", e)
+		}
+	}
+	moved := h.events(engine.TagMoved)
+	if len(moved) != 1 || moved[0].Attrs["sidecars"] != "side" || !strings.HasSuffix(moved[0].Attrs["rollback_up"], "up -d --no-deps --pull never --no-build web side") {
+		t.Fatalf("%v / %+v", h.rec.Types(), moved)
 	}
 }

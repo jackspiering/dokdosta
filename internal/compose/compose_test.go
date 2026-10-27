@@ -637,3 +637,35 @@ func TestRollbackCommandsNameTheSidecarsInOneUp(t *testing.T) {
 		t.Fatalf("%s", up)
 	}
 }
+
+func TestDeclaredLabelsCommandLineAndParsing(t *testing.T) {
+	r := &recRunner{out: func(Command) (Result, error) {
+		return Result{Stdout: []byte(`{"services":{"web":{"labels":{"whalenurse.enable":"true","traefik.x":"${SECRET}","whalenurse.cooldown":"1m"}},"db":{"labels":["whalenurse.enable=true"]}}}`)}, nil
+	}}
+	c := New(Binary{Path: "/host/docker-compose", Source: SourceHost}, r)
+	got, err := c.DeclaredLabels(context.Background(), proj())
+	if err != nil || !slices.Equal(got, []string{"whalenurse.cooldown", "whalenurse.enable"}) {
+		t.Fatalf("%v %v", got, err)
+	}
+	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution -- web"
+	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want {
+		t.Fatalf("%v", r.cmds)
+	}
+	for _, tc := range []struct {
+		doc  string
+		want []string
+		bad  bool
+	}{
+		{`{"services":{"db":{"labels":["whalenurse.enable=true","x=y"]}}}`, []string{"whalenurse.enable"}, false},
+		{`{"services":{"db":{}}}`, nil, false},
+		{`{"services":{"db":{"labels":null}}}`, nil, false},
+		{`{"services":{"web":{}}}`, nil, true}, // not the service asked about
+		{`{"services":{"db":{"labels":3}}}`, nil, true},
+		{`nope`, nil, true},
+	} {
+		got, err := ParseDeclaredLabels([]byte(tc.doc), "db")
+		if tc.bad != (err != nil) || !slices.Equal(got, tc.want) {
+			t.Errorf("%s: %v %v", tc.doc, got, err)
+		}
+	}
+}
