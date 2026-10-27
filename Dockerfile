@@ -32,7 +32,7 @@ RUN mkdir -p /out/data
 # socket's group at run time with `group_add` (see docs/running.md).
 # To recreate, mount the host's compose plugin read-only at /host/docker-compose (used first) and the stacks root
 # read-only at the identical host path; without the plugin the bundled copy above is used.
-FROM gcr.io/distroless/static:nonroot@sha256:516757106de35205efb70b91ba03f6f1298424a0678c603255cf2852a7000087
+FROM gcr.io/distroless/static:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 COPY --from=build /out/whalenurse /whalenurse
 COPY --from=build --chmod=0755 /out/docker-compose /usr/libexec/whalenurse/docker-compose
 COPY --from=build --chown=65532:65532 /out/data /data
