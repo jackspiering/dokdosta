@@ -1340,6 +1340,112 @@ func TestARemovedContainerThatWasNoDependentLeavesNoParentsRow(t *testing.T) {
 	}
 }
 
+// A sidecar without its own opt-in that was stopped by hand stays stopped when its parent is recreated: its kill feeds the
+// manual-stop evidence like an opted-in container's (WN-028, plan v3.13 item 2a). One that exited on its own (a die with no
+// kill) is recreated with its parent (item 2b), and a sidecar labelled whalenurse.enable=false gets no state at all.
+func TestStoppedSidecarWithoutOptInStaysStoppedWhenItsParentIsRecreated(t *testing.T) {
+	type variant struct {
+		name        string
+		kill        bool
+		optIn       bool
+		disabled    bool
+		wantUp      int
+		wantMarkers bool
+	}
+	for _, v := range []variant{
+		{name: "stopped by hand", kill: true, wantUp: 0, wantMarkers: true},
+		{name: "stopped by hand, opted in (control)", kill: true, optIn: true, wantUp: 0, wantMarkers: true},
+		{name: "exited on its own", kill: false, wantUp: 1, wantMarkers: false},
+		{name: "enable=false", kill: true, disabled: true, wantUp: 0, wantMarkers: false},
+	} {
+		t.Run(v.name, func(t *testing.T) {
+			h := newCompose(t, nil, nil, docker.ServerInfo{})
+			_, dep := h.pair()
+			if !v.optIn {
+				dep = h.noOptIn(dep.ID)
+			}
+			if v.disabled {
+				dep = h.set(dep.ID, func(c *docker.Container) { c.Labels[config.LabelEnable] = "false" })
+			}
+			var newParent docker.Container
+			h.cf.OnUp = func(compose.Project) error {
+				h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+				return nil
+			}
+			h.tick()
+			if v.kill {
+				h.event(dep, "kill", "")
+			}
+			dep = h.set(dep.ID, func(c *docker.Container) { c.Status, c.Running, c.ExitCode = "exited", false, 1 })
+			h.event(dep, "die", "")
+			if got := h.d.Engine().Evidence(key("p", "dep")).ManualStop; got != v.wantMarkers {
+				t.Fatalf("manual-stop evidence = %v, want %v", got, v.wantMarkers)
+			}
+			h.advance(time.Minute)
+			newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+			h.event(newParent, "create", "")
+			h.event(newParent, "start", "")
+			h.advance(3 * time.Minute)
+			if got := h.cf.Count("up"); got != v.wantUp {
+				t.Fatalf("up calls = %d, want %d (%s) / %v", got, v.wantUp, h.verbs(), h.rec.Types())
+			}
+			if v.wantUp == 0 && h.current("p", "dep").Status != "exited" {
+				t.Fatalf("the sidecar must stay stopped: %+v", h.current("p", "dep"))
+			}
+		})
+	}
+}
+
+// The events of a container that is not a sidecar reach no engine state, and a sidecar's events schedule nothing: the
+// poll and the dependents step look at it, its own die does not (plan v3.13 item 2, scheduling stays gated on opt-in).
+func TestEventsOfNonSidecarsLeaveNoStateAndASidecarsEventsScheduleNothing(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	dep = h.noOptIn(dep.ID)
+	plain := h.svc(hexID("f1"), "p", "plain")
+	plain = h.noOptIn(plain.ID)
+	h.tick()
+	for _, c := range []docker.Container{plain} {
+		h.event(c, "kill", "")
+		h.event(c, "die", "")
+		if h.d.Engine().Evidence(docker.StateKey(host, c.Name, c.Labels)).ManualStop {
+			t.Fatalf("the events of %s must not reach the engine", c.Name)
+		}
+	}
+	delete(h.d.pend, key("p", "dep"))
+	h.event(dep, "kill", "")
+	h.event(dep, "die", "")
+	if _, ok := h.d.pend[key("p", "dep")]; ok {
+		t.Fatal("a sidecar's own event must not schedule it")
+	}
+	if !h.d.Engine().Evidence(key("p", "dep")).Known {
+		t.Fatal("but it feeds the evidence")
+	}
+}
+
+// A sidecar stopped by hand and then replaced (docker rm, compose up): the new container has a new ID that the last list
+// does not know yet, and its start still clears the marker the old one left.
+func TestReplacedSidecarsStartClearsTheMarkerOfTheOneBefore(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent, dep := h.pair()
+	dep = h.noOptIn(dep.ID)
+	h.tick()
+	h.event(dep, "kill", "")
+	dep = h.set(dep.ID, func(c *docker.Container) { c.Status, c.Running, c.ExitCode = "exited", false, 1 })
+	h.event(dep, "die", "")
+	if !h.d.Engine().Evidence(key("p", "dep")).ManualStop {
+		t.Fatal("the hand stop should be marked")
+	}
+	h.fake.Remove(dep.ID)
+	fresh := docker.Container{ID: hexID("ff"), Name: dep.Name, Labels: dep.Labels, Status: "running", Running: true, NetworkMode: "container:" + parent.ID}
+	h.fake.Put(fresh)
+	h.event(fresh, "create", "")
+	h.event(fresh, "start", "")
+	if h.d.Engine().Evidence(key("p", "dep")).ManualStop {
+		t.Fatal("the start of the new container should clear the marker")
+	}
+}
+
 // ---- a service with more than one container ---------------------------------------------------------------------
 
 // Every compose command names the service, and compose acts on all of its containers: a forced recreate replaces every

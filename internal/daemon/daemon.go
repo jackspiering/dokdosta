@@ -558,11 +558,20 @@ func (d *Daemon) HandleEvent(ctx context.Context, ev docker.Event) {
 	}
 	ev = d.lf.Event(ctx, ev)
 	cfg, _ := config.ParseLabels(ev.Labels, d.cfg.Mode)
-	if !cfg.OptedIn || docker.IsOneOff(ev.Labels) || ev.Labels[docker.LabelSwarmTaskID] != "" {
+	if docker.IsOneOff(ev.Labels) || ev.Labels[docker.LabelSwarmTaskID] != "" || cfg.Disabled {
 		return
 	}
 	t := engine.Target{Key: docker.StateKey(d.cfg.HostID, ev.Name, ev.Labels), ID: ev.ID, Name: ev.Name}
-	if d.eng.ObserveDockerEvent(t, ev) {
+	// A compose sidecar that holds a container: reference without an opt-in of its own is repaired by the dependents step,
+	// so its events feed the engine's evidence like an opted-in container's: a sidecar stopped by hand stays stopped when
+	// its parent is recreated, and whalenurse's own actions on it are attributed (plan v3.13 item 2). Scheduling stays
+	// gated on the opt-in. The event carries only labels, so the reference is looked up in the last list; a container that
+	// is not in it yet (a new ID) is followed when the engine already holds state for its key, so that its start clears
+	// the marker the one before it left.
+	if !cfg.OptedIn && (ev.Labels[docker.LabelService] == "" || !d.holdsRef(d.idx.byID[ev.ID]) && !d.eng.Tracked(t.Key)) {
+		return
+	}
+	if d.eng.ObserveDockerEvent(t, ev) || !cfg.OptedIn {
 		return
 	}
 	if !d.settled {

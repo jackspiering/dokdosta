@@ -317,6 +317,14 @@ func (e *Engine) Evidence(key string) rules.Evidence {
 	return rules.Evidence{}
 }
 
+// Tracked reports whether the engine holds state for the key.
+func (e *Engine) Tracked(key string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, ok := e.keys[key]
+	return ok
+}
+
 // Forget drops all state for a key whose container no longer exists.
 func (e *Engine) Forget(t Target) {
 	e.mu.Lock()
