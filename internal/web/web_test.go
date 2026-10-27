@@ -3,6 +3,8 @@ package web
 import (
 	"github.com/jackspiering/whalenurse/internal/compose"
 	"go/build"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"strings"
 	"testing"
@@ -228,6 +230,48 @@ func TestShellWordMatchesCompose(t *testing.T) {
 	for _, s := range []string{"", "p/web", "stack-1/web_2.x", "p$(id)/web", "w;id", "it's", "a b", "`x`", "a\tb", "-f", "p|q", "ünï/cødé"} {
 		if got, want := shellWord(s), compose.ShellWord(s); got != want {
 			t.Errorf("%q: %q, compose says %q", s, got, want)
+		}
+	}
+}
+
+// The static directory is not browsable: its listing is a 404, a file is served.
+func TestStaticServesFilesButNoDirectoryListing(t *testing.T) {
+	h := Handler(nil)
+	for path, want := range map[string]int{"/static/": 404, "/static/app.css": 200, "/static/nope.css": 404} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != want {
+			t.Errorf("GET %s: %d, want %d (%q)", path, rec.Code, want, rec.Body.String())
+		}
+		if want == 404 && strings.Contains(rec.Body.String(), "app.css") {
+			t.Errorf("GET %s lists the directory: %q", path, rec.Body.String())
+		}
+	}
+}
+
+// A key with a "." or ".." part (label-derived names are arbitrary) has no page path: the mux would clean the path and
+// land on another page. Ordinary keys keep theirs.
+func TestContainerPathSkipsKeysTheMuxWouldClean(t *testing.T) {
+	for key, want := range map[string]string{
+		"h/p/web/1":    "/containers/h/p/web/1",
+		"h/p s/we b/1": "/containers/h/p%20s/we%20b/1",
+		"h/.../web/1":  "/containers/h/.../web/1",
+		"h/p/../web/1": "",
+		"h/./web/1":    "",
+		"h/p//web/1":   "",
+		"h/p/web/..":   "",
+	} {
+		if got := containerPath(key); got != want {
+			t.Errorf("containerPath(%q) = %q, want %q", key, got, want)
+		}
+	}
+}
+
+func TestCapitalKeepsMultiByteLettersWhole(t *testing.T) {
+	for in, want := range map[string]string{"éxited": "Éxited", "exited": "Exited", "": "", "ünï": "Ünï", "healthcheck reports unhealthy": "Unhealthy", "\xffbad": "\xffbad"} {
+		got := capital(in)
+		if got != want {
+			t.Errorf("capital(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

@@ -112,7 +112,8 @@ func TestParseDurationAcceptsDays(t *testing.T) {
 			t.Errorf("%q = %v, %v; want %v", in, got, err, want)
 		}
 	}
-	for _, bad := range []string{"d", "x1d", "1dd", "1d3"} {
+	// 213504d wraps int64 nanoseconds to about 25 minutes; the largest that fits is accepted.
+	for _, bad := range []string{"d", "x1d", "1dd", "1d3", "213504d", "99999999999d", "106751d23h60m", "106751d99999h"} {
 		if _, err := ParseDuration(bad); err == nil {
 			t.Errorf("%q should be rejected", bad)
 		}
@@ -292,5 +293,33 @@ func TestRegistryAuthDirIsRead(t *testing.T) {
 	g, _, err = FromEnv([]string{"WHALENURSE_REGISTRY_AUTH_DIR=  "})
 	if err != nil || g.RegistryAuthDir != "" {
 		t.Fatalf("%q %v", g.RegistryAuthDir, err)
+	}
+}
+
+func TestParseDurationAcceptsTheLargestWholeDays(t *testing.T) {
+	if got, err := ParseDuration("106751d"); err != nil || got != 106751*24*time.Hour {
+		t.Errorf("106751d = %v, %v", got, err)
+	}
+}
+
+func TestHostIDWithASlashIsRefused(t *testing.T) {
+	_, _, err := FromEnv([]string{"WHALENURSE_HOST_ID=eu/box"})
+	if err == nil || !strings.Contains(err.Error(), "WHALENURSE_HOST_ID") {
+		t.Fatalf("a slash in the host id should be an error, got %v", err)
+	}
+	if g, _, err := FromEnv([]string{"WHALENURSE_HOST_ID=eu-box.1"}); err != nil || g.HostID != "eu-box.1" {
+		t.Fatalf("%+v %v", g, err)
+	}
+}
+
+func TestPlaceholderTokenOfTheExamplesIsRefused(t *testing.T) {
+	for _, v := range []string{"replace-with-a-long-random-token", "replace-with-openssl-rand-hex-24", "Replace-With-Mine"} {
+		_, _, err := FromEnv([]string{"WHALENURSE_HTTP_TOKEN=" + v})
+		if err == nil || !strings.Contains(err.Error(), "WHALENURSE_HTTP_TOKEN") || strings.Contains(err.Error(), v) {
+			t.Errorf("%q: want an error that names the variable and not the value, got %v", v, err)
+		}
+	}
+	if g, _, err := FromEnv([]string{"WHALENURSE_HTTP_TOKEN=0123456789abcdef0123456789abcdef"}); err != nil || g.HTTPToken == "" {
+		t.Fatalf("%v", err)
 	}
 }
