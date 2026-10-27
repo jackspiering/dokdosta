@@ -9,6 +9,7 @@ import (
 	"github.com/jackspiering/whalenurse/internal/control"
 	"github.com/jackspiering/whalenurse/internal/engine"
 	"github.com/jackspiering/whalenurse/internal/notify"
+	"github.com/jackspiering/whalenurse/internal/rules"
 )
 
 // Status is the reply of `whalenurse status`.
@@ -62,10 +63,29 @@ func (d *Daemon) Pause(scope string, dur time.Duration) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if p.Until.IsZero() {
-		return fmt.Sprintf("paused %s until you run resume", p.Scope), nil
+	msg := fmt.Sprintf("paused %s until you run resume", p.Scope)
+	if !p.Until.IsZero() {
+		msg = fmt.Sprintf("paused %s until %s", p.Scope, p.Until.Local().Format(time.RFC1123))
 	}
-	return fmt.Sprintf("paused %s until %s", p.Scope, p.Until.Local().Format(time.RFC1123)), nil
+	if !d.watchedIn(p.Scope) {
+		// The pause stands (pausing a project before it is deployed is fine), but a typo is more likely.
+		msg += " (no watched container is in this scope now)"
+	}
+	return msg, nil
+}
+
+// watchedIn reports whether the last pass saw a container under the pause scope that whalenurse looks after.
+func (d *Daemon) watchedIn(scope string) bool {
+	_, seen := d.view.snapshot()
+	for key, s := range seen {
+		if s.dec.Class == rules.ClassSkip && s.dec.Skip != rules.SkipDockerPause && s.dec.Skip != rules.SkipRemoving {
+			continue
+		}
+		if engine.ScopeMatches(scope, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // Resume implements control.Backend.

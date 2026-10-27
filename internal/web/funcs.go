@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackspiering/whalenurse/internal/api"
 )
@@ -79,9 +81,15 @@ func relative(t time.Time) string {
 }
 
 // containerPath is the dashboard path of a state key: the key's slashes stay, each part is escaped.
+//
+// A key with an empty, "." or ".." part has none (it returns ""): the mux cleans such a path and would land on another page,
+// and label-derived names can be anything.
 func containerPath(key string) string {
 	parts := strings.Split(key, "/")
 	for i, p := range parts {
+		if p == "" || p == "." || p == ".." {
+			return ""
+		}
 		parts[i] = url.PathEscape(p)
 	}
 	return "/containers/" + strings.Join(parts, "/")
@@ -319,7 +327,11 @@ func capital(why string) string {
 	if why == "" {
 		return why
 	}
-	return strings.ToUpper(why[:1]) + why[1:]
+	r, n := utf8.DecodeRuneInString(why)
+	if r == utf8.RuneError && n <= 1 {
+		return why
+	}
+	return string(unicode.ToUpper(r)) + why[n:]
 }
 
 // suspendedText is the plain sentence for a Suspended message of a drift block, and ok reports whether it was one.

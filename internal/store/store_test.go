@@ -418,3 +418,36 @@ func TestASecondOpenOfTheSameDirectoryIsRefused(t *testing.T) {
 	}
 	b.Close()
 }
+
+func TestOpenRemovesEmptyParentsRowsAndKeepsTheRest(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	s.SetMeta("parents:h/p/dep/1", "parent")
+	s.SetMeta("parents:h/job", "")
+	s.SetMeta("parents:h/p/other/1", "")
+	s.SetMeta("last_seen", "")
+	s.SetMeta("boot_id", "b")
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s = open(t, dir)
+	for k, want := range map[string]bool{"parents:h/p/dep/1": true, "parents:h/job": false, "parents:h/p/other/1": false, "last_seen": true, "boot_id": true} {
+		if _, ok, _ := s.Meta(k); ok != want {
+			t.Errorf("%s: present = %v, want %v", k, ok, want)
+		}
+	}
+	if v, err := userVersion(s); err != nil || v != schemaVersion {
+		t.Fatalf("the schema version must not change: %d %v", v, err)
+	}
+	s.DeleteMeta("boot_id")
+	if _, ok, _ := s.Meta("boot_id"); ok {
+		t.Fatal("DeleteMeta left the row")
+	}
+	s.DeleteMeta("boot_id") // idempotent
+}
+
+func userVersion(s *Store) (int, error) {
+	var v int
+	err := s.db.QueryRow("PRAGMA user_version").Scan(&v)
+	return v, err
+}

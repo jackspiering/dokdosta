@@ -96,6 +96,7 @@ type incident struct {
 	recoverySince time.Time
 	recoveryCount int
 	rateNoted     bool
+	parent        string // the parent (Obs.Parent) that the dependents step planned its repair against; not persisted
 }
 
 type keyState struct {
@@ -103,6 +104,7 @@ type keyState struct {
 	windows  []window
 	tracker  rules.Tracker
 	advisory string // dedupe key of the last advisory event
+	waiting  string // why the dependents step is waiting for a service (Wait); cleared when it acts or no longer applies
 	name     string
 	flaps    []time.Time
 	loop     LoopRecord
@@ -316,6 +318,14 @@ func (e *Engine) Evidence(key string) rules.Evidence {
 	return rules.Evidence{}
 }
 
+// Tracked reports whether the engine holds state for the key.
+func (e *Engine) Tracked(key string) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	_, ok := e.keys[key]
+	return ok
+}
+
 // Forget drops all state for a key whose container no longer exists.
 func (e *Engine) Forget(t Target) {
 	e.mu.Lock()
@@ -363,6 +373,28 @@ func (e *Engine) AddShutdownWindow(from, to time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.shutdowns = append(e.shutdowns, shutdownWindow{from: from, to: to})
+	e.trimShutdowns()
+}
+
+// maxShutdownWindows bounds the list over a long run with a flaky events stream. A window is only read for a container
+// that finished inside it, so the newest ones are the ones that matter.
+const maxShutdownWindows = 100
+
+// trimShutdowns drops the oldest closed windows beyond maxShutdownWindows. The caller holds e.mu.
+func (e *Engine) trimShutdowns() {
+	drop := len(e.shutdowns) - maxShutdownWindows
+	if drop <= 0 {
+		return
+	}
+	kept := e.shutdowns[:0:0]
+	for _, w := range e.shutdowns {
+		if drop > 0 && !w.open {
+			drop--
+			continue
+		}
+		kept = append(kept, w)
+	}
+	e.shutdowns = kept
 }
 
 // OpenShutdownWindow starts a window at an events-stream loss; it has no end until CloseShutdownWindow.
@@ -375,6 +407,7 @@ func (e *Engine) OpenShutdownWindow(from time.Time) {
 		}
 	}
 	e.shutdowns = append(e.shutdowns, shutdownWindow{from: from, open: true})
+	e.trimShutdowns()
 }
 
 // CloseShutdownWindow ends the open window when the stream is back: the daemon has restored its containers.
@@ -512,7 +545,7 @@ func (e *Engine) reset(t Target, st *keyState, why string) {
 		e.emit(t, IncidentClosed, why, map[string]string{"reason": "recreated"})
 		e.closeIncident(t, st, "recreated")
 	}
-	st.advisory = ""
+	st.advisory, st.waiting = "", ""
 }
 
 func (e *Engine) prune(st *keyState) {
@@ -548,6 +581,9 @@ func (e *Engine) Evaluate(t Target, d rules.Decision, cfg config.Container, o Ob
 		return Plan{}
 	}
 
+	if d.Action != rules.ActionRecreateStale {
+		st.waiting = ""
+	}
 	switch d.Action {
 	case rules.ActionRestart, rules.ActionStart, rules.ActionRecreate, rules.ActionRecreateStale:
 		return e.heal(t, st, d, cfg, o, now)
@@ -600,6 +636,9 @@ func (e *Engine) settle(t Target, st *keyState, d rules.Decision, cfg config.Con
 // healthy"); the incident closes only after the container has stayed recovered
 // for RECOVERY_PERIOD.
 func (e *Engine) recovering(t Target, st *keyState, inc *incident, o Obs, now time.Time) Plan {
+	if inc.parent == "" {
+		inc.parent = o.Parent // an incident restored after a restart, or opened by the sidecar's own ladder, learns it here
+	}
 	if !inc.recovering || o.RestartCount != inc.recoveryCount {
 		inc.recovering, inc.recoverySince, inc.recoveryCount = true, now, o.RestartCount
 		st.dirty = true
@@ -643,8 +682,39 @@ func (e *Engine) flapLimit(cfg config.Container) int {
 	return e.p.FlapLimit
 }
 
+// parentChanged closes the incident of an earlier dependents-step repair when the parent is not the one that repair was
+// made against: the sidecar is stale for a new reason, so it is repaired afresh, at rung 0 and without a flap count, and
+// not carried up the ladder of the repair before (plan v3.13 item 1). While the parent is unchanged, or unknown, or an
+// action is running, nothing changes: a repair that did not help still moves up the ladder and ends SUSPENDED.
+func (e *Engine) parentChanged(t Target, st *keyState, d rules.Decision, o Obs) {
+	inc := st.incident
+	if inc == nil || !d.IsDependentStep() || o.Parent == "" {
+		return
+	}
+	if inc.parent == "" {
+		inc.parent = o.Parent
+		return
+	}
+	if inc.parent == o.Parent {
+		return
+	}
+	for _, w := range st.windows {
+		if w.end.IsZero() {
+			return
+		}
+	}
+	const why = "the parent changed again"
+	if inc.suspended {
+		e.emit(t, Unsuspended, why, map[string]string{"reason": "parent_changed"})
+	} else {
+		e.emit(t, IncidentClosed, why, map[string]string{"reason": "parent_changed"})
+	}
+	e.closeIncident(t, st, "parent_changed")
+}
+
 func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Container, o Obs, now time.Time) Plan {
 	st.advisory = ""
+	e.parentChanged(t, st, d, o)
 	if st.incident == nil {
 		// Flap count: closing an incident does not reset it, only the window expiring does. A dependent repaired by the
 		// dependents step belongs to its parent's incident and is not counted (plan v3.6).
@@ -660,6 +730,9 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 			st.flaps = append(st.flaps, now)
 		}
 		st.incident = &incident{opened: now, class: d.Class}
+		if d.IsDependentStep() {
+			st.incident.parent = o.Parent
+		}
 		st.dirty = true
 		e.emit(t, IncidentOpened, d.Reason, map[string]string{"class": string(d.Class), "action": string(d.Action)})
 		// More than FLAP_LIMIT incidents within FLAP_WINDOW: SUSPENDED, whatever became of the last ones.
@@ -800,6 +873,7 @@ func (e *Engine) Begin(t Target, plan Plan, d rules.Decision) {
 	now := e.clk.Now()
 	st := e.state(t.Key)
 	st.windows = append(st.windows, window{start: now})
+	st.waiting = ""
 	e.spent = append(e.spent, now)
 	if e.p.Persist != nil && !e.p.DryRun {
 		e.p.Persist.SaveAction(now)
@@ -877,6 +951,30 @@ func (e *Engine) Refuse(t Target, d rules.Decision, why string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.emit(t, ActionRefused, why, map[string]string{"class": string(d.Class)})
+}
+
+// Wait records that a planned dependents-step recreate cannot go ahead yet because a service the dependent depends on is
+// not ready. It is not an action and not a failure: no rung, cooldown or rate slot is spent and the incident is untouched.
+// The event is emitted once for each reason until the dependent acts or is no longer waiting.
+func (e *Engine) Wait(t Target, d rules.Decision, why string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st := e.state(t.Key)
+	if st.waiting == why {
+		return
+	}
+	st.waiting = why
+	e.emit(t, WaitingForParent, why, map[string]string{"class": string(d.Class)})
+}
+
+// ClearWait forgets the reason a dependent was waiting: the service it waited for is ready, so a later wait for the same
+// reason is news again, whatever stops the recreate on the way (a sibling, the drift guard).
+func (e *Engine) ClearWait(t Target) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if st, ok := e.keys[t.Key]; ok {
+		st.waiting = ""
+	}
 }
 
 func (e *Engine) actionAttrs(plan Plan, ok bool) map[string]string {

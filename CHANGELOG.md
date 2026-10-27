@@ -10,18 +10,9 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
-### Security
+### Changed
 
-- **Labels that come from an image no longer steer whalenurse.** Docker copies an image's own labels onto the containers
-  made from it, so an image could opt itself in (`whalenurse.enable=true`), turn on the pull rung, start itself after a
-  `docker stop`, or claim a compose identity. whalenurse now reads the image's labels by image ID: on a compose container a
-  `whalenurse.*` label counts only if the compose file declares it; on any other container one with the image's own value
-  is ignored; a container whose `com.docker.compose.*` labels are the image's is treated as not made by compose (restart
-  rung only). One warning names the ignored labels. To opt in a container whose image ships the same value, declare the label
-  in the compose file or use `WHALENURSE_MODE=all`.
-- **The service name is always the operand after `--` in the compose commands whalenurse runs** (`up`, `pull` and the
-  `pull_policy` read). The name is already validated before it reaches a command line; `--` makes sure no compose release
-  can read it as a flag. The integration tests' compose filter accepts only that form.
+- The test compose fake now empties a sidecar's `depends_on` label on a recreate, like `compose up --no-deps`, and a test guards that the pull rung still finds the sidecar of a parent's moved tag (tests only).
 
 ### Fixed
 
@@ -37,6 +28,28 @@ workflow refuses an undated section.
 - **A reload signal no longer counts as a manual stop.** `docker kill -s HUP` (and docker-gen's `-notify-sighup`, SIGUSR1,
   SIGUSR2, SIGWINCH) set a manual-stop marker, which then suppressed a later real heal of the container until its next
   start. These kills are recorded (`SignalIgnored`) and set no marker; every other signal still does.
+- **A scaled service is healed at rung 1 only.** Every compose command names the service and acts on all of its containers,
+  so healing one unhealthy replica of a service with more than one container force-recreated the healthy ones as well, and
+  scaled a service started with `docker compose up --scale` back to its declared count (removing the container being healed,
+  without a notification). Rungs 2 and 3 are now unavailable for such a service, and the ladder ends with SUSPENDED after
+  the restart. `docker compose run` containers are not counted.
+- **The integration tests' host-safety preflight (and the M0b one) now sees every spelling of an opt-in.** It listed strangers
+  with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
+  it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps
+  and which rely on the preflight alone.
+- **A very long `--for` or duration (`213504d`) is refused** instead of wrapping to a few minutes.
+- **`WHALENURSE_HOST_ID` with a `/` is refused at startup.** It shifted the parts of every container key, so `pause` and
+  `unsuspend` matched nothing.
+- **The placeholder `WHALENURSE_HTTP_TOKEN` of the example env files is refused at startup.**
+- **`whalenurse pause` says when no watched container is in the scope** (the pause still stands, as before).
+- **`/static/` is a 404, not a directory listing.** The dashboard's embedded asset directory could be listed.
+- **A container whose name has a `.` or `..` part gets no dashboard link** instead of a link the server would clean into
+  another page. A multi-byte first letter in a reason is no longer cut in half.
+- A sidecar without its own opt-in that shares its parent's `ipc` or `pid` namespace (not only `network_mode`) is now found and repaired when the parent restarts or is recreated while whalenurse runs, not only after a whalenurse restart.
+- A stale sidecar whose depended-on service is down now waits with one `WaitingForParent` event instead of an `ActionRefused` every `GRACE` (which flooded the log and the event history).
+- The store no longer grows an empty `parents:<key>` row for every removed container: forgetting a dependent deletes its row, other keys write none, and empty rows left by earlier versions are removed when the database is opened.
+- A sidecar stopped by hand is no longer started again by the dependents step when its parent is recreated, also when the sidecar has no `whalenurse.enable` label of its own.
+- A sidecar is repaired after every change of its parent, also when the parent is restarted or recreated again within `RECOVERY_PERIOD` of the previous repair; it used to be sent to `--force-recreate` and then SUSPENDED, left without a network.
 - **A created container that compose is holding back is no longer started out of order.** `docker compose up` creates every
   container first and starts each when its `depends_on` conditions hold; whalenurse started a `created` container after
   `GRACE` whatever the condition. A `created` container waiting on a `service_healthy` or `service_completed_successfully`
@@ -46,6 +59,19 @@ workflow refuses an undated section.
   with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
   it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps
   and which rely on the preflight alone.
+
+### Security
+
+- **Labels that come from an image no longer steer whalenurse.** Docker copies an image's own labels onto the containers
+  made from it, so an image could opt itself in (`whalenurse.enable=true`), turn on the pull rung, start itself after a
+  `docker stop`, or claim a compose identity. whalenurse now reads the image's labels by image ID: on a compose container a
+  `whalenurse.*` label counts only if the compose file declares it; on any other container one with the image's own value
+  is ignored; a container whose `com.docker.compose.*` labels are the image's is treated as not made by compose (restart
+  rung only). One warning names the ignored labels. To opt in a container whose image ships the same value, declare the label
+  in the compose file or use `WHALENURSE_MODE=all`.
+- **The service name is always the operand after `--` in the compose commands whalenurse runs** (`up`, `pull` and the
+  `pull_policy` read). The name is already validated before it reaches a command line; `--` makes sure no compose release
+  can read it as a flag. The integration tests' compose filter accepts only that form.
 
 ## [0.1.3] - 2026-10-26
 
