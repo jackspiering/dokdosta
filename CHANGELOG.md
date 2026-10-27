@@ -10,6 +10,12 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Security
+
+- **The service name is always the operand after `--` in the compose commands whalenurse runs** (`up`, `pull` and the
+  `pull_policy` read). The name is already validated before it reaches a command line; `--` makes sure no compose release
+  can read it as a flag. The integration tests' compose filter accepts only that form.
+
 ### Changed
 
 - **The documentation says what the drift guard checks for a sidecar.** A service that shares another container's network,
@@ -37,6 +43,14 @@ workflow refuses an undated section.
   with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
   it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps
   and which rely on the preflight alone.
+- **A very long `--for` or duration (`213504d`) is refused** instead of wrapping to a few minutes.
+- **`WHALENURSE_HOST_ID` with a `/` is refused at startup.** It shifted the parts of every container key, so `pause` and
+  `unsuspend` matched nothing.
+- **The placeholder `WHALENURSE_HTTP_TOKEN` of the example env files is refused at startup.**
+- **`whalenurse pause` says when no watched container is in the scope** (the pause still stands, as before).
+- **`/static/` is a 404, not a directory listing.** The dashboard's embedded asset directory could be listed.
+- **A container whose name has a `.` or `..` part gets no dashboard link** instead of a link the server would clean into
+  another page. A multi-byte first letter in a reason is no longer cut in half.
 
 ## [0.1.3] - 2026-10-26
 
