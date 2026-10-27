@@ -304,18 +304,18 @@ func TestGuardedActorRefusesOtherProjects(t *testing.T) {
 
 // ---- the compose filter and the image helpers (M2b) ----------------------------------------------------------------
 
-const goodUp = "-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env up -d --force-recreate --no-deps --pull never --no-build web"
+const goodUp = "-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env up -d --force-recreate --no-deps --pull never --no-build -- web"
 
 func TestComposeFilterAcceptsExactlyWhatTheComposePackageBuilds(t *testing.T) {
 	for _, ok := range []string{
 		goodUp,
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml up -d --no-deps --pull never --no-build web",
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --dry-run --progress json up -d --no-deps --pull never --no-build web",
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml up -d --no-deps --pull never --no-build -- web",
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --dry-run --progress json up -d --no-deps --pull never --no-build -- web",
 		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --hash=web",
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --format json --no-env-resolution web", // the pull rung's policy read
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --format json --no-env-resolution -- web", // the pull rung's policy read
 		"-p whalenurse-test-a version --short",
 		"-p whalenurse-test-a version",
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env pull --policy always web", // rung 3
+		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env pull --policy always -- web", // rung 3
 	} {
 		if err := CheckComposeCommand(strings.Fields(ok)); err != nil {
 			t.Errorf("%s: %v", ok, err)
@@ -335,21 +335,21 @@ func TestComposeFilterRefuses(t *testing.T) {
 		"pull all services":          "-p whalenurse-test-a pull --policy always",
 		"pull two services":          "-p whalenurse-test-a pull --policy always web db",
 		"pull a flag as a service":   "-p whalenurse-test-a pull --policy always --quiet",
-		"pull of another project":    "-p prod pull --policy always web",
+		"pull of another project":    "-p prod pull --policy always -- web",
 		"build":                      "-p whalenurse-test-a build web",
 		"run":                        "-p whalenurse-test-a run web",
 		"stop":                       "-p whalenurse-test-a stop web",
-		"another project":            "-p prod up -d --no-deps --pull never --no-build web",
-		"an m0 project":              "-p whalenurse-m0-e1 up -d --no-deps --pull never --no-build web",
-		"no project":                 "up -d --no-deps --pull never --no-build web",
-		"project via --project-name": "--project-name whalenurse-test-a up -d --no-deps --pull never --no-build web",
-		"up may pull":                "-p whalenurse-test-a up -d --no-deps --pull always --no-build web",
-		"up pull missing":            "-p whalenurse-test-a up -d --no-deps --pull missing --no-build web",
-		"up without --pull":          "-p whalenurse-test-a up -d --no-deps --no-build web",
+		"another project":            "-p prod up -d --no-deps --pull never --no-build -- web",
+		"an m0 project":              "-p whalenurse-m0-e1 up -d --no-deps --pull never --no-build -- web",
+		"no project":                 "up -d --no-deps --pull never --no-build -- web",
+		"project via --project-name": "--project-name whalenurse-test-a up -d --no-deps --pull never --no-build -- web",
+		"up may pull":                "-p whalenurse-test-a up -d --no-deps --pull always --no-build -- web",
+		"up pull missing":            "-p whalenurse-test-a up -d --no-deps --pull missing --no-build -- web",
+		"up without --pull":          "-p whalenurse-test-a up -d --no-deps --no-build -- web",
 		"up may build":               "-p whalenurse-test-a up -d --no-deps --pull never --build web",
 		"up without --no-build":      "-p whalenurse-test-a up -d --no-deps --pull never web",
-		"up with dependencies":       "-p whalenurse-test-a up -d --pull never --no-build web",
-		"up attached":                "-p whalenurse-test-a up --no-deps --pull never --no-build web",
+		"up with dependencies":       "-p whalenurse-test-a up -d --pull never --no-build -- web",
+		"up attached":                "-p whalenurse-test-a up --no-deps --pull never --no-build -- web",
 		"up all services":            "-p whalenurse-test-a up -d --no-deps --pull never --no-build",
 		"up two services":            "-p whalenurse-test-a up -d --no-deps --pull never --no-build web db",
 		"up --remove-orphans":        "-p whalenurse-test-a up -d --no-deps --pull never --no-build --remove-orphans web",
@@ -359,12 +359,21 @@ func TestComposeFilterRefuses(t *testing.T) {
 		"config rendered":            "-p whalenurse-test-a config",
 		"config json of all":         "-p whalenurse-test-a config --format json --no-env-resolution",
 		"config json with env":       "-p whalenurse-test-a config --format json web",
-		"config yaml":                "-p whalenurse-test-a config --format yaml --no-env-resolution web",
+		"config yaml":                "-p whalenurse-test-a config --format yaml --no-env-resolution -- web",
 		"config json of two":         "-p whalenurse-test-a config --format json --no-env-resolution web db",
 		"config json, flag service":  "-p whalenurse-test-a config --format json --no-env-resolution --hash=web",
 		"version -f":                 "-p whalenurse-test-a version --format json",
 		"flag without value":         "-p whalenurse-test-a -f",
 		"no subcommand":              "-p whalenurse-test-a --dry-run",
+		"up service without --":      "-p whalenurse-test-a up -d --no-deps --pull never --no-build web",
+		"up flag after --":           "-p whalenurse-test-a up -d --no-deps --pull never --no-build -- --dry-run=false",
+		"up flags after --":          "-p whalenurse-test-a up -d --no-deps --pull never -- --no-build web",
+		"up two services after --":   "-p whalenurse-test-a up -d --no-deps --pull never --no-build -- web db",
+		"up -- without a service":    "-p whalenurse-test-a up -d --no-deps --pull never --no-build --",
+		"pull service without --":    "-p whalenurse-test-a pull --policy always web",
+		"pull flag after --":         "-p whalenurse-test-a pull --policy always -- --include-deps",
+		"config json without --":     "-p whalenurse-test-a config --format json --no-env-resolution web",
+		"config json flag after --":  "-p whalenurse-test-a config --format json --no-env-resolution -- --hash=web",
 	} {
 		if err := CheckComposeCommand(strings.Fields(args)); !errors.Is(err, ErrRefused) {
 			t.Errorf("%s: %s was not refused (%v)", name, args, err)
@@ -394,13 +403,13 @@ func TestComposeRunnerOnlyRunsWhatTheFilterAccepts(t *testing.T) {
 	if len(rec.ran) != 1 || len(r.Log()) != 1 || len(r.Mutating()) != 1 || len(r.Pulls()) != 0 {
 		t.Fatalf("%v %v", rec.ran, r.Log())
 	}
-	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a pull --policy always web")}); err != nil {
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a pull --policy always -- web")}); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.Pulls()) != 1 || len(r.Mutating()) != 1 {
 		t.Fatalf("a pull is counted by Pulls: %v / %v", r.Pulls(), r.Mutating())
 	}
-	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a --dry-run --progress json up -d --no-deps --pull never --no-build web")}); err != nil {
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a --dry-run --progress json up -d --no-deps --pull never --no-build -- web")}); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.Mutating()) != 1 {
@@ -549,7 +558,7 @@ func TestComposeRunnerOnlyLetsAPullUseTheCredentialsDirectory(t *testing.T) {
 	rec := &recordingCompose{}
 	r := &ComposeRunner{Inner: rec}
 	r.AllowAuthDir("/tmp/whalenurse-test-auth-1")
-	pull := strings.Fields("-p whalenurse-test-a pull --policy always web")
+	pull := strings.Fields("-p whalenurse-test-a pull --policy always -- web")
 	ctx := context.Background()
 	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/tmp/whalenurse-test-auth-1"}); err != nil {
 		t.Fatal(err)

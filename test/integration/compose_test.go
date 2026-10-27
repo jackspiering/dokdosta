@@ -90,10 +90,10 @@ func TestLadderRestartRecreateSuspended(t *testing.T) {
 	for _, l := range r.Compose.Mutating() {
 		ups = append(ups, l)
 	}
-	if len(ups) != 1 || !strings.Contains(ups[0], "up -d --force-recreate --no-deps --pull never --no-build app") {
+	if len(ups) != 1 || !strings.Contains(ups[0], "up -d --force-recreate --no-deps --pull never --no-build -- app") {
 		t.Fatalf("mutating compose commands: %v", ups)
 	}
-	if !strings.Contains(strings.Join(r.Compose.Log(), "\n"), "--dry-run --progress json up -d --no-deps --pull never --no-build app") {
+	if !strings.Contains(strings.Join(r.Compose.Log(), "\n"), "--dry-run --progress json up -d --no-deps --pull never --no-build -- app") {
 		t.Fatalf("the dry-run oracle did not run before the recreate: %v", r.Compose.Log())
 	}
 	time.Sleep(20 * time.Second) // several polls: SUSPENDED means no more attempts
@@ -404,7 +404,7 @@ func TestDependentIsRecreatedAfterItsParentIsRecreated(t *testing.T) {
 			depUp = l
 		}
 	}
-	if !strings.Contains(depUp, "up -d --no-deps --pull never --no-build dep") {
+	if !strings.Contains(depUp, "up -d --no-deps --pull never --no-build -- dep") {
 		t.Fatalf("no dependents up: %v", r.Compose.Mutating())
 	}
 	if strings.Contains(depUp, "--force-recreate") && countFor(r.Rec, engine.DependentPostCheck, s.key("dep")) == 0 {
@@ -687,16 +687,27 @@ volumes:
 	return s, img
 }
 
+// imageStatusOf runs `whalenurse status` in the container. The control socket appears a moment after the container
+// starts, so a failure is retried until a bounded deadline instead of failing the test on the first try.
 func imageStatusOf(t *testing.T, g *Guard, s *stack) imageStatus {
 	t.Helper()
-	out, err := g.Ctr(context.Background(), "exec", s.container("whalenurse").ID, "/whalenurse", "status", "--json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	id := s.container("whalenurse").ID
 	var st imageStatus
-	if err := json.Unmarshal([]byte(out), &st); err != nil {
-		t.Fatalf("%v\n%s", err, out)
-	}
+	var last error
+	waitFor(t, "whalenurse status to answer on the control socket", 60*time.Second, func() bool {
+		out, err := g.Ctr(context.Background(), "exec", id, "/whalenurse", "status", "--json")
+		if err == nil {
+			if err = json.Unmarshal([]byte(out), &st); err == nil {
+				return true
+			}
+			err = fmt.Errorf("%w\n%s", err, out)
+		}
+		if last == nil || last.Error() != err.Error() {
+			t.Logf("status not ready: %v", err)
+		}
+		last = err
+		return false
+	})
 	return st
 }
 
