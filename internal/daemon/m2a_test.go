@@ -939,6 +939,7 @@ func (f failingMeta) Meta(k string) (string, bool, error) {
 	return v, ok, nil
 }
 func (f failingMeta) SetMeta(k, v string) { f.m[k] = v }
+func (f failingMeta) DeleteMeta(k string) { delete(f.m, k) }
 
 // A boot id that cannot be read is not "no boot id yet": the stored one is kept for the next start to compare with,
 // instead of being overwritten with the current boot's (which would hide a reboot from mechanism (b) for good).
