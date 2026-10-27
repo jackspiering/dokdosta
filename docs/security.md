@@ -28,13 +28,16 @@ What whalenurse does with that power, so you can judge it:
   and could turn the drift guard's dry-run into a real `up` of the project.
 
 - **The image's publisher is a second source of labels.** Docker puts an image's own labels on every container made from
-  it, for each key the container is not given itself, so the publisher of an image you run can set `whalenurse.*` labels as
-  well as you can: `whalenurse.enable=true` opts the container in under the default `WHALENURSE_MODE=label`,
-  `whalenurse.heal.pull=true` lets whalenurse pull a newer image for it, `whalenurse.heal-exited=always` starts it again after
-  a `docker stop`, and a high `whalenurse.flap-limit` lets it use more of the host-wide rate limit. whalenurse cannot tell
-  these from labels you wrote. The publisher already runs code in that container, so this adds little power, but it does mean
-  an image can opt itself in. Check what an image brings with `docker image inspect -f '{{json .Config.Labels}}' <image>`;
-  a label you set on the service wins (see [Labels from the image](labels.md#labels-from-the-image)).
+  it, for each key the container is not given itself, so the publisher of an image you run could set `whalenurse.*` labels as
+  well as you can: `whalenurse.enable=true` to opt the container in, `whalenurse.heal.pull=true` to let whalenurse pull a
+  newer image for it, `whalenurse.heal-exited=always` to start it again after a `docker stop`, a high `whalenurse.flap-limit`
+  to use more of the host-wide rate limit, or `com.docker.compose.*` labels to claim a compose identity. whalenurse reads the
+  image's own labels (by image ID) and ignores the ones that come from the image: on a compose container a `whalenurse.*`
+  label counts only if your compose file declares it, on any other container one with the image's own value is ignored, and a
+  container whose compose labels are the image's is treated as not made by compose. One warning per container names the
+  labels. If whalenurse cannot read the image or the compose file, it falls back to the comparison with the image's value. See
+  [Labels from the image](labels.md#labels-from-the-image). Check what an image brings with
+  `docker image inspect -f '{{json .Config.Labels}}' <image>`.
 
 How to reduce the exposure:
 

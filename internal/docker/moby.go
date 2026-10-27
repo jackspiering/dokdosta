@@ -52,6 +52,7 @@ func (m *Moby) List(ctx context.Context) ([]Summary, error) {
 			State:       string(it.State),
 			NetworkMode: it.HostConfig.NetworkMode,
 			Image:       it.Image,
+			ImageID:     it.ImageID,
 			Created:     time.Unix(it.Created, 0),
 		}
 		if len(it.Names) > 0 {
@@ -99,6 +100,21 @@ func (m *Moby) ImageID(ctx context.Context, ref, arch string) (string, error) {
 		return "", err
 	}
 	return res.ID, nil
+}
+
+// ImageLabels is `docker image inspect --format '{{json .Config.Labels}}' <id>`.
+func (m *Moby) ImageLabels(ctx context.Context, imageID string) (map[string]string, error) {
+	res, err := m.c.ImageInspect(ctx, imageID)
+	if err != nil {
+		if errdefs.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: %s", ErrImageNotFound, imageID)
+		}
+		return nil, err
+	}
+	if res.Config == nil {
+		return nil, nil
+	}
+	return res.Config.Labels, nil
 }
 
 func (m *Moby) Restart(ctx context.Context, id string) error {
