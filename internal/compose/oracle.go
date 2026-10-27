@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -112,6 +113,47 @@ func ParsePullPolicy(out []byte, service string) (string, error) {
 		return "", fmt.Errorf("service %s is not in the rendered compose config: %w", service, ErrUnparseable)
 	}
 	return strings.TrimSpace(svc.PullPolicy), nil
+}
+
+// ParseDeclaredLabels reads services.<svc>.labels from `config --format json` and returns the keys that begin with
+// "whalenurse.", sorted. Compose renders `labels:` as a map; the list form ("key=value") is read too. No value is kept.
+func ParseDeclaredLabels(out []byte, service string) ([]string, error) {
+	var doc struct {
+		Services map[string]struct {
+			Labels json.RawMessage `json:"labels"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &doc); err != nil {
+		return nil, fmt.Errorf("cannot read the rendered compose config: %w", ErrUnparseable)
+	}
+	svc, ok := doc.Services[service]
+	if !ok {
+		return nil, fmt.Errorf("service %s is not in the rendered compose config: %w", service, ErrUnparseable)
+	}
+	var keys []string
+	add := func(k string) {
+		if k = strings.TrimSpace(k); strings.HasPrefix(k, "whalenurse.") {
+			keys = append(keys, k)
+		}
+	}
+	var asMap map[string]json.RawMessage
+	var asList []string
+	switch {
+	case len(svc.Labels) == 0 || string(svc.Labels) == "null":
+	case json.Unmarshal(svc.Labels, &asMap) == nil:
+		for k := range asMap {
+			add(k)
+		}
+	case json.Unmarshal(svc.Labels, &asList) == nil:
+		for _, kv := range asList {
+			k, _, _ := strings.Cut(kv, "=")
+			add(k)
+		}
+	default:
+		return nil, fmt.Errorf("the labels of service %s are not a map or a list: %w", service, ErrUnparseable)
+	}
+	slices.Sort(keys)
+	return slices.Compact(keys), nil
 }
 
 // PullPolicyBlocksPull reports whether the service's pull_policy forbids a pull: `never` and `build` (plan v3.8: the pull

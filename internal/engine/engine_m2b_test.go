@@ -221,3 +221,125 @@ func TestDependentStepDoesNotCountTowardTheFlapLimit(t *testing.T) {
 		t.Fatalf("its own incidents still count: %v", rec.Types())
 	}
 }
+
+// A dependent that waits for a service says so once per reason; once the service is ready (ClearWait) or the dependent
+// acts, the same reason is news again.
+func TestWaitIsSaidOncePerReasonUntilTheServiceIsReady(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	d := rules.Decision{Class: rules.ClassStaleParentGone, Action: rules.ActionRecreateStale}
+	e.Wait(tgt, d, "waiting for service db (exited)")
+	e.Wait(tgt, d, "waiting for service db (exited)")
+	if rec.Count(WaitingForParent) != 1 || rec.Count(ActionRefused) != 0 {
+		t.Fatalf("%v", rec.Types())
+	}
+	e.Wait(tgt, d, "waiting for service db (created)")
+	if rec.Count(WaitingForParent) != 2 {
+		t.Fatalf("another reason is news: %v", rec.Types())
+	}
+	e.ClearWait(tgt)
+	e.Wait(tgt, d, "waiting for service db (created)")
+	if rec.Count(WaitingForParent) != 3 {
+		t.Fatalf("after the service was ready the same wait is news again: %v", rec.Types())
+	}
+}
+
+// ---- plan v3.13 item 1: a dependents-step repair after a parent change opens a fresh incident ---------------------
+
+var staleGone = rules.Decision{Class: rules.ClassStaleParentGone, Action: rules.ActionRecreateStale, Reason: "parent gone"}
+
+func TestParentChangeOpensAFreshIncidentAtRungZero(t *testing.T) {
+	e, clk, rec := newEngine(t, 0)
+	p := run(e, staleGone, cfg, Obs{Parent: "gone:A"})
+	if p.Act != rules.ActionRecreateStale {
+		t.Fatalf("%+v", p)
+	}
+	clk.Advance(5 * time.Second) // inside the cooldown; the parent changed again
+	p = run(e, staleGone, cfg, Obs{Parent: "gone:B"})
+	if p.Act != rules.ActionRecreateStale {
+		t.Fatalf("a new parent is repaired at once, not held by the cooldown of the repair before: %+v", p)
+	}
+	closed := 0
+	for _, ev := range rec.Events() {
+		if ev.Type == IncidentClosed && ev.Attrs["reason"] == "parent_changed" {
+			closed++
+		}
+	}
+	if closed != 1 || rec.Count(IncidentOpened) != 2 || rec.Count(Suspended) != 0 {
+		t.Fatalf("%v", rec.Types())
+	}
+	if n := len(e.View().Keys); n != 1 {
+		t.Fatalf("%d keys", n)
+	}
+}
+
+func TestSameParentKeepsTheOnePassRuleAndUnknownParentChangesNothing(t *testing.T) {
+	e, clk, rec := newEngine(t, 0)
+	run(e, staleGone, cfg, Obs{Parent: "gone:A"})
+	clk.Advance(2 * time.Minute)
+	// Still stale for the same parent: not a fresh repair. (Recreate-stale skips the restart rung, so the ladder is spent.)
+	if p := e.Evaluate(tgt, staleGone, cfg, Obs{Parent: "gone:A"}); acted(p) {
+		t.Fatalf("%+v", p)
+	}
+	if rec.Count(Suspended) != 1 || rec.Count(IncidentOpened) != 1 {
+		t.Fatalf("%v", rec.Types())
+	}
+
+	// An unknown parent ("") never counts as a change.
+	e2, clk2, rec2 := newEngine(t, 0)
+	run(e2, staleGone, cfg, Obs{Parent: "gone:A"})
+	clk2.Advance(2 * time.Minute)
+	if p := e2.Evaluate(tgt, staleGone, cfg, Obs{}); acted(p) {
+		t.Fatalf("%+v", p)
+	}
+	if rec2.Count(IncidentOpened) != 1 {
+		t.Fatalf("%v", rec2.Types())
+	}
+}
+
+func TestParentChangeAfterSuspensionUnsuspendsAndRepairsAfresh(t *testing.T) {
+	e, clk, rec := newEngine(t, 0)
+	run(e, staleGone, cfg, Obs{Parent: "gone:A"})
+	clk.Advance(2 * time.Minute)
+	e.Evaluate(tgt, staleGone, cfg, Obs{Parent: "gone:A"}) // spent: SUSPENDED
+	if rec.Count(Suspended) != 1 {
+		t.Fatalf("%v", rec.Types())
+	}
+	clk.Advance(time.Minute)
+	if p := run(e, staleGone, cfg, Obs{Parent: "gone:B"}); p.Act != rules.ActionRecreateStale {
+		t.Fatalf("%+v / %v", p, rec.Types())
+	}
+	var reasons []string
+	for _, ev := range rec.Events() {
+		if ev.Type == Unsuspended {
+			reasons = append(reasons, ev.Attrs["reason"])
+		}
+	}
+	if len(reasons) != 1 || reasons[0] != "parent_changed" {
+		t.Fatalf("%v / %v", reasons, rec.Types())
+	}
+}
+
+func TestParentChangeWaitsForAnActionInFlight(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	p := e.Evaluate(tgt, staleGone, cfg, Obs{Parent: "gone:A"})
+	e.Begin(tgt, p, staleGone) // running
+	if q := e.Evaluate(tgt, staleGone, cfg, Obs{Parent: "gone:B"}); acted(q) || rec.Count(IncidentClosed) != 0 {
+		t.Fatalf("the incident of a running action is not closed under it: %+v / %v", q, rec.Types())
+	}
+}
+
+// An incident whose parent was not known (restored after a restart, or opened by the sidecar's own ladder) learns it while
+// the sidecar is recovering, so the first parent change after that is a fresh repair too.
+func TestRecoveringIncidentLearnsTheParent(t *testing.T) {
+	e, clk, rec := newEngine(t, 0)
+	run(e, bad, cfg, hcRecreate) // the sidecar's own ladder: no parent
+	clk.Advance(time.Minute)
+	e.Evaluate(tgt, ok, cfg, Obs{HasHealthcheck: true, Parent: "P@1"})
+	clk.Advance(time.Minute)
+	if p := run(e, staleGone, cfg, Obs{Parent: "gone:P"}); p.Act != rules.ActionRecreateStale {
+		t.Fatalf("%+v / %v", p, rec.Types())
+	}
+	if rec.Count(IncidentClosed) != 1 {
+		t.Fatalf("%v", rec.Types())
+	}
+}

@@ -68,6 +68,7 @@ type Summary struct {
 	Health      string // "" when there is no healthcheck
 	NetworkMode string
 	Image       string // the reference the container was created from
+	ImageID     string // the image the container runs (the list's ImageID): what its image's own labels are read by
 	Created     time.Time
 }
 
@@ -119,6 +120,11 @@ type Reader interface {
 	// containerd store), which compose before v5.5.0 recorded in the label (plan v3.6). It returns ErrImageNotFound when
 	// the reference is gone.
 	ImageID(ctx context.Context, ref, arch string) (string, error)
+	// ImageLabels returns the labels an image carries itself (its Config.Labels), looked up by image ID, which is
+	// immutable: a moved tag does not change the answer. Docker copies them onto every container created from the image
+	// for each key the create request did not set (moby daemon/commit.go, merge). It returns ErrImageNotFound when the
+	// image is gone.
+	ImageLabels(ctx context.Context, imageID string) (map[string]string, error)
 }
 
 // ServerInfo is the part of the Engine's /version that whalenurse reads.
