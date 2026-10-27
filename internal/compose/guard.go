@@ -141,13 +141,19 @@ func (g Guard) refHolderOracle(ctx context.Context, in GuardInput) (drift string
 // reference holder with current references (it says Recreate for an unchanged one, or none after an edit). The CI matrix
 // decides (TestOracleForAReferenceHolderWithCurrentReferences): a release for which it fails is added here with the reason
 // in docs/m2b-notes.md (v3.13 item 4). For a release listed here the check stays skipped.
-var refHolderOracleExcluded = map[string]bool{}
+//
+// 5.2.0: the CI run of the test showed a Recreate for an unchanged holder of every kind (network_mode, ipc, pid,
+// volumes_from) with the parent current, on both image stores. 5.6.0 and the latest release (5.6.1) agreed for all four.
+var refHolderOracleExcluded = map[string]bool{"5.2.0": true}
+
+// RefHolderOracleExcluded reports whether the check stays skipped for this compose release (the integration test reads it).
+func RefHolderOracleExcluded(v Version) bool { return refHolderOracleExcluded[v.String()] }
 
 // trustsOracleForRefHolders reports whether the compose in use is one for which the oracle may be asked about a reference
 // holder: a known release that is not excluded.
 func (g Guard) trustsOracleForRefHolders() bool {
 	v := g.Compose.Binary().Version
-	return !v.IsZero() && !refHolderOracleExcluded[v.String()]
+	return !v.IsZero() && !RefHolderOracleExcluded(v)
 }
 
 // refHolderSkew is check 3 for a reference holder, which has no check 1 to qualify it: the recreate always happens (the

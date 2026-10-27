@@ -35,7 +35,8 @@ that reference is still the one the sidecar was created with: while everything i
 container of its service. `config --hash` hashes the unresolved form and is never used for a sidecar.
 
 - **A sidecar that heals itself** (its own ladder, when it is opted in) with current references: the dry run is asked, and an
-  edit to its own definition that you have not deployed blocks the recreate like any other drift (`DriftBlocked`).
+  edit to its own definition that you have not deployed blocks the recreate like any other drift (`DriftBlocked`). Not with
+  compose v5.2.0, whose dry run is not reliable for such a service: there the check is not made.
 - **A sidecar repaired after its parent was recreated** (the dependents step), or one whose references are not current: its
   references are gone or changed, compose's answer would always be "recreate", so only the image (the tag still resolves to
   the image it was created from) and, when the bundled compose is in use, the compose release that made it are checked.

@@ -79,7 +79,12 @@ Decision 7 above still holds for the dependents step. On a reference holder's **
 references is the current, running container of its service (`Daemon.refsCurrent`), the guard also asks the dry-run oracle
 (never `config --hash`: it hashes the unresolved form, E4). The precondition of the plan is the integration test
 `TestOracleForAReferenceHolderWithCurrentReferences`, which runs on the whole CI compose matrix (both image stores; v5.2.0,
-v5.6.0 and the latest release): an unchanged sidecar is no `Recreate`, and one with an edited environment is. A release for
-which it does not hold goes into `compose.refHolderOracleExcluded` (the check stays skipped there) and is named here. Not
+v5.6.0 and the latest release): an unchanged holder is no `Recreate`, and one with an edited environment is. A release for
+which it does not hold goes into `compose.refHolderOracleExcluded` (the check stays skipped there) and is named here.
+**Result of the CI run (PR #102, 27 Oct 2026): it held on v5.6.0 and on the latest release (v5.6.1), for both image stores and
+all four kinds, and not on v5.2.0**, where the oracle said `Recreate` for an unchanged holder of every kind (network_mode, ipc,
+pid, volumes_from) while the parent was current, on both stores. So v5.2.0 is in
+`refHolderOracleExcluded`: with it the check stays skipped, as for every release before this change. The cause was not looked
+into (v5.2.0 is also the release with compose bug #13878). Not
 asked in image-move mode (a pull-enabled sidecar's rung 2, a sidecar taking its parent's moved tag): without `config --hash`
 a `Recreate` cannot be told from the moved tag. An oracle that fails or cannot be read leaves the check unmade, as before (the version-skew check then stands alone for the holder; once the oracle has answered, skew only qualifies a `Recreate`, as for any service). Only on the holder's own ladder, never in the dependents step, and not when a referenced service has more than one container (compose resolves `service:<name>` to one replica). The integration test has one holder of each kind: `network_mode`, `ipc`, `pid` and `volumes_from`; if a kind fails on some release, it comes out of `Daemon.refsCurrent` or the release goes into `refHolderOracleExcluded`, and it is named here.

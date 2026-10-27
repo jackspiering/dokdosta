@@ -795,7 +795,8 @@ func driftBlockedMessages(t *testing.T, id string) []string {
 // whose references are current, compose's own hash matches the one it recorded, so the dry-run oracle says nothing for an
 // unchanged holder and says Recreate after an edit to the holder's own definition. One holder of each kind (E4 hashed each
 // after resolving it: network_mode, ipc, pid, volumes_from). If a release or a kind fails this, add the release to
-// compose.refHolderOracleExcluded (or take the kind out of Daemon.refsCurrent) and record it in docs/m2b-notes.md.
+// compose.refHolderOracleExcluded (or take the kind out of Daemon.refsCurrent) and record it in docs/m2b-notes.md. A release
+// that is excluded only logs what the oracle does (and says when it agrees, so it can come out of the list).
 func TestOracleForAReferenceHolderWithCurrentReferences(t *testing.T) {
 	g, cli := requireIntegration(t)
 	holder := func(name, ref string) string {
@@ -830,30 +831,46 @@ func TestOracleForAReferenceHolderWithCurrentReferences(t *testing.T) {
 		o, err := c.DryRunUp(ctx, p, dep.Name)
 		return o, err
 	}
+	kinds := []string{"netdep", "ipcdep", "piddep", "vfdep"}
+	var problems []string
 	ids := map[string]string{}
-	for service := range anchors {
+	for _, service := range kinds {
 		ids[service] = s.container(service).ID
 		o, err := ask(service)
-		if err != nil {
-			t.Fatalf("the oracle for %s: %v", service, err)
-		}
-		if o.WouldRecreate() {
-			t.Fatalf("%s: an unchanged holder whose reference is current must not be a Recreate: %v", service, o.Texts())
+		switch {
+		case err != nil:
+			problems = append(problems, fmt.Sprintf("%s: the oracle failed: %v", service, err))
+		case o.WouldRecreate():
+			problems = append(problems, fmt.Sprintf("%s: an unchanged holder whose reference is current is a Recreate: %v", service, o.Texts()))
 		}
 	}
-	for _, anchor := range anchors {
+	for _, service := range kinds {
+		anchor := anchors[service]
 		editCompose(t, s, anchor, anchor+"\n    environment:\n      EDITED: \"1\"")
 	}
-	for service := range anchors {
+	for _, service := range kinds {
 		o, err := ask(service)
-		if err != nil {
-			t.Fatalf("the oracle for %s after the edit: %v", service, err)
-		}
-		if !o.WouldRecreate() {
-			t.Fatalf("%s: an edit to the holder's own definition must be a Recreate: %v", service, o.Texts())
+		switch {
+		case err != nil:
+			problems = append(problems, fmt.Sprintf("%s: the oracle failed after the edit: %v", service, err))
+		case !o.WouldRecreate():
+			problems = append(problems, fmt.Sprintf("%s: an edit to the holder's own definition is not a Recreate: %v", service, o.Texts()))
 		}
 		if after := s.container(service); after.ID != ids[service] {
 			t.Fatalf("%s: the dry run changed the container: %s -> %s", service, ids[service], after.ID)
+		}
+	}
+	bin := composeBin(t)
+	switch {
+	case compose.RefHolderOracleExcluded(bin.Version):
+		// The check is skipped for this release (compose.refHolderOracleExcluded): say what the oracle does, fail on nothing.
+		t.Logf("compose %s is excluded; the oracle for a reference holder with current references: %v", bin.VersionString(), problems)
+		if len(problems) == 0 {
+			t.Logf("it agrees for all four kinds: the release can come out of refHolderOracleExcluded")
+		}
+	case len(problems) > 0:
+		for _, p := range problems {
+			t.Error(p)
 		}
 	}
 }
