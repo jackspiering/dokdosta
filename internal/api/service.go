@@ -47,7 +47,7 @@ const (
 var allowedAttrs = map[string]bool{
 	"action": true, "at": true, "class": true, "cause": true, "count": true, "dependents": true, "dry_run": true,
 	"error": true, "findings": true, "held": true, "id": true, "image": true, "incident": true, "moved_at": true,
-	"moved_by": true, "moved_ref": true, "new": true, "not_applicable": true, "ok": true, "old": true, "old_id": true,
+	"moved_by": true, "moved_ref": true, "new": true, "not_applicable": true, "not_run": true, "ok": true, "old": true, "old_id": true,
 	"old_image": true, "opened": true, "outcome": true, "reason": true, "ref": true, "rollback_tag": true,
 	"rollback_up": true, "rung": true, "rungs": true, "scope": true, "sidecars": true, "signal": true, "until": true, "why": true,
 }
