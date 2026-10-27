@@ -790,8 +790,12 @@ func TestHealPullWithoutRecreateKeepsThePullRungOff(t *testing.T) {
 	if got := joined(started); got != "restart" {
 		t.Fatalf("actions = %s, want restart only", got)
 	}
-	if len(r.Compose.Log()) != 0 {
-		t.Fatalf("compose ran: %v", r.Compose.Log())
+	// Compose may be asked what the compose file declares (the labels check of plan v3.13 item 10, a `config` read), and
+	// nothing else: no up, no pull, not even a dry run.
+	for _, l := range r.Compose.Log() {
+		if !strings.Contains(l, " config --format json --no-env-resolution -- ") || strings.Contains(l, " up ") || strings.Contains(l, " pull ") || strings.Contains(l, "--dry-run") {
+			t.Fatalf("compose ran more than a read of the declared labels: %v", r.Compose.Log())
+		}
 	}
 	if n := imagePulls(t, g, since); n != 0 {
 		t.Fatalf("%d image pull events", n)
