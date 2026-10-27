@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/docker"
 )
 
@@ -31,7 +30,7 @@ func (d *Daemon) waitsFor(ctx context.Context, c docker.Container) string {
 		return ""
 	}
 	var waits []string
-	for _, e := range strings.Split(c.Labels[compose.LabelDependsOn], ",") {
+	for _, e := range strings.Split(dependsOnConditions(c.Labels), ",") {
 		parts := strings.Split(strings.TrimSpace(e), ":")
 		if len(parts) < 2 || (parts[1] != condHealthy && parts[1] != condCompleted) {
 			continue
