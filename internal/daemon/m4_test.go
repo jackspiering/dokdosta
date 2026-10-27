@@ -81,7 +81,7 @@ func TestPullFindsNoNewerImageAndSuspends(t *testing.T) {
 	breakAndRun(h, web.ID, 30*time.Minute)
 
 	// Rung 2 and rung 3 each run the guard first (the oracle); the pull is last and no up follows it.
-	if got := h.verbs(); got != "dry-run web, recreate web, policy web, dry-run web, pull web" {
+	if got := h.verbs(); got != "policy web, dry-run web, recreate web, policy web, dry-run web, pull web" {
 		t.Fatalf("compose calls = %q", got)
 	}
 	if h.count(engine.TagMoved) != 0 {
@@ -138,7 +138,7 @@ func TestPullUpgradesRecreatesAndRepairsTheSidecar(t *testing.T) {
 	breakAndRun(h, web.ID, 40*time.Minute)
 
 	verbs := h.verbs()
-	for _, want := range []string{"pull web, up web"} {
+	for _, want := range []string{"pull web, dry-run web, up web"} {
 		if !strings.Contains(verbs, want) {
 			t.Fatalf("compose calls = %q, want ... %q", verbs, want)
 		}
@@ -146,9 +146,9 @@ func TestPullUpgradesRecreatesAndRepairsTheSidecar(t *testing.T) {
 	if h.cf.Count("pull") != 1 {
 		t.Fatalf("%s", verbs)
 	}
-	// Drift checks before the pull: the second oracle run comes before the pull, and nothing runs after the up but the
-	// dependents step.
-	if i, j := strings.LastIndex(verbs, "dry-run web"), strings.Index(verbs, "pull web"); i > j || i < 0 {
+	// Drift checks before the pull, and once more between the pull and the up (the pull can take minutes); nothing runs
+	// after the up but the dependents step.
+	if i, j := strings.Index(verbs, "dry-run web, pull web"), strings.Index(verbs, "pull web"); i < 0 || i+len("dry-run web, ") != j {
 		t.Fatalf("the drift check must come before the pull: %q", verbs)
 	}
 	moved := h.events(engine.TagMoved)
@@ -617,5 +617,93 @@ func TestScaledServiceGetsNoPull(t *testing.T) {
 	}
 	if h.count(engine.Suspended) != 1 {
 		t.Fatalf("%v", h.rec.Types())
+	}
+}
+
+// ---- after the pull, before the up ------------------------------------------------------------------------------
+
+// The pull can take minutes. What was checked before it (the pause, the guard) is checked again once the image has changed,
+// and the up is not run on a stale verdict (plan v3.13 item 9).
+func TestPullThatMovedTheImageRechecksThePauseBeforeTheUp(t *testing.T) {
+	h, web := pullStack(t, nil, docker.ServerInfo{})
+	h.cf.OnPull = func(compose.Project) error {
+		h.fake.SetImage("web:1", imgNewer)
+		_, err := h.d.Engine().Pause("p/web", 0) // the operator pauses while the pull runs
+		return err
+	}
+	breakAndRun(h, web.ID, 40*time.Minute)
+
+	if h.cf.Count("pull") != 1 || h.cf.Count("up") != 0 {
+		t.Fatalf("the up must not run for a paused container: %s", h.verbs())
+	}
+	moved := h.events(engine.TagMoved)
+	if len(moved) != 1 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+	m := moved[0].Attrs
+	if m["ok"] != "false" || !strings.Contains(moved[0].Message, "was not run") || !strings.Contains(m["error"], "paused") || m["not_run"] != "true" || m["rollback_tag"] == "" || m["rollback_up"] == "" {
+		t.Fatalf("%+v %q", m, moved[0].Message)
+	}
+	if mv, ok := h.d.moverOf(h.ctx, h.current("p", "web")); !ok || mv.Key != key("p", "web") {
+		t.Fatalf("the move is recorded: %+v", mv)
+	}
+	if h.count(engine.Suspended) != 0 {
+		t.Fatal("a paused container is not suspended")
+	}
+	if _, err := h.d.Engine().Resume("p/web"); err != nil {
+		t.Fatal(err)
+	}
+	h.advance(10 * time.Minute)
+	if h.cf.Count("up") != 0 || h.cf.Count("pull") != 1 {
+		t.Fatalf("%s", h.verbs())
+	}
+	if h.count(engine.Suspended) != 1 {
+		t.Fatalf("every rung is spent: SUSPENDED at the resume: %v", h.rec.Types())
+	}
+}
+
+// A compose edit made while the pull ran is a config finding: the up is not run, the container is SUSPENDED.
+func TestPullThatMovedTheImageRechecksTheGuardBeforeTheUp(t *testing.T) {
+	h, web := pullStack(t, nil, docker.ServerInfo{})
+	h.cf.OnPull = func(compose.Project) error {
+		h.fake.SetImage("web:1", imgNewer)
+		h.cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
+		h.cf.HashFn = func(compose.Project) (string, error) { return "h-edited", nil }
+		return nil
+	}
+	breakAndRun(h, web.ID, 40*time.Minute)
+
+	if h.cf.Count("pull") != 1 || h.cf.Count("up") != 0 {
+		t.Fatalf("the up must not run after a config finding: %s", h.verbs())
+	}
+	b := h.events(engine.DriftBlocked)
+	if len(b) != 1 || !strings.Contains(b[0].Message, "config:") || h.count(engine.Suspended) != 1 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+	moved := h.events(engine.TagMoved)
+	if len(moved) != 1 || moved[0].Attrs["ok"] != "false" || moved[0].Attrs["rollback_up"] == "" || !strings.Contains(moved[0].Message, "was not run") {
+		t.Fatalf("%+v", moved)
+	}
+}
+
+// Only an edit blocks: the image having moved is what the pull is for.
+func TestPullThatMovedTheImageStillGoesAheadWhenOnlyTheImageMoved(t *testing.T) {
+	h, web := pullStack(t, nil, docker.ServerInfo{})
+	h.cf.OnPull = func(compose.Project) error {
+		h.fake.SetImage("web:1", imgNewer)
+		h.cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
+		h.cf.HashFn = func(compose.Project) (string, error) { return "h-web", nil }
+		return nil
+	}
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "web", func(c *docker.Container) { c.Health = "healthy" })
+		return nil
+	}
+	breakAndRun(h, web.ID, 40*time.Minute)
+	if h.cf.Count("up") != 1 || h.count(engine.DriftBlocked) != 0 {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+	if m := h.events(engine.TagMoved); len(m) != 1 || m[0].Attrs["ok"] != "true" {
+		t.Fatalf("%+v", m)
 	}
 }
