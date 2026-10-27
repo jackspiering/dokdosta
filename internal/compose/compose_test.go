@@ -171,6 +171,32 @@ func TestProjectFromLabelsRefusesFlagShapedIdentity(t *testing.T) {
 	}
 }
 
+// Defence in depth for WN-001 (plan v3.13 item 11): even a service name that validation would let through is the operand
+// after `--`, last, in every command that names one, so no release can read it as a flag.
+func TestEveryServiceOperandFollowsADoubleDash(t *testing.T) {
+	r := &recRunner{}
+	c := New(Binary{Path: "/x"}, r)
+	p := proj()
+	ctx := context.Background()
+	_, _ = c.DryRunUp(ctx, p, "c-web-1")
+	_, _ = c.PullPolicy(ctx, p)
+	_ = c.Recreate(ctx, p)
+	_ = c.Up(ctx, p)
+	_ = c.Pull(ctx, p)
+	if len(r.cmds) != 5 {
+		t.Fatalf("%d commands", len(r.cmds))
+	}
+	for _, cmd := range r.cmds {
+		n := len(cmd.Args)
+		if n < 3 || cmd.Args[n-1] != p.Service || cmd.Args[n-2] != "--" {
+			t.Errorf("the service is not the operand after --: %s", cmd)
+		}
+		if slices.Index(cmd.Args, "--") != n-2 {
+			t.Errorf("a second --: %s", cmd)
+		}
+	}
+}
+
 // No compose command built here may carry a label value as a flag, whatever Project it is handed.
 func TestNoLabelValueReachesComposeAsAFlag(t *testing.T) {
 	const evil = "--dry-run=false"
@@ -253,9 +279,9 @@ func TestCommandLines(t *testing.T) {
 	}
 	base := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env "
 	want := []string{
-		base + "up -d --force-recreate --no-deps --pull never --no-build web",
-		base + "up -d --no-deps --pull never --no-build web",
-		base + "--dry-run --progress json up -d --no-deps --pull never --no-build web",
+		base + "up -d --force-recreate --no-deps --pull never --no-build -- web",
+		base + "up -d --no-deps --pull never --no-build -- web",
+		base + "--dry-run --progress json up -d --no-deps --pull never --no-build -- web",
 		base + "config --hash=web",
 	}
 	if len(r.cmds) != len(want) {
@@ -298,7 +324,7 @@ func TestPullCommandLine(t *testing.T) {
 	if err := c.Pull(context.Background(), proj()); err != nil {
 		t.Fatal(err)
 	}
-	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env pull --policy always web"
+	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env pull --policy always -- web"
 	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want || r.cmds[0].Dir != "/" {
 		t.Fatalf("%v", r.cmds)
 	}
@@ -574,7 +600,7 @@ func TestPullPolicyCommandLineAndParsing(t *testing.T) {
 	if err != nil || got != "never" {
 		t.Fatalf("%q %v", got, err)
 	}
-	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution web"
+	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution -- web"
 	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want {
 		t.Fatalf("%v", r.cmds)
 	}
