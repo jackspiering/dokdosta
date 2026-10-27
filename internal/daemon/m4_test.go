@@ -605,3 +605,17 @@ func (m memMetaSafe) Meta(k string) (string, bool, error) {
 	return v, ok, nil
 }
 func (m memMetaSafe) SetMeta(k, v string) { m.mu.Lock(); defer m.mu.Unlock(); m.m[k] = v }
+func (m memMetaSafe) DeleteMeta(k string) { m.mu.Lock(); defer m.mu.Unlock(); delete(m.m, k) }
+
+// A scaled service never reaches the pull: the up it ends with acts on every replica.
+func TestScaledServiceGetsNoPull(t *testing.T) {
+	h, web := pullStack(t, nil, docker.ServerInfo{})
+	h.svc(hexID("a2"), "p", "web", config.LabelHealPull, "true", docker.LabelNumber, "2")
+	breakAndRun(h, web.ID, 30*time.Minute)
+	if h.cf.Count("pull") != 0 || h.cf.Count("recreate") != 0 || h.cf.Count("up") != 0 {
+		t.Fatalf("compose ran for a scaled service: %q", h.verbs())
+	}
+	if h.count(engine.Suspended) != 1 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+}

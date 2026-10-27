@@ -118,6 +118,12 @@ func openDB(dir string, log *slog.Logger) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
+	// Earlier versions emptied a parents:<key> row instead of deleting it, and wrote one for keys that never had a parent
+	// set. An empty row means the same as none. A plain idempotent statement, not a schema step: a newer schema number
+	// would stop an older whalenurse from opening this database.
+	if _, err := db.Exec(`DELETE FROM meta WHERE key LIKE 'parents:%' AND value = ''`); err != nil && log != nil {
+		log.Warn("store: could not remove empty parents rows", "error", err.Error())
+	}
 	// WAL lets a reader run beside the writer. The reads of the API use their own connection; if it cannot be opened
 	// they share the writer's, which only costs a little latency.
 	s.rdb = db
@@ -304,6 +310,13 @@ func (s *Store) Meta(key string) (value string, ok bool, err error) {
 // SetMeta stores a meta value.
 func (s *Store) SetMeta(key, value string) {
 	if _, err := s.db.Exec(`INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
+		s.fail(OpWriteMeta, key, err)
+	}
+}
+
+// DeleteMeta removes a meta value.
+func (s *Store) DeleteMeta(key string) {
+	if _, err := s.db.Exec(`DELETE FROM meta WHERE key = ?`, key); err != nil {
 		s.fail(OpWriteMeta, key, err)
 	}
 }

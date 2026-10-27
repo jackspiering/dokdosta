@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
 	"github.com/jackspiering/whalenurse/internal/docker"
 )
 
@@ -18,7 +17,7 @@ const (
 // waitsFor says what compose is holding a `created` container back on (plan v3.13 item 14), or "" when nothing holds it.
 // `up` creates every container first and runs waitDependencies before it starts each one, so a created container whose
 // dependency is not healthy yet (service_healthy) or has not exited 0 yet (service_completed_successfully) is waiting, not
-// failed to start. The condition is read from the com.docker.compose.depends_on label (`<svc>:<condition>:<restart>`),
+// failed to start. The condition is read from the compose depends_on label (`<svc>:<condition>:<restart>`),
 // and the dependency's containers are the others of the same project. A dependency with no container at all is not
 // waited for (compose has nothing to wait on), and one that cannot be read is waited for: the container is looked at
 // again on the next poll.
@@ -31,7 +30,7 @@ func (d *Daemon) waitsFor(ctx context.Context, c docker.Container) string {
 		return ""
 	}
 	var waits []string
-	for _, e := range strings.Split(c.Labels[compose.LabelDependsOn], ",") {
+	for _, e := range strings.Split(dependsOnConditions(c.Labels), ",") {
 		parts := strings.Split(strings.TrimSpace(e), ":")
 		if len(parts) < 2 || (parts[1] != condHealthy && parts[1] != condCompleted) {
 			continue

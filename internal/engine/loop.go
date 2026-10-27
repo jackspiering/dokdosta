@@ -18,6 +18,10 @@ type Obs struct {
 	// version gate disabled the compose rungs, the container has no usable compose inputs, or it is not enabled by
 	// whalenurse.actions. The ladder records the reason and goes on; for a decision that needs a recreate it is advisory.
 	Unavailable map[string]string
+	// Parent identifies the parent a dependents-step repair is made against: the container IDs and start times of the
+	// containers the sidecar's namespaces hang on, as the daemon sees them now. Empty when it is not known or the decision
+	// is not a dependents-step one. The engine closes the incident of the repair before when it differs (plan v3.13 item 1).
+	Parent string
 }
 
 // Observe feeds one inspect into the crash-loop tracker of the key and returns

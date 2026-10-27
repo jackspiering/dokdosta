@@ -92,9 +92,6 @@ func (t *Tracker) ApplyAt(action, detail string, at time.Time) {
 // Evidence returns the current evidence.
 func (t *Tracker) Evidence() Evidence { return t.ev }
 
-// Cleared reports whether no marker is set (a manual stop has not been seen).
-func (t *Tracker) Cleared() bool { return !t.ev.ManualStop }
-
 // MarkedAt returns when the marker was set; zero if there is none.
 func (t *Tracker) MarkedAt() time.Time {
 	if !t.ev.ManualStop {

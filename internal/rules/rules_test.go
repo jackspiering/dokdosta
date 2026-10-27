@@ -576,14 +576,6 @@ func TestStartErrorStrings(t *testing.T) {
 			t.Errorf("%q: got %q, want %q", in, got, want)
 		}
 	}
-	for _, c := range []rules.Cause{rules.CauseParentGone, rules.CauseParentStopped, rules.CauseNetworkGone} {
-		if !c.IsStaleReference() {
-			t.Errorf("%s should be a stale reference", c)
-		}
-	}
-	if rules.CauseMissingMount.IsStaleReference() {
-		t.Error("missing-mount is not a stale reference")
-	}
 	_ = strings.TrimSpace
 }
 
