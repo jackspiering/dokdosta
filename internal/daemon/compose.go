@@ -414,8 +414,14 @@ func (d *Daemon) afterAction(t engine.Target, c docker.Container, recheck time.T
 		d.schedule(t.Key, recheck)
 		d.requestDependentSweep(recheck)
 	}
+	now := d.clk.Now()
+	for ref, g := range d.depGate {
+		if !now.Before(g.until) {
+			delete(d.depGate, ref) // the settle time is over; siblingBusy would delete it on its next look
+		}
+	}
 	if key := firstRef(c); key != "" {
-		d.depGate[key] = depGate{key: t.Key, until: d.clk.Now().Add(depSettle)}
+		d.depGate[key] = depGate{key: t.Key, until: now.Add(depSettle)}
 	}
 }
 
