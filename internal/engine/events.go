@@ -31,9 +31,10 @@ const (
 	ManualStopCleared   EventType = "ManualStopCleared"
 	MarkersQuarantined  EventType = "MarkersQuarantined" // a stream loss or a new boot id discarded manual-stop markers
 	RestoreWindowOpened EventType = "RestoreWindowOpened"
-	RestoreEvent        EventType = "RestoreEvent" // a kill or start seen inside the restore window; interpreted as a restore
-	DriftBlocked        EventType = "DriftBlocked" // the drift guard skipped a recreate; the container is SUSPENDED
-	DriftWarned         EventType = "DriftWarned"  // WHALENURSE_DRIFT_GUARD=warn: the recreate went ahead despite what the guard found
+	RestoreEvent        EventType = "RestoreEvent"  // a kill or start seen inside the restore window; interpreted as a restore
+	SignalIgnored       EventType = "SignalIgnored" // a kill with a reload signal (HUP, USR1, USR2, WINCH): not a stop, so no manual-stop marker
+	DriftBlocked        EventType = "DriftBlocked"  // the drift guard skipped a recreate; the container is SUSPENDED
+	DriftWarned         EventType = "DriftWarned"   // WHALENURSE_DRIFT_GUARD=warn: the recreate went ahead despite what the guard found
 	RungsDisabled       EventType = "RungsDisabled"
 	DependentPostCheck  EventType = "DependentPostCheck" // a dependent was still stale after a non-forced up: recreating it with --force-recreate
 	TagMoved            EventType = "TagMoved"           // rung 3 pulled a newer image: the tag now points elsewhere, for every stack that shares it

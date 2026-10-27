@@ -25,6 +25,9 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A reload signal no longer counts as a manual stop.** `docker kill -s HUP` (and docker-gen's `-notify-sighup`, SIGUSR1,
+  SIGUSR2, SIGWINCH) set a manual-stop marker, which then suppressed a later real heal of the container until its next
+  start. These kills are recorded (`SignalIgnored`) and set no marker; every other signal still does.
 - **A created container that compose is holding back is no longer started out of order.** `docker compose up` creates every
   container first and starts each when its `depends_on` conditions hold; whalenurse started a `created` container after
   `GRACE` whatever the condition. A `created` container waiting on a `service_healthy` or `service_completed_successfully`

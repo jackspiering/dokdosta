@@ -638,3 +638,42 @@ func TestRefuseDoesNotConsumeTheRung(t *testing.T) {
 		t.Fatalf("the rung must still be available after a refusal: %+v", p2)
 	}
 }
+
+// Plan v3.13 item 15 (DQ8): a kill that carries a reload signal (docker kill -s HUP, docker-gen's -notify-sighup) is not a
+// stop: it sets no manual-stop marker. Docker writes the signal as a number (moby daemon/kill.go: strconv.Itoa).
+func TestReloadSignalSetsNoManualStopMarker(t *testing.T) {
+	for _, sig := range []string{"1", "10", "12", "28", "SIGHUP", "HUP", "usr1", "SIGUSR2", "WINCH", " 1 "} {
+		e, clk, rec := newEngine(t, 0)
+		ev := docEv("kill", clk.Now())
+		ev.Signal = sig
+		e.ObserveDockerEvent(tgt, ev)
+		if rec.Count(ManualStopMarked) != 0 || e.Evidence(tgt.Key).ManualStop {
+			t.Errorf("signal %q set a marker: %v", sig, rec.Types())
+		}
+		if rec.Count(SignalIgnored) != 1 {
+			t.Errorf("signal %q: want the kill recorded as SignalIgnored: %v", sig, rec.Types())
+		}
+	}
+	// Every other signal still sets one: the stop signal of an image (SIGQUIT for nginx, SIGINT), SIGTERM, SIGKILL, and a
+	// kill with no signal attribute at all.
+	for _, sig := range []string{"15", "9", "3", "2", "SIGQUIT", "SIGINT", "34", "", "bogus"} {
+		e, clk, rec := newEngine(t, 0)
+		ev := docEv("kill", clk.Now())
+		ev.Signal = sig
+		e.ObserveDockerEvent(tgt, ev)
+		if rec.Count(ManualStopMarked) != 1 || !e.Evidence(tgt.Key).ManualStop {
+			t.Errorf("signal %q set no marker: %v", sig, rec.Types())
+		}
+	}
+	// A reload in front of a real stop does not hide the stop.
+	e, clk, _ := newEngine(t, 0)
+	hup := docEv("kill", clk.Now())
+	hup.Signal = "1"
+	e.ObserveDockerEvent(tgt, hup)
+	term := docEv("kill", clk.Now())
+	term.Signal = "15"
+	e.ObserveDockerEvent(tgt, term)
+	if !e.Evidence(tgt.Key).ManualStop {
+		t.Fatal("a SIGTERM after a SIGHUP set no marker")
+	}
+}

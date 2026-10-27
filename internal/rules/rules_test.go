@@ -830,3 +830,14 @@ func TestCreatedContainerHeldBackByCompose(t *testing.T) {
 		t.Fatalf("%+v", d)
 	}
 }
+
+// Plan v3.13 item 15: Summarize, the fixture helper, reads a reload signal like the engine does.
+func TestSummarizeIgnoresAKillWithAReloadSignal(t *testing.T) {
+	t0 := time.Now()
+	if got := rules.Summarize([]rules.EventLine{{Action: "kill", Signal: "1", At: t0}}); got == rules.VerdictManualStop {
+		t.Fatalf("SIGHUP made a manual stop: %q", got)
+	}
+	if got := rules.Summarize([]rules.EventLine{{Action: "kill", Signal: "15", At: t0}, {Action: "die", At: t0}}); got != rules.VerdictManualStop {
+		t.Fatalf("SIGTERM: %q", got)
+	}
+}

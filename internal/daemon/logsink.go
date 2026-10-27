@@ -20,7 +20,7 @@ func LogSink(log *slog.Logger, red *notify.Redactor) func(engine.Event) {
 		case engine.Suspended, engine.NeedsRecreate, engine.ActionRefused, engine.DriftBlocked, engine.DriftWarned,
 			engine.RungsDisabled, engine.DependentPostCheck, engine.RateLimited, engine.NotifyOnly, engine.IncidentOpened:
 			level = slog.LevelWarn
-		case engine.EventAttributed, engine.RestoreEvent:
+		case engine.EventAttributed, engine.RestoreEvent, engine.SignalIgnored:
 			level = slog.LevelDebug
 		}
 		attrs := []any{"event_id", e.ID, "type", string(e.Type), "host", e.Host, "key", e.Key, "container", e.Container}

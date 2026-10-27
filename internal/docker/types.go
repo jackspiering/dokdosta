@@ -87,6 +87,19 @@ type Event struct {
 	Time     time.Time
 }
 
+// IsReloadSignal reports whether the signal of a `kill` event asks a process to reload or redraw, not to stop: SIGHUP,
+// SIGUSR1, SIGUSR2 and SIGWINCH (`docker kill -s HUP`, docker-gen's -notify-sighup). Docker writes the number
+// (moby daemon/kill.go: strconv.Itoa; Linux numbers 1, 10, 12 and 28); the names are accepted too, with or without SIG.
+// Every other signal, an empty one included, can be a stop: `docker stop` sends the image's STOPSIGNAL, which is SIGQUIT
+// for nginx and SIGINT for others, so an allow-list of SIGTERM and SIGKILL would have deliberate stops healed.
+func IsReloadSignal(sig string) bool {
+	switch strings.TrimPrefix(strings.ToUpper(strings.TrimSpace(sig)), "SIG") {
+	case "1", "10", "12", "28", "HUP", "USR1", "USR2", "WINCH":
+		return true
+	}
+	return false
+}
+
 // WatchedActions are the container event actions whalenurse acts on, and the only ones it subscribes to: the
 // subscription's `event` filter and the daemon's HandleEvent both read this list. dockerd prefix-matches the filter once
 // health_status is in it, so "health_status: unhealthy" passes, and no other entry is a prefix of an exec_* action.
