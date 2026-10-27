@@ -27,7 +27,7 @@ accident.
 A container with `network_mode: service:<parent>` (or `container:<parent>`) breaks whenever its parent restarts or is
 recreated. For an **opted-in** parent, whalenurse repairs such sidecars after it has healed the parent, even if they carry
 no `whalenurse.enable` label, unless they are labelled `whalenurse.enable=false`. Only that repair needs no opt-in: a sidecar
-that is unhealthy or exited *on its own* is healed only if it is opted in itself. A sidecar you stop by hand (`docker stop`, `docker kill`) stays stopped when its parent is recreated, as an opted-in container would; one that exited on its own is recreated together with its parent. See the README for what "repair" does.
+that is unhealthy or exited *on its own* is healed only if it is opted in itself. The parent that counts is the container the sidecar's `network_mode`, `ipc` or `pid` names; another opted-in service in its `depends_on` does not make it a dependent. A sidecar you stop by hand (`docker stop`, `docker kill`) stays stopped when its parent is recreated, as an opted-in container would; one that exited on its own is recreated together with its parent. See the README for what "repair" does.
 
 **What the drift guard checks for a sidecar.** Compose hashes a `network_mode`, `ipc`, `pid` or `volumes_from` reference after
 resolving it to a container, so the check that asks compose whether the service's own definition changed (the dry run, or

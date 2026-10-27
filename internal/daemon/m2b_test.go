@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1574,6 +1575,137 @@ func TestAnotherServicesRestartIsNoParentChange(t *testing.T) {
 	}
 	if h.count(engine.Suspended) != 1 || h.cf.Count("up") > 2 {
 		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+}
+
+// A sidecar's opt-in is decided by its namespace parent, not by any service in its depends_on (plan v3.13 item 3).
+func TestSidecarOptInFollowsItsNamespaceParentOnly(t *testing.T) {
+	setup := func(t *testing.T, parentOptedIn bool, st *store.Store) (*cfH, docker.Container) {
+		h := newCompose(t, nil, nil, docker.ServerInfo{})
+		if st != nil {
+			h.restartWithStore(st)
+		}
+		parent := h.svc(hexID("c1"), "p", "parent")
+		if !parentOptedIn {
+			h.noOptIn(parent.ID)
+		}
+		h.svc(hexID("c2"), "p", "other") // opted in, unrelated to the dep's namespace
+		dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true,other:service_started:true")
+		h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+		h.noOptIn(dep.ID)
+		var newParent docker.Container
+		h.cf.OnUp = func(compose.Project) error {
+			h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+			return nil
+		}
+		h.tick()
+		h.advance(time.Minute) // the namespace parent is learned from the live reference
+		newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+		h.event(newParent, "create", "")
+		h.event(newParent, "start", "")
+		h.advance(3 * time.Minute)
+		return h, dep
+	}
+	t.Run("another opted-in service in depends_on does not count", func(t *testing.T) {
+		h, _ := setup(t, false, nil)
+		if h.cf.Count("up") != 0 {
+			t.Fatalf("the namespace parent is not opted in, so the sidecar is left alone: %s", h.verbs())
+		}
+	})
+	t.Run("the namespace parent opted in counts", func(t *testing.T) {
+		h, _ := setup(t, true, nil)
+		if got := h.verbs(); got != "up dep" {
+			t.Fatalf("%q", got)
+		}
+	})
+	t.Run("what was learned survives a restart of whalenurse", func(t *testing.T) {
+		st := openStore(t)
+		h := newCompose(t, nil, nil, docker.ServerInfo{})
+		h.restartWithStore(st)
+		parent := h.svc(hexID("c1"), "p", "parent")
+		h.noOptIn(parent.ID)
+		h.svc(hexID("c2"), "p", "other")
+		dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true,other:service_started:true")
+		h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+		h.noOptIn(dep.ID)
+		h.tick()
+		h.advance(time.Minute)
+		if v, ok, _ := st.Meta(metaNSParent + key("p", "dep")); !ok || v != "network:parent" {
+			t.Fatalf("not persisted: %q %v", v, ok)
+		}
+		h.restartWithStore(st) // a new daemon on the same store and the same Docker
+		h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+		h.advance(3 * time.Minute)
+		if h.cf.Count("up") != 0 {
+			t.Fatalf("the persisted namespace parent is not opted in: %s", h.verbs())
+		}
+	})
+}
+
+// A sidecar that whalenurse first sees after its parent is gone has no learned namespace parent: depends_on decides.
+func TestSidecarFirstSeenAfterItsParentIsGoneIsDecidedByDependsOn(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.svc(hexID("c1"), "p", "parent")
+	h.svc(hexID("c2"), "p", "other")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "other:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + hexID("ee") }) // its parent is gone already
+	h.noOptIn(dep.ID)
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + hexID("c1") })
+		return nil
+	}
+	h.tick()
+	h.advance(3 * time.Minute)
+	if got := h.verbs(); got != "up dep" {
+		t.Fatalf("%q", got)
+	}
+}
+
+// The namespace parent is re-keyed with the other persisted keys (plan v3.13 item 12).
+func TestNamespaceParentIsRekeyedToTheCurrentHost(t *testing.T) {
+	st := openStore(t)
+	st.SetMeta(metaNSParent+"old/p/dep/1", "parent")
+	if _, err := st.Rekey("h", store.RekeyMeta{Keyed: MetaKeyed, WithKey: MetaWithKey}); err != nil {
+		t.Fatal(err)
+	}
+	if v, ok, _ := st.Meta(metaNSParent + "h/p/dep/1"); !ok || v != "parent" {
+		t.Fatalf("%q %v", v, ok)
+	}
+	if _, ok, _ := st.Meta(metaNSParent + "old/p/dep/1"); ok {
+		t.Fatal("the old key is still there")
+	}
+}
+
+// A sidecar with a network parent and an ipc parent: when one is recreated and the other still resolves, what was learned
+// for the one that is gone is kept (its opt-in is what decides).
+func TestNamespaceParentIsKeptPerReference(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	a := h.svc(hexID("c1"), "p", "a") // opted in
+	b := h.svc(hexID("c2"), "p", "b")
+	h.noOptIn(b.ID)
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "a:service_started:true,b:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) {
+		c.NetworkMode, c.IpcMode = "container:"+a.ID, "container:"+b.ID
+	})
+	h.noOptIn(dep.ID)
+	var newA docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newA.ID })
+		return nil
+	}
+	h.tick()
+	h.advance(time.Minute)
+	newA = h.replace("p", "a", func(c *docker.Container) { c.Health = "healthy" })
+	h.event(newA, "create", "")
+	h.event(newA, "start", "")
+	h.advance(3 * time.Minute)
+	got := h.d.namespaceParents(key("p", "dep"))
+	slices.Sort(got)
+	if got := strings.Join(got, ","); got != "a,b" {
+		t.Fatalf("learned: %q", got)
+	}
+	if got := h.verbs(); got != "up dep" {
+		t.Fatalf("the network parent is opted in: %q", got)
 	}
 }
 

@@ -253,7 +253,8 @@ func (d *Daemon) driftFindings(ctx context.Context, c docker.Container, p compos
 }
 
 // parentOptedIn reports whether a container: parent of c is opted in. A parent that is gone (that is why a dependent is
-// stale) is found through the services named in c's depends_on label.
+// stale) is found through the service its reference resolved to when whalenurse last saw it, and only when that was never
+// learned through the services named in c's depends_on label (plan v3.13 item 3).
 func (d *Daemon) parentOptedIn(c docker.Container) bool {
 	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
 		ref := docker.ContainerRef(mode)
@@ -273,7 +274,7 @@ func (d *Daemon) parentOptedIn(c docker.Container) bool {
 			continue
 		}
 		project := c.Labels[docker.LabelProject]
-		for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
+		for _, dep := range d.optInServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
 			for _, s := range d.idx.all {
 				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || docker.IsOneOff(s.Labels) {
 					continue
