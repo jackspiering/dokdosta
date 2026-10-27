@@ -31,8 +31,9 @@ Work down the list; `status` and the dashboard's container page say which one it
    container page says what it waits for. It starts once the condition holds. Fix the dependency (a healthcheck that never turns
    healthy, a one-shot job that keeps failing).
 8. **Did a host shutdown stop it?** A container stopped by a daemon restart or reboot is judged by its restart policy:
-   `restart: "no"` stays down on purpose (one notification, its `network_mode` sidecars stay down with it);
-   `always`/`unless-stopped`/`on-failure` are left to Docker's own restore. `whalenurse.heal-exited=always` starts it anyway.
+   `restart: "no"` stays down on purpose (one notification, its `network_mode` sidecars stay down with it), and so does an
+   `on-failure` container that exited 0 or has used up its `on-failure:N` retries, because Docker does not restore it either;
+   `always`, `unless-stopped` and an `on-failure` container with a non-zero exit and retries left are left to Docker's own restore. `whalenurse.heal-exited=always` starts it anyway.
 
 ## Why is my container SUSPENDED?
 

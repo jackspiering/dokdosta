@@ -833,3 +833,51 @@ func TestSummarizeIgnoresAKillWithAReloadSignal(t *testing.T) {
 		t.Fatalf("SIGTERM: %q", got)
 	}
 }
+
+// Plan v3.13 item 17 (DQ11): Docker's on-failure policy restarts only on a non-zero exit while retries remain (moby
+// restartmanager: restart = exitCode != 0 when MaximumRetryCount is 0 or RestartCount is below it; the manager starts from
+// the container's RestartCount). A container the host stopped under on-failure that Docker will not restore is treated like
+// restart: "no": it stays down, with one notification. A non-zero exit with retries left is still left to Docker.
+func TestHostStoppedOnFailureContainerDockerWillNotRestore(t *testing.T) {
+	cases := []struct {
+		name         string
+		exit         int
+		count, retry int
+		heal         config.HealExited
+		want         rules.Class
+		act          rules.Action
+	}{
+		{"exited 0 on SIGTERM", 0, 0, 0, config.HealCrashed, rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"exited 0, retries left", 0, 1, 5, config.HealCrashed, rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"retries spent, exited 1", 1, 3, 3, config.HealCrashed, rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"retries over-spent, exited 143", 143, 4, 3, config.HealCrashed, rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"retries spent, heal-exited=never", 1, 3, 3, config.HealNever, rules.ClassExitedHostStopped, rules.ActionNotify},
+		{"retries spent, heal-exited=always starts it", 1, 3, 3, config.HealAlways, rules.ClassExitedAlways, rules.ActionStart},
+		{"exited 0, heal-exited=always starts it", 0, 0, 0, config.HealAlways, rules.ClassExitedAlways, rules.ActionStart},
+		// Docker restores these.
+		{"exited 1, retries left", 1, 2, 3, config.HealCrashed, rules.ClassExitedHostRestore, rules.ActionNone},
+		{"exited 1, no retry limit", 1, 50, 0, config.HealCrashed, rules.ClassExitedHostRestore, rules.ActionNone},
+		{"exited 143, none used", 143, 0, 3, config.HealCrashed, rules.ClassExitedHostRestore, rules.ActionNone},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := docker.Container{
+				ID: "a1", Name: "p-web-1", Status: "exited", ExitCode: tc.exit, RestartPolicy: "on-failure", RestartCount: tc.count, MaxRetries: tc.retry,
+				Labels: map[string]string{docker.LabelProject: "p", docker.LabelService: "web"},
+			}
+			cfg := config.Container{OptedIn: true, Actions: []string{"restart", "recreate"}, HealExited: tc.heal}
+			got := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, HostStopped: true})
+			if got.Class != tc.want || got.Action != tc.act {
+				t.Fatalf("got %s/%s (%s), want %s/%s", got.Class, got.Action, got.Reason, tc.want, tc.act)
+			}
+		})
+	}
+	// Other policies are unchanged: always and unless-stopped are restored whatever the exit code.
+	for _, policy := range []string{"always", "unless-stopped"} {
+		c := docker.Container{ID: "a1", Name: "p-web-1", Status: "exited", ExitCode: 0, RestartPolicy: policy, RestartCount: 9, MaxRetries: 3}
+		cfg := config.Container{OptedIn: true, Actions: []string{"restart"}, HealExited: config.HealCrashed}
+		if got := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, HostStopped: true}); got.Class != rules.ClassExitedHostRestore {
+			t.Errorf("%s: %s", policy, got.Class)
+		}
+	}
+}
