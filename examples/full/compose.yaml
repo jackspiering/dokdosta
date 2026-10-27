@@ -51,7 +51,7 @@ services:
       # WHALENURSE_DRIFT_GUARD: strict # strict (default) blocks a recreate that would deploy an edit or a moved tag; warn recreates and says so
 
   tailscale:
-    image: tailscale/tailscale:v1.104.1
+    image: tailscale/tailscale:v1.104.2
     restart: unless-stopped
     networks: [dashboard]
     environment:
