@@ -242,18 +242,61 @@ func dependsOn(label string) []string {
 // driftFindings runs the drift guard (plan §3.6) for the container about to be recreated and returns what it found as
 // text, one entry per finding. It reads only: the dry-run oracle, `config --hash` and an image inspect.
 // With pull set an image-only move is allowed: checks 1 and 3 only (compose.GuardInput.AllowImageMove).
-func (d *Daemon) driftFindings(ctx context.Context, c docker.Container, p compose.Project, pull bool) []compose.Finding {
+func (d *Daemon) driftFindings(ctx context.Context, c docker.Container, p compose.Project, pull, own bool) []compose.Finding {
 	cs := d.cs()
 	gctx, cancel := context.WithTimeout(ctx, guardTimeout)
 	defer cancel()
 	in := compose.GuardInput{
-		Project: p, ContainerName: c.Name, Labels: c.Labels, ImageRef: c.Image, Arch: cs.server.Arch, RefHolder: holdsReference(c), AllowImageMove: pull,
+		Project: p, ContainerName: c.Name, Labels: c.Labels, ImageRef: c.Image, Arch: cs.server.Arch, RefHolder: holdsReference(c), RefsCurrent: own && !pull && d.refsCurrent(c), AllowImageMove: pull,
 	}
 	return (compose.Guard{Compose: d.o.Compose, Images: d.rd}).Check(gctx, in)
 }
 
+// refsCurrent reports whether every container that c references (network_mode, ipc, pid, volumes_from) is the current,
+// running container of its compose service in c's project, from the last list. Compose resolves such a reference to a
+// container ID before it hashes the service, so only then does the hash it recorded for c still match: the dry-run oracle
+// can be asked about c's own config (plan v3.13 item 4). A dependent whose parent was recreated is never current (that
+// is why it is stale), a reference to a container compose did not make cannot be judged, and a scaled service has no
+// one container to be current.
+func (d *Daemon) refsCurrent(c docker.Container) bool {
+	var refs []string
+	for _, m := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
+		if r := docker.ContainerRef(m); r != "" {
+			refs = append(refs, r)
+		}
+	}
+	for _, v := range c.VolumesFrom {
+		name, _, _ := strings.Cut(v, ":")
+		refs = append(refs, name)
+	}
+	if len(refs) == 0 {
+		return false
+	}
+	project := c.Labels[docker.LabelProject]
+	for _, ref := range refs {
+		found := false
+		for _, s := range d.idx.all {
+			if !docker.MatchesRef(s.ID, s.Name, ref) {
+				continue
+			}
+			cur, ok := d.idx.byKey[d.keyOf(s)]
+			// One replica of a scaled service is no answer: compose resolves service:<name> to one of them.
+			if d.replicas(docker.Container{Labels: s.Labels}) > 1 || s.State != "running" || s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] == "" ||
+				docker.IsOneOff(s.Labels) || !ok || cur.ID != s.ID {
+				return false
+			}
+			found = true
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // parentOptedIn reports whether a container: parent of c is opted in. A parent that is gone (that is why a dependent is
-// stale) is found through the services named in c's depends_on label.
+// stale) is found through the service its reference resolved to when whalenurse last saw it, and only when that was never
+// learned through the services named in c's depends_on label (plan v3.13 item 3).
 func (d *Daemon) parentOptedIn(c docker.Container) bool {
 	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
 		ref := docker.ContainerRef(mode)
@@ -273,7 +316,7 @@ func (d *Daemon) parentOptedIn(c docker.Container) bool {
 			continue
 		}
 		project := c.Labels[docker.LabelProject]
-		for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
+		for _, dep := range d.optInServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
 			for _, s := range d.idx.all {
 				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || docker.IsOneOff(s.Labels) {
 					continue
@@ -334,13 +377,18 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 	}
 
 	// The drift guard, before the recreate (plan §3.6). It runs in dry-run too: it only reads.
-	// An image-only move is let through for a container that opted in to the pull rung (the heal may take the newer
-	// image: config drift still blocks) and for a sidecar taking the tag its parent's own pull just moved (plan v3.8).
-	allow := cfg.HasRung(config.RungPull)
-	if stale {
+	// An image-only move is let through for a container that opted in to the pull rung when the rung would apply (the
+	// heal may take the newer image: config drift still blocks) and for a sidecar taking the tag its parent's own pull just moved (plan v3.8).
+	allow := false
+	switch {
+	case stale:
 		allow = d.dependentMayTakeMove(ctx, c)
+	case cfg.HasRung(config.RungPull):
+		// Only where the pull rung would apply: a pull_policy of never or build, or one that cannot be read, gives no
+		// allowance, so the label does not switch off the moved-tag block for a pinned or locally built image (plan v3.13).
+		allow = d.pullPolicyRefusal(ctx, p) == ""
 	}
-	if !d.guardVerdict(ctx, t, c, dec, p, allow) || ctx.Err() != nil {
+	if !d.guardVerdict(ctx, t, c, dec, p, allow, !stale) || ctx.Err() != nil {
 		return
 	}
 

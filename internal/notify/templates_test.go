@@ -161,6 +161,7 @@ func TestTheHeadlineSurvivesALongHost(t *testing.T) {
 		{ev(engine.Suspended, webKey, "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder"}), "giving up, SUSPENDED"},
 		{ev(engine.NeedsRecreate, webKey, "x", nil), "needs a recreate that is not available"},
 		{ev(engine.TagMoved, webKey, "x", map[string]string{"ref": "web:1", "new": newID, "ok": "false"}), "pulled a newer image, but the recreate failed"},
+		{ev(engine.TagMoved, webKey, "x", map[string]string{"ref": "web:1", "new": newID, "ok": "false", "not_run": "true"}), "pulled a newer image; the recreate was not run"},
 		{ev(engine.Upgraded, webKey, "x", map[string]string{"ref": "web:1", "new": newID, "ok": "false"}), "took the moved tag, but the recreate failed"},
 		{ev(engine.RungsDisabled, "", "x", nil), "recreate and pull rungs are disabled"},
 	}

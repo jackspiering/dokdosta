@@ -58,7 +58,11 @@ reboot, never clears it.
 Before it recreates a container, whalenurse asks whether the recreate would deploy something other than what is running. A
 recreate builds the container from the compose files on disk and the image in the local store *now*, so an edit you have not
 deployed yet, or an image tag that moved, would be deployed by a "heal". In `strict` mode (default) whalenurse refuses,
-says why and SUSPENDS. The messages:
+says why and SUSPENDS. The exception is a service that shares another container's network, ipc or pid namespace, or uses
+`volumes_from` (a sidecar): compose can be asked about an edit to it only while what it references is the current, running
+container of its service, so the check is made when the sidecar heals itself, and not when it is repaired after its parent
+was recreated, where only its image (and the bundled compose's version) is checked and an edit that you have not deployed is
+deployed ([labels.md](labels.md#sidecars)). The messages:
 
 | Message | Meaning | What to do |
 |---|---|---|
@@ -77,7 +81,9 @@ a "can't verify" finding.
 whalenurse uses the compose that made your containers when it can: the host's plugin mounted read-only at
 `/host/docker-compose`. Without it, it falls back to the copy bundled in the image, and a container made by another compose
 release than the bundled one cannot be judged: compose sees a change, and whalenurse cannot tell an edit from a changed
-hash layout. It refuses rather than guess. Fix: **mount the host's plugin** (`docker info` shows its path; usually
+hash layout. It refuses rather than guess. This includes a sidecar (a service with `network_mode: service:<parent>`, `ipc`,
+`pid` or `volumes_from`): its own config is not checked, but the repair after its parent's recreate still needs a compose
+that can be trusted, so a sidecar made by another compose release is not recreated by the bundled one. Fix: **mount the host's plugin** (`docker info` shows its path; usually
 `/usr/libexec/docker/cli-plugins/docker-compose`). The same finding family also appears when a check could not be made at all:
 the container has no `com.docker.compose.config-hash` or `.image` label, or the dry run and `config --hash` both failed.
 The message says which.
