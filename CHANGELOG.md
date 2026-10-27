@@ -25,6 +25,11 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **An `on-failure` container that the host stopped and Docker will not restore is no longer left down in silence.** Docker's
+  `on-failure` policy restarts only on a non-zero exit while retries remain, so a container that handled SIGTERM and exited 0, or
+  whose `on-failure:N` retries were spent, stayed down after a daemon restart or reboot with no notification. It is now treated
+  like `restart: "no"`: one "left down by policy" notification (naming its `network_mode` sidecars, which stay down with it);
+  only `whalenurse.heal-exited=always` starts it.
 - **A reboot no longer makes whalenurse forget a `docker stop` from long before it.** A changed boot id dropped every
   manual-stop marker, so a container you had stopped on purpose was started again after a reboot. Now, with the previous
   run's `last_seen` known, only the markers set in the 30 s before it (the shutdown's own kills) are dropped; older ones are

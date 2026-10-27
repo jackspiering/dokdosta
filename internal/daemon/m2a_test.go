@@ -982,3 +982,57 @@ func TestAnUnreadableBootIDIsNotOverwritten(t *testing.T) {
 		t.Fatal("the rest of the startup ran (last_seen is written)")
 	}
 }
+
+// Plan v3.13 item 17: an on-failure parent the host stopped that Docker will not restore (exit 0, or its retries spent) is down
+// by policy like restart: "no": one notification naming its network_mode dependents, nothing started. With retries left it is
+// Docker's to restore, and whalenurse says nothing.
+func TestAnOnFailureParentDockerWillNotRestoreStaysDownWithItsDependents(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		exit, count, max  int
+		wantNotifyOnlyOne bool
+	}{
+		{"exited 0", 0, 0, 0, true},
+		{"retries spent", 1, 3, 3, true},
+		{"retries left: Docker restores it", 1, 1, 3, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, func(c *config.Global) { settled(c); c.PollInterval = time.Minute }, nil)
+			h.d.StreamConnected()
+			h.advance(2*time.Minute + time.Second)
+			parent := h.running(hexID("27"), "p", "parent")
+			dep := h.running(hexID("d1"), "p", "dep")
+			h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+			h.tick()
+			h.clk.Advance(5 * time.Second)
+			fin := h.clk.Now()
+			h.set(parent.ID, func(c *docker.Container) {
+				c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, tc.exit, "on-failure", fin
+				c.RestartCount, c.MaxRetries = tc.count, tc.max
+			})
+			h.set(dep.ID, func(c *docker.Container) {
+				c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 137, "unless-stopped", fin
+				c.Error = "cannot join network namespace of a non running container: container p-parent-1 is exited"
+			})
+			h.d.StreamLost(h.clk.Now())
+			h.clk.Advance(20 * time.Second)
+			h.d.StreamConnected()
+			h.advance(10 * time.Minute)
+			h.wantCalls() // neither is started
+			n := h.count(engine.NotifyOnly)
+			if tc.wantNotifyOnlyOne {
+				var ev engine.Event
+				for _, e := range h.rec.Events() {
+					if e.Type == engine.NotifyOnly && e.Attrs["class"] == "exited-host-stopped" {
+						ev = e
+					}
+				}
+				if n != 1 || !strings.Contains(ev.Attrs["dependents"], "p-dep-1") || !strings.Contains(ev.Message, "left down by policy") {
+					t.Fatalf("want one NotifyOnly naming the dependent: %d %+v", n, ev)
+				}
+			} else if n != 0 {
+				t.Fatalf("a container Docker restores must not be announced: %d", n)
+			}
+		})
+	}
+}

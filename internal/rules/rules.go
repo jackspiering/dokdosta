@@ -52,7 +52,7 @@ const (
 	ClassExitedClean          Class = "exited-clean"        // exit 0 under an always-style policy
 	ClassExitedSignalled      Class = "exited-signalled"    // 137 or 143 without OOM
 	ClassExitedNever          Class = "exited-never"        // heal-exited=never
-	ClassExitedHostStopped    Class = "exited-host-stopped" // stopped by a daemon shutdown or reboot, restart policy "no": stays down (notify)
+	ClassExitedHostStopped    Class = "exited-host-stopped" // stopped by a daemon shutdown or reboot, restart policy "no" (or on-failure that Docker will not restore): stays down (notify)
 	ClassExitedHostRestore    Class = "exited-host-restore" // stopped by a shutdown, policy restarts it: left to Docker's restore
 	ClassDead                 Class = "dead"
 	ClassStaleParentGone      Class = "stale-parent-gone"
@@ -288,6 +288,12 @@ func classifyExited(in Input) Decision {
 		case c.RestartPolicy == "no" || c.RestartPolicy == "":
 			return Decision{Class: ClassExitedHostStopped, Action: ActionNotify,
 				Reason: fmt.Sprintf("stopped by a daemon shutdown or reboot (exit %d) and restart policy is no: staying down", c.ExitCode)}
+		case c.RestartPolicy == "on-failure" && dockerWillNotRestoreOnFailure(c):
+			// Docker's on-failure policy restarts only on a non-zero exit while retries remain, so it will not bring
+			// this one back: it is down by policy, like restart: "no" (plan v3.13 item 17).
+			return Decision{Class: ClassExitedHostStopped, Action: ActionNotify,
+				Reason: fmt.Sprintf("stopped by a daemon shutdown or reboot (exit %d) and Docker will not restore it under restart policy %s: left down by policy",
+					c.ExitCode, onFailureName(c))}
 		}
 		return Decision{Class: ClassExitedHostRestore, Action: ActionNone,
 			Reason: fmt.Sprintf("stopped by a daemon shutdown or reboot (exit %d): Docker's restore restarts it (policy %s)", c.ExitCode, c.RestartPolicy)}
@@ -333,6 +339,20 @@ func classifyExited(in Input) Decision {
 			Reason: fmt.Sprintf("exit %d without OOM: stopped by a signal, not healing", c.ExitCode)}
 	}
 	return Decision{Class: ClassExitedCrashed, Action: ActionStart, Reason: fmt.Sprintf("exited with code %d", c.ExitCode)}
+}
+
+// dockerWillNotRestoreOnFailure reports whether Docker's restart manager would not restart an on-failure container that
+// has exited: moby restartmanager restarts it only when the exit code is not 0 and MaximumRetryCount is 0 (unlimited) or
+// the restart count is still below it. The manager starts from the container's RestartCount.
+func dockerWillNotRestoreOnFailure(c docker.Container) bool {
+	return c.ExitCode == 0 || (c.MaxRetries > 0 && c.RestartCount >= c.MaxRetries)
+}
+
+func onFailureName(c docker.Container) string {
+	if c.MaxRetries > 0 {
+		return fmt.Sprintf("on-failure:%d", c.MaxRetries)
+	}
+	return "on-failure"
 }
 
 func policyName(c docker.Container) string {
