@@ -184,6 +184,8 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 //  3. unchanged: the ladder is spent and the container is SUSPENDED (Result.Exhausted), with a message that says so;
 //  4. changed: the move is recorded at once (the tag has moved for every stack that shares it, whatever happens next),
 //     then `up -d --no-deps --pull never --no-build <svc>`, and a check that the container really is a new one;
+//     Before the up, when the pull changed the image, the pause and the guard are checked again (upRefusal): if either
+//     fails the up is not run, and TagMoved says so (ok=false, with the rollback);
 //  5. TagMoved (the "upgraded during heal" notification, with the rollback commands), then the dependents step, which
 //     afterAction schedules exactly as it does after rung 2.
 //
@@ -283,10 +285,15 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 	at := d.clk.Now()
 	d.recordMove(tagMove{Ref: normalizeRef(ref), Key: t.Key, At: at, Old: old, New: now, OldPlain: oldPlain, NewPlain: nowPlain})
 
-	d.markActing()
-	upErr := d.o.ComposeActor.Up(actx, p)
-	if upErr == nil {
-		upErr = d.postCheckUpgraded(actx, t, c, p)
+	var upErr error
+	if why := d.upRefusal(actx, t, c, dec, p); why != "" {
+		upErr = upNotRun{why}
+	} else {
+		d.markActing()
+		upErr = d.o.ComposeActor.Up(actx, p)
+		if upErr == nil {
+			upErr = d.postCheckUpgraded(actx, t, c, p)
+		}
 	}
 
 	attrs := map[string]string{"ref": ref, "old": old, "new": now, "at": at.UTC().Format(time.RFC3339), "ok": fmt.Sprint(upErr == nil)}
@@ -304,11 +311,39 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 	}
 	if upErr != nil {
 		outcome, msg = "upgrade-failed", strings.Replace(msg, "recreated", "the recreate failed: "+upErr.Error(), 1)
+		if nr := (upNotRun{}); errors.As(upErr, &nr) {
+			msg = strings.Replace(msg, "the recreate failed: ", "the recreate was not run: ", 1)
+			attrs["not_run"] = "true"
+		}
 		attrs["error"] = upErr.Error()
 	}
 	d.eng.Note(t, engine.TagMoved, msg, attrs)
 	recheck := d.eng.End(t, plan, engine.Result{Err: upErr, Attrs: map[string]string{"outcome": outcome, "ref": ref, "old": old, "new": now}}, cfg)
 	d.afterAction(t, c, recheck)
+}
+
+// upNotRun is why the up after a pull that moved the image was not run (see upRefusal). The move is recorded either way.
+type upNotRun struct{ why string }
+
+func (e upNotRun) Error() string { return e.why }
+
+// upRefusal checks again, once the pull has changed the image, what was checked before it (plan v3.13 item 9): the pull can
+// take minutes. It returns why the up must not run, or "". A key paused in the meantime follows the pause rules (no action;
+// the incident is looked at again at the resume or expiry). The guard runs in image-move-allowed mode (checks 1 and 3: a
+// compose edit made meanwhile blocks, the moved image does not), and a finding is a block as before the pull
+// (DriftBlocked, SUSPENDED).
+func (d *Daemon) upRefusal(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project) string {
+	d.markActing() // the pull may have used most of the 11 minutes /healthz tolerates; the guard has its own timeout
+	if paused, _ := d.eng.Paused(t.Key); paused {
+		return "the container was paused while the pull ran"
+	}
+	if !d.guardVerdict(ctx, t, c, dec, p, true) {
+		if ctx.Err() != nil {
+			return "the drift guard could not be checked again after the pull: the action was cut short"
+		}
+		return "the drift guard blocked it after the pull"
+	}
+	return ""
 }
 
 // postCheckUpgraded looks at the container after the non-forced up: it must be a new container (compose recreates on a

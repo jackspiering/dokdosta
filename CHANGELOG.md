@@ -23,6 +23,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A pull that took minutes no longer acts on a stale check.** After the pull rung's pull moved the image, the `up` ran on
+  the pause and drift checks made before the pull. Now both are checked again first: a container paused meanwhile, or a
+  compose file edited meanwhile, gets no `up`. The "upgraded during heal" message then says the recreate was not run (with the
+  rollback, since the tag has moved), a pause follows the pause rules, and a finding is a drift block and SUSPENDED.
 - **`whalenurse.heal.pull` no longer lets rung 2 replace a pinned or locally built image.** Rung 2 of a container with the
   label took a moved image tag in its recreate (and said "upgraded during heal"), even for a service whose
   `pull_policy` is `never` or `build`, where the pull rung can never apply: the label's only effect was to switch off the
