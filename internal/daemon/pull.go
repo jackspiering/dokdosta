@@ -381,10 +381,11 @@ func (d *Daemon) sidecarsSharing(ctx context.Context, c docker.Container, ref st
 	for _, s := range d.idx.all {
 		// A sidecar that is already stale (its parent's ID is gone, because rung 2 recreated the parent and the dependents
 		// step has not reached it yet) no longer matches the parent by ID: the depends_on label finds it.
-		if s.ID == c.ID || !hasRef(s) || s.Labels[docker.LabelProject] != c.Labels[docker.LabelProject] {
+		if s.ID == c.ID || !d.holdsRef(s) || s.Labels[docker.LabelProject] != c.Labels[docker.LabelProject] {
 			continue
 		}
-		if !docker.MatchesRef(c.ID, c.Name, docker.ContainerRef(s.NetworkMode)) && !slices.Contains(d.parentServices(d.keyOf(s), s.Labels), c.Labels[docker.LabelService]) {
+		if !slices.ContainsFunc(d.refsOf(s), func(ref string) bool { return docker.MatchesRef(c.ID, c.Name, ref) }) &&
+			!slices.Contains(d.parentServices(d.keyOf(s), s.Labels), c.Labels[docker.LabelService]) {
 			continue
 		}
 		dep, err := d.rd.Inspect(ctx, s.ID)
