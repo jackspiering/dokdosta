@@ -14,9 +14,9 @@ What whalenurse does with that power, so you can judge it:
 - It acts only on containers that are opted in (`whalenurse.enable=true`, or every container with `WHALENURSE_MODE=all`
   minus those labelled `false`), and never on itself, on `docker compose run` containers or on swarm tasks.
 - Its own Docker API calls are reads (`ping`, `list`, `inspect`, `events`, `version`, `image inspect`) and two actions, `restart` and `start`. Recreates and pulls go through the `docker compose`
-  binary with a fixed set of commands: `up -d --no-deps --pull never --no-build <service>` (always with `--force-recreate`
+  binary with a fixed set of commands: `up -d --no-deps --pull never --no-build -- <service>` (always with `--force-recreate`
   for rung 2; for the pull rung and a sidecar's repair only when a post-check finds the old container still there),
-  `pull --policy always <service>` for the opt-in pull rung, `config` and dry-runs for the drift guard. The `compose`
+  `pull --policy always -- <service>` for the opt-in pull rung, `config` and dry-runs for the drift guard. The `compose`
   package cannot express `down`, `rm`, `build` or an `up` that could pull.
 - The compose files it runs are the ones **recorded on the container** (`com.docker.compose.project.config_files`), read from
   the stacks you mount. Those labels are not only written by whoever creates the container: Docker also copies an image's
