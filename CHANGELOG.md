@@ -16,11 +16,30 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A scaled service is healed at rung 1 only.** Every compose command names the service and acts on all of its containers,
+  so healing one unhealthy replica of a service with more than one container force-recreated the healthy ones as well, and
+  scaled a service started with `docker compose up --scale` back to its declared count (removing the container being healed,
+  without a notification). Rungs 2 and 3 are now unavailable for such a service, and the ladder ends with SUSPENDED after
+  the restart. `docker compose run` containers are not counted.
 - **The integration tests' host-safety preflight (and the M0b one) now sees every spelling of an opt-in.** It listed strangers
   with an exact `whalenurse.enable=true` filter, so a container outside a test project with `1`, `T` or `TRUE` slipped past it;
   it now filters by key and reads the value with whalenurse's own parser. `CONTRIBUTING.md` says which tests the guard wraps
   and which rely on the preflight alone.
+- **A very long `--for` or duration (`213504d`) is refused** instead of wrapping to a few minutes.
+- **`WHALENURSE_HOST_ID` with a `/` is refused at startup.** It shifted the parts of every container key, so `pause` and
+  `unsuspend` matched nothing.
+- **The placeholder `WHALENURSE_HTTP_TOKEN` of the example env files is refused at startup.**
+- **`whalenurse pause` says when no watched container is in the scope** (the pause still stands, as before).
+- **`/static/` is a 404, not a directory listing.** The dashboard's embedded asset directory could be listed.
+- **A container whose name has a `.` or `..` part gets no dashboard link** instead of a link the server would clean into
+  another page. A multi-byte first letter in a reason is no longer cut in half.
 - A sidecar without its own opt-in that shares its parent's `ipc` or `pid` namespace (not only `network_mode`) is now found and repaired when the parent restarts or is recreated while whalenurse runs, not only after a whalenurse restart.
+
+### Security
+
+- **The service name is always the operand after `--` in the compose commands whalenurse runs** (`up`, `pull` and the
+  `pull_policy` read). The name is already validated before it reaches a command line; `--` makes sure no compose release
+  can read it as a flag. The integration tests' compose filter accepts only that form.
 
 ## [0.1.3] - 2026-10-26
 
