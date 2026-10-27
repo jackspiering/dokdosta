@@ -16,6 +16,11 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **The bundled compose's version skew now blocks a sidecar's recreate.** A `network_mode`/`ipc`/`pid` or `volumes_from`
+  container made by another compose release than the bundled one (no host plugin mounted) was recreated by the bundled
+  compose with no check, by the dependents step after its parent's recreate and by its own rung 2 and pull. The guard now
+  says "can't verify drift" and the container is not recreated (the block stays also with `WHALENURSE_DRIFT_GUARD=warn`).
+  **Action:** mount the host's compose plugin at `/host/docker-compose`, as the examples do.
 - **A container stopped by hand just after a reconnect or a reboot stays stopped.** Inside the restore window the `kill`
   set no marker, but the `die` after it was then taken for a crash, so a `docker stop` made within `STARTUP_SETTLE` of a
   reconnect, a daemon restart or a start of whalenurse was undone about `GRACE` later ("died with exit 143, no preceding

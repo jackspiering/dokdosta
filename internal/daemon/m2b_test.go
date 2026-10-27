@@ -609,6 +609,28 @@ func TestExternalParentRecreateRecreatesTheDependent(t *testing.T) {
 	}
 }
 
+// The bundled compose recreating a sidecar that another compose release made cannot be verified: the dependents step is
+// blocked (also in warn mode, which overrides verified drift only), and nothing is deployed.
+func TestStaleSidecarMadeByAnotherComposeReleaseIsNotRecreatedByTheBundledOne(t *testing.T) {
+	cf := compose.NewFake()
+	cf.Bin = compose.Binary{Path: compose.BundledPath, Source: compose.SourceBundled, Version: compose.Version{Major: 5, Minor: 6}}
+	h := newCompose(t, func(c *config.Global) { c.DriftGuard = config.DriftWarn }, cf, docker.ServerInfo{})
+	_, dep := h.pair()
+	h.set(dep.ID, func(c *docker.Container) { c.Labels[compose.LabelVersion] = "5.2.0" })
+	h.tick()
+	newParent := h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.event(newParent, "create", "")
+	h.event(newParent, "start", "")
+	h.advance(3 * time.Minute)
+	b := h.events(engine.DriftBlocked)
+	if h.cf.Count("up") != 0 || h.cf.Count("recreate") != 0 || len(b) != 1 || !strings.Contains(b[0].Message, "can't verify drift") || h.count(engine.DriftWarned) != 0 {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+	if h.current("p", "dep").ID != dep.ID {
+		t.Fatal("the sidecar was recreated")
+	}
+}
+
 // The incident the dependents step opens for a dependent that is not opted in must close once the dependent has recovered.
 // Found on a real host: it stayed open ("rung 2 done"), so the next time the parent was recreated the dependent went
 // straight to SUSPENDED and was never repaired.
