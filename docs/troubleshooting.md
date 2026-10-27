@@ -96,6 +96,7 @@ Messages like `recreate skipped: compose inputs of project X are not readable fr
   files, file-based `secrets:` and `configs:`.
 - The directory and all its parents must be readable (traversable) by uid 65532.
 - A container that compose did not create (`docker run`) has no labels to recreate from and only gets the restart rung.
+- `service web has 3 containers (scaled): ...`: a service with more than one container (`deploy.replicas`, `scale:`, or `docker compose up --scale`) only gets the restart rung. Every compose command names the service and acts on all of its containers, so healing one unhealthy replica would force-recreate the healthy ones too, and compose would scale a service started with `--scale` back to its declared count. `docker compose run` containers do not count; stopped replicas do.
 - `label com.docker.compose.service is "...", which is not a compose service name` (or the same for
   `com.docker.compose.project`): the label holds something compose would never write, such as a value starting with `-`, a
   `,` or a `:`. whalenurse does not pass it to compose, so the container gets the restart rung only. Compose writes these

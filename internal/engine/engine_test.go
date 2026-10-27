@@ -638,3 +638,31 @@ func TestRefuseDoesNotConsumeTheRung(t *testing.T) {
 		t.Fatalf("the rung must still be available after a refusal: %+v", p2)
 	}
 }
+
+// The list of shutdown windows does not grow with every stream loss of a long run, and the open window and the newest
+// closed ones stay.
+func TestShutdownWindowsAreBounded(t *testing.T) {
+	e, clk, _ := newEngine(t, 10)
+	base := clk.Now()
+	for i := 0; i < 3*maxShutdownWindows; i++ {
+		from := base.Add(time.Duration(i) * time.Hour)
+		e.AddShutdownWindow(from, from.Add(time.Minute))
+	}
+	e.OpenShutdownWindow(base.Add(10000 * time.Hour))
+	for i := 0; i < 3*maxShutdownWindows; i++ {
+		from := base.Add(time.Duration(5000+i) * time.Hour)
+		e.AddShutdownWindow(from, from.Add(time.Minute))
+	}
+	if n := len(e.shutdowns); n > maxShutdownWindows {
+		t.Fatalf("%d windows kept", n)
+	}
+	if !e.HostStopped(base.Add(10001 * time.Hour)) {
+		t.Error("the open window was dropped")
+	}
+	if !e.HostStopped(base.Add(time.Duration(5000+3*maxShutdownWindows-1)*time.Hour + 30*time.Second)) {
+		t.Error("the newest window was dropped")
+	}
+	if e.HostStopped(base.Add(30 * time.Second)) {
+		t.Error("the oldest window should be gone")
+	}
+}

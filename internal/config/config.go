@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net/netip"
 	"os"
 	"sort"
@@ -142,7 +143,13 @@ func FromEnv(environ []string) (Global, []string, error) {
 	}
 
 	if v, ok := take("WHALENURSE_HOST_ID"); ok {
-		g.HostID = v
+		if strings.Contains(v, "/") {
+			// The state key is host/project/service/n; a slash in the host would shift every part of it, and pause
+			// and unsuspend scopes would match nothing.
+			errs = append(errs, fmt.Sprintf("WHALENURSE_HOST_ID=%q: must not contain a '/'", v))
+		} else {
+			g.HostID = v
+		}
 	}
 	if g.HostID == "" {
 		g.HostID = "unknown"
@@ -199,7 +206,13 @@ func FromEnv(environ []string) (Global, []string, error) {
 	}
 	// The token is a secret: an error about it never quotes the value.
 	if v, ok := take("WHALENURSE_HTTP_TOKEN"); ok {
-		g.HTTPToken = v
+		// The examples' placeholders ("replace-with-...") pass the length check and the compose ":?" check, and would
+		// leave the dashboard behind a token that is published in the repository.
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(v)), "replace-with") {
+			errs = append(errs, "WHALENURSE_HTTP_TOKEN is still the placeholder from the example env file; generate one with openssl rand -hex 24")
+		} else {
+			g.HTTPToken = v
+		}
 	}
 	if v, ok := take("WHALENURSE_HTTP_ALLOWED_HOSTS"); ok {
 		g.HTTPAllowedHosts = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
@@ -298,7 +311,15 @@ func ParseDuration(v string) (time.Duration, error) {
 				return 0, err
 			}
 		}
-		return time.Duration(days)*24*time.Hour + tail, nil
+		// 213504d wraps a Duration to about 25 minutes; refuse what does not fit instead.
+		if days > int(math.MaxInt64/int64(24*time.Hour)) {
+			return 0, fmt.Errorf("%q is too long", v)
+		}
+		total := time.Duration(days) * 24 * time.Hour
+		if tail > 0 && total > math.MaxInt64-tail {
+			return 0, fmt.Errorf("%q is too long", v)
+		}
+		return total + tail, nil
 	}
 	return time.ParseDuration(v)
 }

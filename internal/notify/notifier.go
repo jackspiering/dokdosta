@@ -394,7 +394,8 @@ func (w *worker) offer(m Message) {
 	}
 	w.stamps = kept
 	// Routine messages may use the first half of the hour's budget, critical ones all of it, so a storm of routine ones
-	// cannot swallow the one that says a container was given up on.
+	// cannot swallow the one that says a container was given up on. With a limit of 1 there is nothing to reserve (rounding
+	// down would silence every routine message), which docs/configuration.md says.
 	limit := w.nt.o.RateLimit
 	if !m.Critical {
 		limit = (limit + 1) / 2
