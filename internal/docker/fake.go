@@ -37,9 +37,10 @@ type Fake struct {
 	EventsErr     error // every Events subscription ends at once with this, like a daemon that is down
 
 	server ServerInfo
-	images map[string]string // reference -> what ImageID returns for it
-	plain  map[string]string // reference -> what ImageID returns with no platform (the index digest); defaults to images
-	since  []time.Time       // the since argument of every Events subscription
+	images map[string]string            // reference -> what ImageID returns for it
+	plain  map[string]string            // reference -> what ImageID returns with no platform (the index digest); defaults to images
+	since  []time.Time                  // the since argument of every Events subscription
+	labels map[string]map[string]string // image ID -> the labels the image carries itself (ImageLabels)
 }
 
 // NewFake returns an empty Fake.
@@ -73,6 +74,30 @@ func (f *Fake) SetPlainImage(ref, id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.plain[ref] = id
+}
+
+// SetImageLabels makes ImageLabels(imageID) return the labels an image ships; nil removes the image (ErrImageNotFound, which
+// the label filter reads as "no image labels").
+func (f *Fake) SetImageLabels(imageID string, labels map[string]string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if labels == nil {
+		delete(f.labels, imageID)
+		return
+	}
+	if f.labels == nil {
+		f.labels = map[string]map[string]string{}
+	}
+	f.labels[imageID] = labels
+}
+
+func (f *Fake) ImageLabels(_ context.Context, imageID string) (map[string]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if l, ok := f.labels[imageID]; ok {
+		return l, nil
+	}
+	return nil, fmt.Errorf("%w: %s", ErrImageNotFound, imageID)
 }
 
 func (f *Fake) ServerVersion(context.Context) (ServerInfo, error) {
@@ -156,7 +181,7 @@ func (f *Fake) List(context.Context) ([]Summary, error) {
 	}
 	out := make([]Summary, 0, len(f.containers))
 	for _, c := range f.containers {
-		out = append(out, Summary{ID: c.ID, Name: c.Name, Labels: c.Labels, State: c.Status, Health: c.Health, NetworkMode: c.NetworkMode, Image: c.Image, Created: c.Created})
+		out = append(out, Summary{ID: c.ID, Name: c.Name, Labels: c.Labels, State: c.Status, Health: c.Health, NetworkMode: c.NetworkMode, Image: c.Image, ImageID: c.ImageID, Created: c.Created})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
