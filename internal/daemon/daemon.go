@@ -582,9 +582,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, ev docker.Event) {
 	case "die", "oom", "create", "start":
 		d.schedule(t.Key, now.Add(d.cfg.Grace))
 		if ev.Action == "start" || ev.Action == "create" {
-			if d.sweepAt.IsZero() {
-				d.sweepAt = now.Add(d.cfg.Grace) // its dependents may now be stale
-			}
+			d.requestDependentSweep(now.Add(d.cfg.Grace)) // its dependents may now be stale; not later than one already asked for
 		}
 	case "health_status":
 		if ev.Detail == "unhealthy" {
@@ -742,6 +740,9 @@ func (d *Daemon) process(ctx context.Context, key string) {
 		dec = rules.Classify(in)
 	}
 	dec = d.adjust(c, cfg, dec, obs)
+	if dec.IsDependentStep() || incidentOpen {
+		obs.Parent = parentIdentity(in.Parents)
+	}
 	d.view.observe(key, c, dec, now)
 	d.log.Debug("classified", "key", key, "container", c.Name, "class", dec.Class, "action", dec.Action, "reason", dec.Reason)
 

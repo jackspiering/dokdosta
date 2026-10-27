@@ -96,6 +96,7 @@ type incident struct {
 	recoverySince time.Time
 	recoveryCount int
 	rateNoted     bool
+	parent        string // the parent (Obs.Parent) that the dependents step planned its repair against; not persisted
 }
 
 type keyState struct {
@@ -629,6 +630,9 @@ func (e *Engine) settle(t Target, st *keyState, d rules.Decision, cfg config.Con
 // healthy"); the incident closes only after the container has stayed recovered
 // for RECOVERY_PERIOD.
 func (e *Engine) recovering(t Target, st *keyState, inc *incident, o Obs, now time.Time) Plan {
+	if inc.parent == "" {
+		inc.parent = o.Parent // an incident restored after a restart, or opened by the sidecar's own ladder, learns it here
+	}
 	if !inc.recovering || o.RestartCount != inc.recoveryCount {
 		inc.recovering, inc.recoverySince, inc.recoveryCount = true, now, o.RestartCount
 		st.dirty = true
@@ -672,8 +676,39 @@ func (e *Engine) flapLimit(cfg config.Container) int {
 	return e.p.FlapLimit
 }
 
+// parentChanged closes the incident of an earlier dependents-step repair when the parent is not the one that repair was
+// made against: the sidecar is stale for a new reason, so it is repaired afresh, at rung 0 and without a flap count, and
+// not carried up the ladder of the repair before (plan v3.13 item 1). While the parent is unchanged, or unknown, or an
+// action is running, nothing changes: a repair that did not help still moves up the ladder and ends SUSPENDED.
+func (e *Engine) parentChanged(t Target, st *keyState, d rules.Decision, o Obs) {
+	inc := st.incident
+	if inc == nil || !d.IsDependentStep() || o.Parent == "" {
+		return
+	}
+	if inc.parent == "" {
+		inc.parent = o.Parent
+		return
+	}
+	if inc.parent == o.Parent {
+		return
+	}
+	for _, w := range st.windows {
+		if w.end.IsZero() {
+			return
+		}
+	}
+	const why = "the parent changed again"
+	if inc.suspended {
+		e.emit(t, Unsuspended, why, map[string]string{"reason": "parent_changed"})
+	} else {
+		e.emit(t, IncidentClosed, why, map[string]string{"reason": "parent_changed"})
+	}
+	e.closeIncident(t, st, "parent_changed")
+}
+
 func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Container, o Obs, now time.Time) Plan {
 	st.advisory = ""
+	e.parentChanged(t, st, d, o)
 	if st.incident == nil {
 		// Flap count: closing an incident does not reset it, only the window expiring does. A dependent repaired by the
 		// dependents step belongs to its parent's incident and is not counted (plan v3.6).
@@ -689,6 +724,9 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 			st.flaps = append(st.flaps, now)
 		}
 		st.incident = &incident{opened: now, class: d.Class}
+		if d.IsDependentStep() {
+			st.incident.parent = o.Parent
+		}
 		st.dirty = true
 		e.emit(t, IncidentOpened, d.Reason, map[string]string{"class": string(d.Class), "action": string(d.Action)})
 		// More than FLAP_LIMIT incidents within FLAP_WINDOW: SUSPENDED, whatever became of the last ones.

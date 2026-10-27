@@ -1446,6 +1446,115 @@ func TestReplacedSidecarsStartClearsTheMarkerOfTheOneBefore(t *testing.T) {
 	}
 }
 
+// A sidecar is repaired after every parent change, also inside the RECOVERY_PERIOD of the previous repair (plan v3.13
+// item 1): the incident of the repair before is closed ("the parent changed again") and a new one opens at rung 0.
+func TestSidecarIsRepairedAfterTwoParentRecreatesWithinItsRecoveryPeriod(t *testing.T) {
+	for _, gap := range []time.Duration{3 * time.Minute, 45 * time.Second} { // 45 s: inside the cooldown after the first repair
+		t.Run(gap.String(), func(t *testing.T) {
+			h := newCompose(t, nil, nil, docker.ServerInfo{})
+			_, dep := h.pair()
+			h.noOptIn(dep.ID)
+			var newParent docker.Container
+			h.cf.OnUp = func(compose.Project) error {
+				h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+				return nil
+			}
+			h.tick()
+			for round := 1; round <= 3; round++ {
+				before := h.current("p", "dep").ID
+				newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+				h.event(newParent, "create", "")
+				h.event(newParent, "start", "")
+				h.advance(gap)
+				if got := h.current("p", "dep"); got.ID == before || got.NetworkMode != "container:"+newParent.ID {
+					t.Fatalf("round %d not repaired: %s / %v", round, h.verbs(), h.rec.Types())
+				}
+			}
+			if h.count(engine.Suspended) != 0 || h.cf.Count("up") != 3 || h.cf.Count("recreate") != 0 {
+				t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+			}
+			closed := 0
+			for _, e := range h.events(engine.IncidentClosed) {
+				if e.Key == key("p", "dep") && e.Attrs["reason"] == "parent_changed" {
+					closed++
+				}
+			}
+			if closed != 2 {
+				t.Fatalf("each new parent change closes the incident before: %d / %v", closed, h.rec.Types())
+			}
+		})
+	}
+}
+
+// A parent restarted again and again (same ID) always gets the API restart of its sidecar, never --force-recreate.
+func TestSidecarIsRestartedAfterEveryParentRestartWithinItsRecoveryPeriod(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent, dep := h.pair()
+	h.noOptIn(dep.ID)
+	h.fake.OnMutate = func(f *docker.Fake, verb, id string) {
+		f.Update(id, func(c *docker.Container) { c.StartedAt = h.clk.Now() })
+	}
+	h.set(parent.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now().Add(-time.Minute) })
+	h.set(dep.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now().Add(-time.Minute) })
+	h.tick()
+	for i := 0; i < 3; i++ {
+		p := h.set(parent.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now() })
+		h.event(p, "start", "")
+		h.advance(4 * time.Minute)
+	}
+	if got := len(h.fake.CallsOn(dep.ID)); got != 3 {
+		t.Fatalf("the sidecar should be restarted after each of the 3 parent restarts, got %d (%s)", got, h.verbs())
+	}
+	if h.cf.Count("recreate") != 0 || h.count(engine.Suspended) != 0 {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+}
+
+// While the parent is unchanged, the one-pass rule stands: a repair that did not help ends SUSPENDED, it is not tried
+// again for the same parent.
+func TestSidecarThatStaysStaleForTheSameParentIsStillSuspended(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	h.noOptIn(dep.ID)
+	h.cf.OnUp = func(compose.Project) error { return nil } // the up does not help: the sidecar keeps pointing at the old parent
+	h.tick()
+	h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.advance(30 * time.Minute)
+	if h.count(engine.Suspended) != 1 || dep.ID == "" {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+	if n := h.cf.Count("up"); n > 2 {
+		t.Fatalf("at most the up and the forced recreate: %s", h.verbs())
+	}
+}
+
+// A restart of another service in the sidecar's depends_on is no change of its parent: a repair that did not help is not
+// tried again for it.
+func TestAnotherServicesRestartIsNoParentChange(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent := h.svc(hexID("c1"), "p", "parent")
+	other := h.svc(hexID("c2"), "p", "other")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true,other:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+	h.noOptIn(dep.ID)
+	_ = other
+	h.cf.OnUp = func(compose.Project) error { return nil } // the up does not help
+	h.tick()
+	h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	for i := 0; i < 8; i++ {
+		h.advance(3 * time.Minute)
+		h.set(other.ID, func(c *docker.Container) { c.StartedAt = h.clk.Now() })
+	}
+	for _, e := range h.events(engine.IncidentClosed) {
+		if e.Attrs["reason"] == "parent_changed" {
+			t.Fatalf("%+v", e)
+		}
+	}
+	if h.count(engine.Suspended) != 1 || h.cf.Count("up") > 2 {
+		t.Fatalf("%s / %v", h.verbs(), h.rec.Types())
+	}
+}
+
 // ---- a service with more than one container ---------------------------------------------------------------------
 
 // Every compose command names the service, and compose acts on all of its containers: a forced recreate replaces every
