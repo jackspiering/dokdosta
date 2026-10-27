@@ -25,6 +25,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A reboot no longer makes whalenurse forget a `docker stop` from long before it.** A changed boot id dropped every
+  manual-stop marker, so a container you had stopped on purpose was started again after a reboot. Now, with the previous
+  run's `last_seen` known, only the markers set in the 30 s before it (the shutdown's own kills) are dropped; older ones are
+  kept. Without a `last_seen`, all are dropped as before.
 - **A reload signal no longer counts as a manual stop.** `docker kill -s HUP` (and docker-gen's `-notify-sighup`, SIGUSR1,
   SIGUSR2, SIGWINCH) set a manual-stop marker, which then suppressed a later real heal of the container until its next
   start. These kills are recorded (`SignalIgnored`) and set no marker; every other signal still does.

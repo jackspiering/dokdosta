@@ -248,38 +248,64 @@ func TestComposeStopBurstKeepsItsMarkersAndTheContainersStayStopped(t *testing.T
 }
 
 // Mechanism b: the boot id is kept with the markers. A reboot stops whalenurse in the same second as the
-// containers, so a marker can exist with no matching event in the next run.
-func TestANewBootIdDropsMarkersAndOpensARestoreWindow(t *testing.T) {
+// containers, so a marker can exist with no matching event in the next run. With the previous run's last_seen known (plan
+// v3.13 item 16, DQ10) only the markers set in the 30 s before it can be shutdown kills: older ones are deliberate stops from
+// before the reboot and are kept.
+func TestANewBootIdDropsTheLastMarkersKeepsOlderOnesAndOpensARestoreWindow(t *testing.T) {
 	st := openStore(t)
 	h := newHarnessOpts(t, settled, nil, nil)
 	h.start(h.withStore(st, "boot-A"))
 	a := h.running(hexID("a1"), "p", "web")
+	b := h.running(hexID("b1"), "p", "db")
 	h.advance(2*time.Minute + time.Second)
-	h.event(a, "kill", "")
-	if !h.d.Engine().Evidence("h/p/web/1").ManualStop {
+	h.event(a, "kill", "") // a deliberate stop, a minute and a half before the host goes down
+	h.advance(time.Minute)
+	h.advance(30 * time.Second)
+	h.event(b, "kill", "") // the shutdown's kill
+	if !h.d.Engine().Evidence("h/p/web/1").ManualStop || !h.d.Engine().Evidence("h/p/db/1").ManualStop {
 		t.Fatal("setup")
 	}
-	h.advance(time.Minute) // a real manual stop, a minute before whalenurse is restarted
+	h.advance(5 * time.Second)
 
-	h.start(h.withStore(st, "boot-A")) // whalenurse restarted, same boot: a marker from before its last 30s is still good
-	if !h.d.Engine().Evidence("h/p/web/1").ManualStop {
-		t.Fatal("a restart within the same boot must keep the markers older than the quarantine window")
-	}
 	if !h.d.Engine().RestoreWindowUntil().Before(h.clk.Now()) {
 		t.Fatal("no restore window without a reboot")
 	}
 
 	h.start(h.withStore(st, "boot-B")) // the host rebooted
-	if h.d.Engine().Evidence("h/p/web/1").ManualStop {
-		t.Fatal("a marker from before a reboot survived")
+	if !h.d.Engine().Evidence("h/p/web/1").ManualStop {
+		t.Fatal("a stop from before the previous run's last 30 s was forgotten at a reboot")
+	}
+	if h.d.Engine().Evidence("h/p/db/1").ManualStop {
+		t.Fatal("a marker from the last 30 s before a reboot survived: it may be the shutdown's kill")
 	}
 	if want := h.clk.Now().Add(2 * time.Minute); !h.d.Engine().RestoreWindowUntil().Equal(want) {
 		t.Fatalf("restore window until %v, want %v", h.d.Engine().RestoreWindowUntil(), want)
 	}
-	// And the drop was persisted: the next run of this boot does not see it again.
+	// And the drop was persisted: the next run of this boot does not see it again, and the older marker is still there.
 	h.start(h.withStore(st, "boot-B"))
-	if h.d.Engine().Evidence("h/p/web/1").ManualStop {
-		t.Fatal("dropped marker came back")
+	if h.d.Engine().Evidence("h/p/db/1").ManualStop || !h.d.Engine().Evidence("h/p/web/1").ManualStop {
+		t.Fatal("the persisted markers changed between two runs of one boot")
+	}
+}
+
+// Without a last_seen (none was ever written, or it cannot be read) a reboot drops every marker, as before.
+func TestANewBootIdWithoutALastSeenDropsEveryMarker(t *testing.T) {
+	for name, lastSeen := range map[string]string{"unreadable": "garbage", "zero": "0"} {
+		t.Run(name, func(t *testing.T) {
+			st := openStore(t)
+			h := newHarnessOpts(t, settled, nil, nil)
+			h.start(h.withStore(st, "boot-A"))
+			a := h.running(hexID("a1"), "p", "web")
+			h.advance(2*time.Minute + time.Second)
+			h.event(a, "kill", "")
+			h.advance(5 * time.Minute)
+			st.SetMeta(MetaLastSeen, lastSeen)
+
+			h.start(h.withStore(st, "boot-B"))
+			if h.d.Engine().Evidence("h/p/web/1").ManualStop {
+				t.Fatal("a marker survived a reboot with no known end of the previous run")
+			}
+		})
 	}
 }
 
