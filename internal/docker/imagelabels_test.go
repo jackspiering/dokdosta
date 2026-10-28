@@ -43,48 +43,83 @@ func TestFilterRemovesWhatTheImageGives(t *testing.T) {
 }
 
 // Compose writes project, service and version into every image it builds, so a container compose makes from such an image
-// carries the same three values: that is not the image's identity (plan v3.16 item 1).
-func composeBuiltImage(oneoff string) (img, own map[string]string) {
+// carries the same three values: that is not the image's identity (plan v3.16 item 1). A one-off container (`compose run`)
+// is created with number -1, for which compose writes no container-number (compose pkg/compose/create.go and run.go,
+// v5.2.0 and v5.6.1), so the realistic fixture of a one-off has config-hash and oneoff=True and no container-number.
+func composeBuiltImage(oneoff bool) (img, own map[string]string) {
 	img = map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.version": "5.6.0"}
 	own = map[string]string{
 		LabelProject: "p", LabelService: "web", "com.docker.compose.version": "5.6.0",
-		"com.docker.compose.config-hash": "abc", LabelNumber: "1", LabelOneOff: oneoff,
+		"com.docker.compose.config-hash": "abc", LabelOneOff: "False",
 		"com.docker.compose.project.working_dir": "/srv/p", "com.docker.compose.project.config_files": "/srv/p/compose.yaml",
 		"dokdosta.enable": "true",
+	}
+	if oneoff {
+		own[LabelOneOff] = "True"
+	} else {
+		own[LabelNumber] = "1"
 	}
 	return img, own
 }
 
-func TestFilterKeepsTheComposeIdentityOfAContainerComposeCreatedFromAComposeBuiltImage(t *testing.T) {
+func inspectFiltered(t *testing.T, img, own map[string]string) map[string]string {
+	t.Helper()
 	f := NewFake()
-	img, own := composeBuiltImage("False")
 	f.SetImageLabels(flImg, img)
 	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: own})
 	flt, _ := filterFor(f)
 	flt.Declared = func(context.Context, map[string]string) (map[string]bool, bool) {
 		return map[string]bool{"dokdosta.enable": true}, true
 	}
-	c, _ := flt.Inspect(context.Background(), "c1")
-	if !reflect.DeepEqual(c.Labels, own) {
-		t.Fatalf("%v", c.Labels)
+	c, err := flt.Inspect(context.Background(), "c1")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, _, _, ok := ComposeKeyParts(c.Labels); !ok {
+	return c.Labels
+}
+
+func TestFilterKeepsTheComposeIdentityOfAContainerComposeCreatedFromAComposeBuiltImage(t *testing.T) {
+	img, own := composeBuiltImage(false)
+	got := inspectFiltered(t, img, own)
+	if !reflect.DeepEqual(got, own) {
+		t.Fatalf("%v", got)
+	}
+	if _, _, _, ok := ComposeKeyParts(got); !ok {
 		t.Fatal("no longer a compose container")
 	}
 }
 
+// A real `docker compose run` container from a compose-built image has no container-number and keeps oneoff=True, which
+// is what rule 0 (SkipOneOff) reads.
 func TestFilterKeepsOneOffLabel(t *testing.T) {
-	f := NewFake()
-	img, own := composeBuiltImage("True")
-	f.SetImageLabels(flImg, img)
-	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: own})
-	flt, _ := filterFor(f)
-	flt.Declared = func(context.Context, map[string]string) (map[string]bool, bool) {
-		return map[string]bool{"dokdosta.enable": true}, true
+	img, own := composeBuiltImage(true)
+	if _, has := own[LabelNumber]; has {
+		t.Fatal("the fixture of a one-off must not carry a container-number")
 	}
-	c, _ := flt.Inspect(context.Background(), "c1")
-	if c.Labels[LabelOneOff] != "True" {
-		t.Fatalf("the oneoff label is gone: %v", c.Labels)
+	got := inspectFiltered(t, img, own)
+	if !reflect.DeepEqual(got, own) {
+		t.Fatalf("%v", got)
+	}
+	if !IsOneOff(got) {
+		t.Fatalf("the oneoff label is gone: %v", got)
+	}
+}
+
+// compose writes project.environment_file only when --env-file was given, so an image that carries it alone, under a
+// container compose made without env files, is the image's label: it must not reach compose's --env-file.
+func TestFilterDropsAnEnvironmentFileOnlyTheImagePlants(t *testing.T) {
+	for _, oneoff := range []bool{false, true} {
+		img, own := composeBuiltImage(oneoff)
+		const envFile = "com.docker.compose.project.environment_file"
+		img[envFile] = "/x"
+		own[envFile] = "/x"
+		got := inspectFiltered(t, img, own)
+		if want := map[string]string{"dokdosta.enable": "true"}; !reflect.DeepEqual(got, want) {
+			t.Fatalf("one-off %v: %v", oneoff, got)
+		}
+		if _, _, _, ok := ComposeKeyParts(got); ok {
+			t.Fatal("still a compose container")
+		}
 	}
 }
 
@@ -95,6 +130,10 @@ func TestFilterStillDropsAnIdentityOfTheImage(t *testing.T) {
 		"docker run of an image that plants project and service": {
 			img: map[string]string{LabelProject: "p", LabelService: "web"},
 			own: map[string]string{LabelProject: "p", LabelService: "web", "dokdosta.enable": "true", "other": "y"},
+		},
+		"no container-number on a container that is not a one-off": {
+			img: map[string]string{LabelProject: "p", LabelService: "web"},
+			own: map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.config-hash": "abc", LabelOneOff: "False", "dokdosta.enable": "true", "other": "y"},
 		},
 		"config-hash equal to the image's": {
 			img: map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.config-hash": "abc"},

@@ -15,7 +15,8 @@ workflow refuses an undated section.
 - A service built from a `build:` section in your compose file is no longer treated as not made by compose. Compose puts
   the project, service and version labels into the image it builds, and dokdosta took them for labels from the image: the
   container got a restart only, no recreate or pull, and a failed `docker compose run` task lost its one-off mark. The
-  container-number, config-hash and one-off labels now decide (plan v3.16).
+  labels that only compose writes when it creates a container decide, and a `docker compose run` task keeps its one-off
+  mark (plan v3.16).
 
 ## [0.3.0] - YYYY-MM-DD
 

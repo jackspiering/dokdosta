@@ -68,13 +68,14 @@ container's image ID, so a moved tag changes nothing) and does not let the ones 
 - **`com.docker.compose.*`**: when the identity is the image's, the container is treated as one that compose did not make
   (see below): its state key is its container name, it gets the restart rung only, no compose command is built from its
   labels, and it is neither a parent nor a sidecar by service. That is decided only on evidence that compose did not create
-  the container: one of its labels has the value the image gives it **and** either `config-hash`, `container-number` or
-  `oneoff` (which compose writes on every container) is missing, or the shared label is one compose sets only when it creates
-  a container (`config-hash`, `container-number`, `oneoff`, `project.working_dir`, `project.config_files`). `project`,
-  `service` and `version` alone are not evidence: compose writes them into every image it builds, so a service with
-  `build:` keeps its identity. An image committed from a compose container carries the creation labels too, and the
-  container made from it is treated as not made by compose. (An image that planted every one of the five creation labels with
-  the values compose writes would go unnoticed.)
+  the container: one of its labels has the value the image gives it **and** either compose cannot have made it
+  (`config-hash` or `oneoff` is missing, or `container-number` is missing while `oneoff` is not `True`; compose writes no
+  `container-number` on a `docker compose run` container), or the shared labels include one other than `project`, `service`
+  and `version`. Those three alone are not evidence: compose writes them into every image it builds, so a service with
+  `build:` keeps its identity, and a `compose run` task keeps its one-off mark. An image committed from a compose container
+  carries more compose labels than those three, and the container made from it is treated as not made by compose. (A
+  container whose creator sets `config-hash`, `container-number` and `oneoff` with its own `--label` flags while `project`
+  and `service` come from the image would go unnoticed.)
 
 Each time, one warning in the log names the labels that were ignored. To see what an image brings:
 
