@@ -155,6 +155,11 @@ reported as drifted when a recreate is considered ("compose upgraded from X to Y
 be a changed hash layout rather than an edit"). Recreate them once yourself (`docker compose up -d`) and the message goes
 away. See [troubleshooting.md](troubleshooting.md#drift-block-messages).
 
+From this release, a systemd install that keeps compose in two plugin directories uses the one the Docker CLI uses, which is
+searched first: `/usr/local/lib` before `/usr/libexec`. Earlier releases searched `/usr/libexec` first. Check which one
+`docker compose version` runs, and make sure the other is not a different version you did not intend. The compose dokdosta
+uses is reported in its startup log.
+
 ## Rolling back
 
 Run the previous image tag or binary again. If it refuses the database (it was migrated), [restore the backup](#backing-up-and-restoring-the-store).

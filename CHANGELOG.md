@@ -17,6 +17,13 @@ workflow refuses an undated section.
   because the queue was full, and `dokdosta_sse_refused_total` the event streams turned away with 503 at the stream
   limit. All URLs are counted together, and no URL appears in them.
 
+### Changed
+
+- **The host's compose plugin is searched in the Docker CLI's order**: `/usr/local/lib`, `/usr/local/libexec`, `/usr/lib`,
+  then `/usr/libexec`. A systemd install with a compose in two of these directories now uses the one `docker compose` uses,
+  which may be a different version than before ([docs/upgrading.md](docs/upgrading.md#docker-engine-and-compose),
+  [docs/deployment.md](docs/deployment.md)).
+
 ### Fixed
 
 - **dokdosta's own start clears a manual-stop marker.** A hand `docker start` that failed left a manual-stop marker; the start dokdosta made to heal the container was attributed to its action and did not clear it, so a later crash was read as a manual stop and, with `restart: "no"`, was never healed. An attributed `start` now clears the marker (`kill` and `die` stay ignored). (B-011)
