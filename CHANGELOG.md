@@ -10,6 +10,10 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- A recreate or a pull that took minutes no longer makes dokdosta think its own `create` and `start` events came from outside: the events are attributed to the action, and the incident stays open instead of closing as "recreated" and reopening at rung 0.
+
 ## [0.3.0] - YYYY-MM-DD
 
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
