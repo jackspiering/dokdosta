@@ -142,12 +142,8 @@ jobs:
           # Word splitting is wanted here: one path per line, none with spaces.
           # shellcheck disable=SC2086
           shellcheck -x $files
-      - name: M0 self-tests (stubbed docker; none of them needs a daemon)
-        run: |
-          scripts/m0/selftest.sh
-          scripts/scrub-fixture --self-test
-          test/m0/run.sh selftest
-          test/m0/m0b/selftest.sh
+      - name: Fixture scrubber self-test (no Docker needed)
+        run: scripts/scrub-fixture --self-test
       - name: Release script self-tests (release notes from CHANGELOG.md, verify-release with stubbed cosign, gh and curl)
         run: |
           scripts/release/release-notes.sh --self-test
@@ -471,9 +467,9 @@ jobs:
       - name: Install the latest Docker Engine 29.x and Compose 5.6.0, select the image store
         if: env.RUN == 'true'
         run: scripts/ci/setup-docker.sh "${{ matrix.store }}"
-      - name: Image drift (M0b scenario 5; dokdosta-m0-b-imgdrift project only)
+      - name: Image drift (dokdosta-test-imgdrift project only)
         if: env.RUN == 'true'
-        run: test/m0/m0b/image-drift.sh --out "$RUNNER_TEMP/imgdrift-${{ matrix.store }}"
+        run: scripts/ci/image-drift.sh --out "$RUNNER_TEMP/imgdrift-${{ matrix.store }}"
       - name: Summary
         if: always() && env.RUN == 'true'
         run: cat "$RUNNER_TEMP/imgdrift-${{ matrix.store }}/summary.txt" || true

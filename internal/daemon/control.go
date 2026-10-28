@@ -112,6 +112,9 @@ func (d *Daemon) Unsuspend(scope string) (string, error) {
 	return "unsuspended " + strings.Join(keys, ", "), nil
 }
 
+// maxPause keeps the stored expiry (UnixNano, see store.tn) inside int64, which runs out in 2262.
+const maxPause = 100 * 365 * 24 * time.Hour
+
 // ParseFor reads the --for value: empty is the default pause, "0" is indefinite.
 func ParseFor(v string, parse func(string) (time.Duration, error)) (time.Duration, error) {
 	v = strings.TrimSpace(v)
@@ -121,6 +124,9 @@ func ParseFor(v string, parse func(string) (time.Duration, error)) (time.Duratio
 	d, err := parse(v)
 	if err != nil || d < 0 {
 		return 0, fmt.Errorf("--for %q: want a duration such as 2h or 1d, or 0 for no expiry", v)
+	}
+	if d > maxPause {
+		return 0, fmt.Errorf("--for %q: longer than 100 years; use --for 0 for no expiry", v)
 	}
 	return d, nil
 }

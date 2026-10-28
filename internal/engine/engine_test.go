@@ -627,6 +627,30 @@ func TestRealEventSequencesAndTheInFlightWindow(t *testing.T) {
 	}
 }
 
+func TestOwnEventsAfterALongBacklogAreStillAttributed(t *testing.T) {
+	// The engine handles a due key's queued events only after its action has
+	// returned, so a recreate that took minutes is still followed by its own
+	// create/start events long after End. They are matched on their own time,
+	// so the window must outlast that backlog, not one minute.
+	e, clk, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	p := Plan{Act: rules.ActionRecreate, Rung: "recreate"}
+	e.Begin(tgt, p, bad)
+	started := clk.Now()
+	e.End(tgt, p, Result{}, cfg)
+	clk.Advance(70 * time.Second)
+	attributed := e.ObserveDockerEvent(tgt, docker.Event{Action: "create", Time: started.Add(time.Second)})
+	if !attributed || rec.Count(EventAttributed) != 1 {
+		t.Fatalf("a create 1 s into the action, seen 70 s after it ended, is not attributed: %v", rec.Types())
+	}
+	if rec.Count(IncidentClosed) != 0 {
+		t.Fatalf("the action's own create closed the incident: %v", rec.Types())
+	}
+	if open, _ := e.IncidentOpen(tgt.Key); !open {
+		t.Fatalf("the incident is not open after the action's own create: %v", rec.Types())
+	}
+}
+
 func TestRefuseDoesNotConsumeTheRung(t *testing.T) {
 	e, _, rec := newEngine(t, 0)
 	p := e.Evaluate(tgt, bad, cfg, hcObs)

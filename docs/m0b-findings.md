@@ -1,5 +1,7 @@
 # M0b findings
 
+> The M0 tooling (`scripts/m0/`, `test/m0/`) and `testdata/journal/` were removed on 28 Oct 2026; they are in the history at commit `d79dc4b841b4`.
+
 > whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
 
 Milestone M0b of [PLAN.md](PLAN.md) §7: the scenarios M0 could not run ([m0-findings.md](m0-findings.md) §6). No app code. Run on 17 Oct 2026 on the same throwaway Debian VM as M0 (Debian 13, kernel 6.12, cgroup v2), with the maintainer running every root or disruptive step. Raw output lives in `captures/` (gitignored); only scrubbed excerpts and fixtures are committed. This file is separate from `m0-findings.md`; plan §7 says "a new section" there, and §7 now points here instead.

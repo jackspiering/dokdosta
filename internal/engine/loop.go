@@ -51,6 +51,9 @@ func (e *Engine) Observe(t Target, o Obs) rules.Loop {
 		if !o.FinishedAt.IsZero() && !o.FinishedAt.Before(l.LastObs) && !o.FinishedAt.After(now) {
 			stamp = o.FinishedAt
 		}
+		if l.N > 0 && stamp.Sub(l.Last) >= e.p.RecoveryPeriod {
+			l.N = 0 // the earlier restarts are from a quiet period nobody inspected: a new count starts
+		}
 		if l.N == 0 {
 			l.First = stamp
 		}
