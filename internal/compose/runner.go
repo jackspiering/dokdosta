@@ -102,10 +102,12 @@ type capped struct {
 const tailSize = 8 << 10
 
 func (w *capped) Write(p []byte) (int, error) {
+	// Decided before the write: after it, buf already holds this write and the test would always count it twice.
+	overflow := w.over || w.buf.Len()+len(p) > w.max
 	if room := w.max - w.buf.Len(); room > 0 {
 		w.buf.Write(p[:min(room, len(p))])
 	}
-	if w.over || w.buf.Len()+len(p) > w.max {
+	if overflow {
 		w.over = true
 		w.tail = append(w.tail, p...)
 		if len(w.tail) > tailSize {
