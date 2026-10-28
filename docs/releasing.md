@@ -57,20 +57,6 @@ Dockerfiles with the new index digest) or the module it names.
 
 Verify a release yourself: [verifying-releases.md](verifying-releases.md).
 
-## The release gate
-
-**No new minor or major version is tagged until it has run for a few days in dry-run on a real host, and then live on a few
-test containers** (v0.1.0 went through this gate). **[maintainer]**
-
-1. Run the image built from `main` (`docker build -t dokdosta .`, or a snapshot) on your real host with
-   `DOKDOSTA_DRY_RUN=true` and notifications on. Read every `IncidentOpened`, `would restart` and `DriftBlocked` for a few days,
-   across at least one host reboot or daemon restart, a deploy of one of your stacks, and a night.
-2. Switch to live for a few test containers (a stack you can afford to break; the [demo](../examples/demo/compose.yaml) is
-   good for rehearsal). Break them on purpose; check the ladder, the sidecar repair, the notifications and `unsuspend`.
-3. Fix what you found, and write it into the changelog.
-
-Do not skip this because CI is green. CI runs on throwaway runners; what it cannot show you is your stacks.
-
 ## One-time setup before the first tag **[maintainer]**
 
 ### Repository settings
@@ -108,8 +94,8 @@ The first push creates `ghcr.io/jackspiering/dokdosta` as a **private** package.
 1. The pull request that prepares it merges to `main` with green CI. In `CHANGELOG.md`, replace `YYYY-MM-DD` of the version with
    today's date (the release workflow refuses an undated section) and make sure its entries are right. Check the
    links at the bottom of the file.
-2. **Rehearse with a release candidate first**, because the first run of the signing steps happens on a real tag and cannot be
-   tried anywhere else (the only job with `id-token: write` is the publish job). Give the changelog a `## [0.1.0-rc.1] - date`
+2. Optionally, rehearse with a release candidate (worth it after a change to the release workflow: the signing steps run only on
+   a real tag, since the only job with `id-token: write` is the publish job). Give the changelog a `## [0.1.0-rc.1] - date`
    section, then:
    ```
    git switch main && git pull
@@ -119,8 +105,8 @@ The first push creates `ghcr.io/jackspiering/dokdosta` as a **private** package.
    Watch the `release` workflow. A `-rc` tag publishes `v0.1.0-rc.1` only (never `latest`, `v0.1`, `v0`), as a GitHub
    pre-release. Run `make verify-release TAG=v0.1.0-rc.1`. If a step fails, fix it on `main` and tag `rc.2`: **a tag that
    was published is never reused** (immutable releases would refuse it anyway).
-3. Tag the real release the same way (`v0.1.0`), push it, watch the workflow, run `make verify-release TAG=v0.1.0`, do the
-   anonymous pull above. The final tag may point at the same commit as the `-rc`: the workflow tells GoReleaser which tag
+3. Tag the release the same way (`v0.1.0`), push it, watch the workflow, run `make verify-release TAG=v0.1.0`, do the
+   anonymous pull above. The final tag may point at the same commit as an `-rc`: the workflow tells GoReleaser which tag
    it is releasing (`GORELEASER_CURRENT_TAG`, checked by `scripts/ci/check-workflows.sh`), so it is never built as the `-rc`.
 4. Announce.
 
