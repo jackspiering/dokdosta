@@ -176,7 +176,7 @@ func (e *Engine) Restore(s Snapshot) {
 			st.incident = &incident{
 				opened: r.Opened, class: rules.Class(r.Class), rung: r.Rung, cooldownUntil: r.CooldownUntil,
 				spent: r.Spent, spentReason: r.SpentReason, suspended: r.Suspended, suspendedAt: r.SuspendedAt,
-				recovering: r.Recovering, recoverySince: r.RecoverySince, recoveryCount: r.RecoveryCount,
+				recovering: r.Recovering, recoverySince: r.RecoverySince, recoveryCount: r.RecoveryCount, parent: r.Parent,
 			}
 		}
 		e.keys[k.Key] = st
@@ -224,7 +224,7 @@ func (e *Engine) flush(key string, st *keyState) {
 		rec.Incident = &IncidentRecord{
 			Opened: inc.opened, Class: string(inc.class), Rung: inc.rung, CooldownUntil: inc.cooldownUntil,
 			Spent: inc.spent, SpentReason: inc.spentReason, Suspended: inc.suspended, SuspendedAt: inc.suspendedAt,
-			Recovering: inc.recovering, RecoverySince: inc.recoverySince, RecoveryCount: inc.recoveryCount,
+			Recovering: inc.recovering, RecoverySince: inc.recoverySince, RecoveryCount: inc.recoveryCount, Parent: inc.parent,
 		}
 	}
 	e.p.Persist.SaveKey(rec)
@@ -662,8 +662,9 @@ func (e *Engine) settle(t Target, st *keyState, d rules.Decision, cfg config.Con
 // healthy"); the incident closes only after the container has stayed recovered
 // for RECOVERY_PERIOD.
 func (e *Engine) recovering(t Target, st *keyState, inc *incident, o Obs, now time.Time) Plan {
-	if inc.parent == "" {
-		inc.parent = o.Parent // an incident restored after a restart, or opened by the sidecar's own ladder, learns it here
+	if inc.parent == "" && o.Parent != "" {
+		inc.parent = o.Parent // an incident opened by the sidecar's own ladder, or stored by a release before this one, learns it here
+		st.dirty = true
 	}
 	if !inc.recovering || o.RestartCount != inc.recoveryCount {
 		inc.recovering, inc.recoverySince, inc.recoveryCount = true, now, o.RestartCount
@@ -719,6 +720,7 @@ func (e *Engine) parentChanged(t Target, st *keyState, d rules.Decision, o Obs) 
 	}
 	if inc.parent == "" {
 		inc.parent = o.Parent
+		st.dirty = true
 		return
 	}
 	if inc.parent == o.Parent {
