@@ -204,6 +204,12 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 		d.refuse(t, dec, "cannot pull: the container has no image reference")
 		return
 	}
+	if dec.Action == rules.ActionRecreateStale {
+		// The parent is gone: this sidecar is recreated with it, never pulled. The rung does not apply (it would be refused for ever).
+		d.eng.RungNotApplicable(t, config.RungPull, "a dependent whose parent is gone is recreated, not pulled", cfg)
+		d.schedule(t.Key, d.clk.Now().Add(d.cfg.Grace))
+		return
+	}
 	if why := d.refsRefusal(ctx, c); why != "" {
 		d.refuse(t, dec, why)
 		return

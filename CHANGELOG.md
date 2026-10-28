@@ -10,6 +10,12 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- A dependent whose parent was replaced, and whose own ladder reaches the pull rung, is now suspended once with a
+  notification instead of being refused every few minutes for ever. It is still recreated with its parent, and never
+  pulled.
+
 ## [0.3.0] - YYYY-MM-DD
 
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
