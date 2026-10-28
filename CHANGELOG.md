@@ -12,6 +12,9 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A relative `DOKDOSTA_COMPOSE_BIN` is refused at startup.** dokdosta now stops with "DOKDOSTA_COMPOSE_BIN must be an
+  absolute path" instead of checking the path in one directory and running it from another. Set the full path, for
+  example `/usr/local/bin/docker-compose`.
 - `dokdosta pause --for` now refuses a duration longer than 100 years (use `--for 0` for no expiry). Before, a longer pause was accepted, its expiry overflowed and it ended at the next restart.
 
 ## [0.3.0] - YYYY-MM-DD
