@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Added
+
+- **`/metrics` shows notification drops, rate-limit holds and refused streams.** `dokdosta_notifications_rate_limited_total`
+  counts the notifications held back by the per-URL rate limit, `dokdosta_notifications_dropped_total` those dropped
+  because the queue was full, and `dokdosta_sse_refused_total` the event streams turned away with 503 at the stream
+  limit. All URLs are counted together, and no URL appears in them.
+
 ### Fixed
 
 - **A relative `DOKDOSTA_COMPOSE_BIN` is refused at startup.** dokdosta now stops with "DOKDOSTA_COMPOSE_BIN must be an

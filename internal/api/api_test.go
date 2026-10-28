@@ -726,6 +726,57 @@ func TestMetrics(t *testing.T) {
 	}
 }
 
+// notifySource reports notification drops and holds, which the shared fixture leaves at zero (its status is a golden).
+type notifySource struct{ fixtureSource }
+
+func (notifySource) Status() StatusDoc {
+	st := fixtureSource{}.Status()
+	st.Notifications.RateLimited, st.Notifications.Dropped = 4, 2
+	return st
+}
+
+func TestMetricsExportNotificationDropsAndHoldsAndRefusedStreams(t *testing.T) {
+	svc := fixtureService()
+	svc.Source = notifySource{}
+	body := get(t, Handler(Options{Health: okChecker{}, Service: svc}), "/metrics").Body.String()
+	for _, want := range []string{
+		"# TYPE dokdosta_notifications_rate_limited_total counter", "dokdosta_notifications_rate_limited_total 4",
+		"# TYPE dokdosta_notifications_dropped_total counter", "dokdosta_notifications_dropped_total 2",
+		"# TYPE dokdosta_sse_refused_total counter", "dokdosta_sse_refused_total 0",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in\n%s", want, body)
+		}
+	}
+}
+
+func TestMetricsCountStreamsRefusedAtMaxStreams(t *testing.T) {
+	svc := fixtureService()
+	var cancels []func()
+	for i := 0; i < MaxStreams; i++ {
+		_, cancel, ok := svc.Hub.Subscribe()
+		if !ok {
+			t.Fatalf("stream %d refused below MaxStreams", i)
+		}
+		cancels = append(cancels, cancel)
+	}
+	for i := 0; i < 3; i++ {
+		if _, _, ok := svc.Hub.Subscribe(); ok {
+			t.Fatal("stream above MaxStreams accepted")
+		}
+	}
+	if got := svc.Hub.Refused(); got != 3 {
+		t.Errorf("Refused() = %d, want 3", got)
+	}
+	body := get(t, Handler(Options{Health: okChecker{}, Service: svc}), "/metrics").Body.String()
+	if !strings.Contains(body, "dokdosta_sse_refused_total 3") {
+		t.Errorf("refusals not in /metrics:\n%s", body)
+	}
+	for _, cancel := range cancels {
+		cancel()
+	}
+}
+
 // main serves with a ReadTimeout. net/http keeps that deadline on the connection while a handler runs, and its
 // background read then cancels the request: without the stream clearing it, every stream would end after the timeout.
 func TestStreamSurvivesTheServersReadTimeout(t *testing.T) {
