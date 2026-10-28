@@ -354,6 +354,10 @@ func TestRollbackCommandsAreExactAndQuoted(t *testing.T) {
 	if !strings.HasSuffix(up, " web vpn") {
 		t.Errorf("%s", up)
 	}
+	// The old image is an ID in practice, but it is still one shell word: a value with a space is quoted, not split.
+	if tag, _ := RollbackCommands(proj(), "web:1", "a b"); tag != "docker image tag 'a b' web:1" {
+		t.Errorf("tag = %q", tag)
+	}
 }
 
 func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
