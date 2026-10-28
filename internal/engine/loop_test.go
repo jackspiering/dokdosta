@@ -151,6 +151,21 @@ func TestCrashLoopVerdictDoesNotDependOnTheInspectRate(t *testing.T) {
 	}
 }
 
+// Three quick restarts, then a quiet period that no inspect saw, then one more restart: the earlier three are from
+// a period nobody looked at, so they must not make the new restart a loop.
+func TestCrashLoopCountDoesNotSpanAQuietPeriodNoInspectSaw(t *testing.T) {
+	e, clk, _ := newEngine(t, 0)
+	e.Observe(tgt, Obs{})
+	for i := 1; i <= 3; i++ {
+		clk.Advance(5 * time.Second)
+		e.Observe(tgt, Obs{RestartCount: i})
+	}
+	clk.Advance(e.p.RecoveryPeriod + time.Minute) // no Observe during this quiet period
+	if l := e.Observe(tgt, Obs{RestartCount: 4}); l.Active {
+		t.Fatalf("a restart after an unseen quiet period was called a loop: %+v", l)
+	}
+}
+
 func TestTwoRestartsAreNeverALoopHoweverOftenWeLook(t *testing.T) {
 	for _, step := range []time.Duration{10 * time.Second, time.Minute, 5 * time.Minute} {
 		e, clk, _ := newEngine(t, 0)

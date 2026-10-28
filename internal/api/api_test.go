@@ -784,3 +784,25 @@ func TestRollbackIsShownExactlyOrNotAtAll(t *testing.T) {
 		t.Fatalf("%+v", u)
 	}
 }
+
+// A skipped rung is read per container, so a long incident is not pushed out of the log by other containers' events:
+// the newest 500 RungUnavailable events of the whole host held no event of this container.
+func TestSkippedRungsSurviveMoreThan500OtherEvents(t *testing.T) {
+	c := ContainerDoc{
+		Host: "nas", Key: "nas/media/vpn/1", Name: "media-vpn-1", State: "running", Watched: true, OptedIn: true,
+		Healer: HealerDoc{State: "SUSPENDED", IncidentOpened: t0.Add(20 * time.Minute)},
+	}
+	r := engine.NewRing(1000)
+	inc := c.Healer.IncidentOpened.Format(time.RFC3339Nano)
+	r.Record(engineEvent(1, "RungUnavailable", `rung "pull": the compose rungs are disabled; skipped`, map[string]string{"rung": "pull", "incident": inc}))
+	for i := 0; i < 500; i++ {
+		e := engineEvent(uint64(i+2), "RungUnavailable", "other", map[string]string{"rung": "pull", "incident": "other"})
+		e.Key = fmt.Sprintf("nas/other/svc/%d", i)
+		r.Record(e)
+	}
+	s := &Service{Host: "nas", Source: oneSource{c}, Events: r}
+	list := s.Containers(false)
+	if len(list) != 1 || len(list[0].Healer.SkippedRungs) != 1 || list[0].Healer.SkippedRungs[0].Rung != "pull" {
+		t.Fatalf("list: %+v", list)
+	}
+}

@@ -524,7 +524,7 @@ A recreate deploys whatever is on disk and in the local image store *now*. The g
      ```
      docker image inspect --platform linux/<arch> --format '{{.Id}}' <ref>
      ```
-     `<arch>` is the server's (`docker version --format '{{.Server.Arch}}'`). This is **one comparison that is correct on both image stores** (M0b, `test/m0/m0b/image-drift.sh`): it equals the label before a re-tag and differs after. On the containerd store the label is the platform manifest digest and `--platform … .Id` returns it; on the classic store the label is the image ID.
+     `<arch>` is the server's (`docker version --format '{{.Server.Arch}}'`). This is **one comparison that is correct on both image stores** (M0b; `scripts/ci/image-drift.sh` checks it in CI): it equals the label before a re-tag and differs after. On the containerd store the label is the platform manifest digest and `--platform … .Id` returns it; on the classic store the label is the image ID.
    - **v3.6 (approved):** the label is the platform ID only from compose v5.5.0; compose v5.2.0 on the containerd store writes the plain image ID. The container is not drifted if the label equals the platform ID **or** the plain `<ref>` `.Id`. See *Changes in v3.6*, item 3.
    - **Never use `.Descriptor.digest`**, with or without `--platform`: it is empty on the classic store, so the guard would report drift for every container and SUSPEND them all. Never compare the label with plain `<ref>` `.Id`, with `.RepoDigests` or with the container's `.Image` either: on containerd those are index digests and never equal the label, and on classic plain `.Id` happens to work, which is the trap.
    - If the inspect fails (the reference is no longer present locally, or has no image for that platform), that is a failure: skip the recreate and say why.
@@ -785,7 +785,7 @@ internal/config/     env + label parsing
 
 **CI jobs added in M6:** `workflows` (actionlint and the SHA-pin check), `release-snapshot` (GoReleaser `check` and `release --snapshot --skip=sign`: archives, checksums, SBOMs, the amd64 image run and inspected, the arm64 image built), `examples` (`compose config -q`, `systemd-analyze verify`) and `demo` (the README's demo against the image from the commit, project `dokdosta-test-demo`).
 
-**CI matrix (built in M2b: 2 stores × 3 compose releases = 6 integration jobs):** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`test/m0/m0b/image-drift.sh`) runs on both stores today.
+**CI matrix (built in M2b: 2 stores × 3 compose releases = 6 integration jobs):** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`scripts/ci/image-drift.sh`) runs on both stores today.
 
 - **From M2a** the integration tests run on Engine 29.x with compose v5.6.0 on both stores, installed the way the `image-drift` job installs them (the runner's Engine 28.0.4 has no `image inspect --platform`, and its compose 2.38.2 prints `null` for the dry-run oracle). M2a does not drive compose: it uses compose only to set up test stacks, so the other two versions add nothing there.
 - **From M2b** the full compose matrix applies, because dokdosta then runs compose itself and the oracle's output and the config hash are what the matrix pins:
@@ -810,6 +810,8 @@ The image under test is built once per run (the `image` job) and loaded by the i
 - **Done when:** the README, `.gitignore` and plan are committed, and the [maintainer] items are listed in the report.
 
 ### M0 — Diagnose and verify (no app code)
+
+The M0 tooling (`scripts/m0/`, `test/m0/`) and `testdata/journal/` were removed on 28 Oct 2026; they are in the history at commit `d79dc4b841b4`. The M0 and M0b sections below describe them as they were.
 
 **Read-only scripts** (refuse to modify anything):
 - `scripts/m0/scan.sh`: lists containers that are exited with a restart policy, or have a non-empty `State.Error`. Shows exit code, `OOMKilled`, `State.Error`, `FinishedAt` and restart policy.
@@ -855,7 +857,7 @@ M0 ran on a VM where the daemon could not be restarted and the journal was not r
   - the shutdown `kill` events and how the manual-stop markers (§3.3) clear on Docker's boot restart;
   - boot-time restore: `failed to start container` is logged and not retried, and `State.Error` is set;
   - the shared 5s `container:` wait (§3.5), and whether dependents come up before their parent.
-- **[maintainer]** Journal evidence: run `scripts/m0/capture.sh` on a host where `journalctl -u docker` is readable, and confirm `failed to start container` and `restartmanger wait error` appear for E8 and for boot-time restore.
+- ~~**[maintainer]** Journal evidence~~ (dropped with the M0 tooling, 28 Oct 2026): run `scripts/m0/capture.sh` on a host where `journalctl -u docker` is readable, and confirm `failed to start container` and `restartmanger wait error` appear for E8 and for boot-time restore.
 - **Classic image store:** switch the VM's `daemon.json` to the classic store (**[maintainer]**: needs a daemon restart), and run E5's image-drift part, ideally all of `run.sh`. Confirm what `com.docker.compose.image` holds there (§3.6). CI covers this too, so write the check so that CI can run it.
 - **Engine 29.9.1** (containerd 2.4.2): upgrade the VM (**[maintainer]**: restarts the daemon) and re-run the suite. Findings §1 found no change in 29.9.1 that touches any experiment, so expect no differences.
 - **Done (17 Oct 2026):** the verdicts were approved and are in this plan as v3.3. The CI `image-drift` job (it installs Engine 29.x and compose 5.6.0, because the runner's Engine 28.0.4 has no `image inspect --platform`) and the M0b self-test are in `ci.yml`.
@@ -929,7 +931,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
   - Revisit this against the Watchtower fork's feature set and the state of compose #13878 before building it.
 
 ## 9. Open questions
-1. What makes the maintainer's stuck containers sit at `Exited (N)`? **Open.** Hypothesis A is reproduced (E8) and matches the moby source, but only `scripts/m0/scan.sh` and `capture.sh` on the real host can confirm it. The exit code `docker ps` shows will be the previous run's, not 128.
+1. What makes the maintainer's stuck containers sit at `Exited (N)`? **Open.** Hypothesis A is reproduced (E8) and matches the moby source, but only a capture on the real host could confirm it (`scripts/m0/scan.sh` and `capture.sh`, removed on 28 Oct 2026: the question stays open without a tool). The exit code `docker ps` shows will be the previous run's, not 128.
 2. ~~`:ro` stack mounts?~~ **Answered:** they work, with the stacks root at the identical path. See [findings §5](m0-findings.md#5-answers-to-the-plans-open-questions-9) and [E6](m0-findings.md#e6-recreate-from-a-helper-container-with-the-stacks-directory-ro).
 3. ~~Does the host compose plugin run in the image?~~ **Answered:** yes, in `alpine` and `distroless/static`; a non-root user needs the socket's group. See [findings §5](m0-findings.md#5-answers-to-the-plans-open-questions-9) and [E7](m0-findings.md#e7-does-the-host-compose-plugin-run-in-the-candidate-base-images).
 4. ~~Should the dry-run plan replace the config-hash check?~~ **Answered:** it is the primary check for non-reference services and parents, with `config --hash` as the fallback (§3.6). See [findings §5](m0-findings.md#5-answers-to-the-plans-open-questions-9) and [E5](m0-findings.md#e5---dry-run-as-the-recreate-oracle).
