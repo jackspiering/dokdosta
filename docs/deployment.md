@@ -2,7 +2,7 @@
 
 dokdosta is one static binary. Run it as a container (the Docker socket mounted) or as a systemd service. Either way, start in
 **dry-run**: it logs and notifies what it *would* do and changes nothing, so you can read its decisions on your own host
-first. See the [release gate](releasing.md#the-release-gate) for how long the maintainer ran it that way before v0.1.0.
+first.
 
 The examples in [examples/](../examples/) are checked in CI (`compose config -q`, `systemd-analyze verify`):
 
