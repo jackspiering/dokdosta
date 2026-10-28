@@ -591,6 +591,32 @@ func TestResolveOrder(t *testing.T) {
 	}
 }
 
+// The host plugin directories are searched in the Docker CLI's order (cli-plugins/manager, defaultSystemPluginDirs):
+// with the same compose in two of them, the one the operator's `docker compose` runs is the one dokdosta uses.
+func TestHostPluginOrderIsTheDockerCLIs(t *testing.T) {
+	const libexec, lib = "/usr/libexec/docker/cli-plugins/docker-compose", "/usr/local/lib/docker/cli-plugins/docker-compose"
+	present := map[string]bool{libexec: true, lib: true}
+	versions := map[string]string{libexec: "5.2.0\n", lib: "5.6.0\n"}
+	l := Lookup{
+		Stat: func(p string) (os.FileInfo, error) {
+			if present[p] {
+				return fakeInfo{}, nil
+			}
+			return nil, os.ErrNotExist
+		},
+		Runner: &recRunner{out: func(c Command) (Result, error) {
+			return Result{Stdout: []byte(versions[c.Bin])}, nil
+		}},
+	}
+	b, _, err := Resolve(context.Background(), l)
+	if err != nil || b.Path != lib || b.Version != (Version{5, 6, 0, ""}) {
+		t.Fatalf("want %s, got %+v %v", lib, b, err)
+	}
+	if want := []string{lib, "/usr/local/libexec/docker/cli-plugins/docker-compose", "/usr/lib/docker/cli-plugins/docker-compose", libexec}; !slices.Equal(HostPluginDirs, want) {
+		t.Fatalf("HostPluginDirs = %v, want the Docker CLI's order %v", HostPluginDirs, want)
+	}
+}
+
 func TestPullPolicyCommandLineAndParsing(t *testing.T) {
 	r := &recRunner{out: func(Command) (Result, error) {
 		return Result{Stdout: []byte(`{"name":"x","services":{"web":{"image":"web:1","pull_policy":"never","environment":{"SECRET":"s3cret"}}}}`)}, nil

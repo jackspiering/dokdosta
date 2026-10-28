@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Changed
+
+- **The host's compose plugin is searched in the Docker CLI's order**: `/usr/local/lib`, `/usr/local/libexec`, `/usr/lib`,
+  then `/usr/libexec`. A systemd install with a compose in two of these directories now uses the one `docker compose` uses,
+  which may be a different version than before ([docs/upgrading.md](docs/upgrading.md#docker-engine-and-compose),
+  [docs/deployment.md](docs/deployment.md)).
+
 ## [0.3.0] - YYYY-MM-DD
 
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
