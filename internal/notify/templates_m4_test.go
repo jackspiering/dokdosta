@@ -5,8 +5,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	wncompose "github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	wncompose "github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // M4: the messages of the pull rung (plan §3.7, v3.8).
@@ -122,16 +122,16 @@ func TestNoNewerImageIsInTheGivingUpMessage(t *testing.T) {
 // A drift block on a shared tag says which container moved the tag and when, on a line of its own, and the reason line
 // does not carry the same sentence twice.
 func TestDriftBlockNamesWhoMovedTheTag(t *testing.T) {
-	findings := "image: image web:1 now resolves to bbbbbbbbbbbb, but this container was created from aaaaaaaaaaaa: the tag moved (whalenurse moved this tag: nas/other/web/1 pulled it at 2026-10-19T10:30:00Z)"
+	findings := "image: image web:1 now resolves to bbbbbbbbbbbb, but this container was created from aaaaaaaaaaaa: the tag moved (dokdosta moved this tag: nas/other/web/1 pulled it at 2026-10-19T10:30:00Z)"
 	e := ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": findings, "moved_by": "nas/other/web/1", "moved_at": "2026-10-19T10:30:00Z", "moved_ref": "web:1"})
 	m := renderOne(t, e, rctx{})
-	if !strings.Contains(m.Body, "tag moved by whalenurse's pull rung: other/web at 2026-10-19 10:30 UTC") {
+	if !strings.Contains(m.Body, "tag moved by dokdosta's pull rung: other/web at 2026-10-19 10:30 UTC") {
 		t.Fatalf("%s", m.Body)
 	}
-	if strings.Count(m.Body, "whalenurse moved this tag") != 0 {
+	if strings.Count(m.Body, "dokdosta moved this tag") != 0 {
 		t.Fatalf("the guard's sentence is replaced by the line: %s", m.Body)
 	}
-	if !strings.Contains(m.Body, "the tag moved") || !strings.Contains(m.Body, "whalenurse unsuspend stack/web") {
+	if !strings.Contains(m.Body, "the tag moved") || !strings.Contains(m.Body, "dokdosta unsuspend stack/web") {
 		t.Fatalf("%s", m.Body)
 	}
 	if utf8.RuneCountInString(m.Body) > MaxBody {
@@ -161,11 +161,11 @@ func TestUpgradeIsDedupedPerIncident(t *testing.T) {
 // With the real, long image reference of a drift block that names the mover, the unsuspend command is still in the body
 // (found by CI: the hint and the reason had pushed it out). The hint is what gives way.
 func TestDriftBlockWithAMoverKeepsTheUnsuspendCommand(t *testing.T) {
-	ref := "127.0.0.1:32772/whalenurse-test/shared:latest"
-	findings := "image: image " + ref + " now resolves to c42447ac2b0e, but this container was created from dda213a6a6b0: the tag moved (whalenurse moved this tag: itest/whalenurse-test-pull-a-015936/app/1 pulled it at 2026-10-19T07:45:02Z)"
-	e := ev(engine.DriftBlocked, "itest/whalenurse-test-pull-b-3a0f41/api/1", "x", map[string]string{"findings": findings, "moved_by": "itest/whalenurse-test-pull-a-015936/app/1", "moved_at": "2026-10-19T07:45:02Z"})
+	ref := "127.0.0.1:32772/dokdosta-test/shared:latest"
+	findings := "image: image " + ref + " now resolves to c42447ac2b0e, but this container was created from dda213a6a6b0: the tag moved (dokdosta moved this tag: itest/dokdosta-test-pull-a-015936/app/1 pulled it at 2026-10-19T07:45:02Z)"
+	e := ev(engine.DriftBlocked, "itest/dokdosta-test-pull-b-3a0f41/api/1", "x", map[string]string{"findings": findings, "moved_by": "itest/dokdosta-test-pull-a-015936/app/1", "moved_at": "2026-10-19T07:45:02Z"})
 	m := renderOne(t, e, rctx{})
-	if !strings.Contains(m.Body, "whalenurse unsuspend whalenurse-test-pull-b-3a0f41/api") || !strings.Contains(m.Body, "tag moved by whalenurse's pull rung: whalenurse-test-pull-a-015936/app at 2026-10-19 07:45 UTC") {
+	if !strings.Contains(m.Body, "dokdosta unsuspend dokdosta-test-pull-b-3a0f41/api") || !strings.Contains(m.Body, "tag moved by dokdosta's pull rung: dokdosta-test-pull-a-015936/app at 2026-10-19 07:45 UTC") {
 		t.Fatalf("%s", m.Body)
 	}
 	if utf8.RuneCountInString(m.Body) > MaxBody {
@@ -187,7 +187,7 @@ func TestUpgradedDuringRung2HasTheRollbackAndSaysWhoMovedTheTag(t *testing.T) {
 		}
 	}
 	if strings.Contains(m.Body, "every stack that shares this tag") {
-		t.Errorf("whalenurse did not move this tag:\n%s", m.Body)
+		t.Errorf("dokdosta did not move this tag:\n%s", m.Body)
 	}
 	// Said once per incident, like the other.
 	e := ev(engine.Upgraded, webKey, "x", a)
@@ -244,7 +244,7 @@ func TestRollbackLinesAreSentByteForByte(t *testing.T) {
 func worstCaseUpgrade(t *testing.T) engine.Event {
 	t.Helper()
 	p := wncompose.Project{
-		Name: "whalenurse-" + strings.Repeat("p", 29), WorkingDir: "/srv/docker/stacks/" + strings.Repeat("d", 41),
+		Name: "dokdosta-" + strings.Repeat("p", 29), WorkingDir: "/srv/docker/stacks/" + strings.Repeat("d", 41),
 		ConfigFiles: []string{"/srv/docker/stacks/" + strings.Repeat("d", 41) + "/" + strings.Repeat("c", 30) + ".yaml"}, Service: strings.Repeat("s", 30),
 	}
 	ref := "registry.example.com:5000/" + strings.Repeat("r", 53)
@@ -271,7 +271,7 @@ func TestUpgradedThatFailedSaysTheRecreateFailedNotThePull(t *testing.T) {
 	}
 }
 
-// The rollback does not last while whalenurse.heal.pull stays on: the next heal reaches the pull again (plan v3.13 item 8).
+// The rollback does not last while dokdosta.heal.pull stays on: the next heal reaches the pull again (plan v3.13 item 8).
 // The message says so on one detail line right before the pinned commands, and that line is the first to be cut.
 func TestUpgradeMessageSaysTheRollbackDoesNotLast(t *testing.T) {
 	for _, typ := range []engine.EventType{engine.TagMoved, engine.Upgraded} {

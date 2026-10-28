@@ -40,7 +40,7 @@ func TestEveryVariableAndLabelIsDocumented(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	vars := uniq(regexp.MustCompile(`(?:take|dur)\("(WHALENURSE_[A-Z_]+)"`), string(code))
+	vars := uniq(regexp.MustCompile(`(?:take|dur)\("(DOKDOSTA_[A-Z_]+)"`), string(code))
 	if len(vars) < 25 {
 		t.Fatalf("found only %d variables in config.go: %v (did the parser move?)", len(vars), vars)
 	}
@@ -55,7 +55,7 @@ func TestEveryVariableAndLabelIsDocumented(t *testing.T) {
 	for _, v := range vars {
 		known[v] = true
 	}
-	for _, v := range uniq(regexp.MustCompile("(?m)^\\| `(WHALENURSE_[A-Z_]+)` \\|"), doc) {
+	for _, v := range uniq(regexp.MustCompile("(?m)^\\| `(DOKDOSTA_[A-Z_]+)` \\|"), doc) {
 		if !known[v] {
 			t.Errorf("docs/configuration.md documents %s, which config.go does not read", v)
 		}
@@ -65,7 +65,7 @@ func TestEveryVariableAndLabelIsDocumented(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys := uniq(regexp.MustCompile(`Label[A-Za-z]+\s*=\s*"(whalenurse\.[a-z.-]+)"`), string(labels))
+	keys := uniq(regexp.MustCompile(`Label[A-Za-z]+\s*=\s*"(dokdosta\.[a-z.-]+)"`), string(labels))
 	if len(keys) != 6 {
 		t.Fatalf("found %d labels in labels.go: %v", len(keys), keys)
 	}
@@ -75,7 +75,7 @@ func TestEveryVariableAndLabelIsDocumented(t *testing.T) {
 			t.Errorf("docs/labels.md does not document %s", k)
 		}
 	}
-	for _, k := range uniq(regexp.MustCompile("(?m)^\\| `(whalenurse\\.[a-z.-]+)` \\|"), ldoc) {
+	for _, k := range uniq(regexp.MustCompile("(?m)^\\| `(dokdosta\\.[a-z.-]+)` \\|"), ldoc) {
 		found := false
 		for _, c := range keys {
 			found = found || c == k

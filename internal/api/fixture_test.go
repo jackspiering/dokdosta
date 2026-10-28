@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
@@ -16,7 +16,7 @@ var update = flag.Bool("update", false, "rewrite the golden files")
 var t0 = time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC)
 
 // fixtureSource is a hand-made host: a healthy container, a SUSPENDED parent with a sidecar, a paused one, and one
-// that whalenurse does not watch (with labels that must never come out).
+// that dokdosta does not watch (with labels that must never come out).
 type fixtureSource struct{}
 
 func (fixtureSource) Status() StatusDoc {
@@ -38,7 +38,7 @@ func (fixtureSource) Status() StatusDoc {
 }
 
 func (fixtureSource) Containers() []ContainerDoc {
-	compose := map[string]string{"com.docker.compose.project": "media", "com.docker.compose.service": "vpn", "whalenurse.enable": "true"}
+	compose := map[string]string{"com.docker.compose.project": "media", "com.docker.compose.service": "vpn", "dokdosta.enable": "true"}
 	return []ContainerDoc{
 		{
 			Host: "nas", Key: "nas/media/jellyfin/1", Name: "media-jellyfin-1", ID: "aaaaaaaaaaaa", Project: "media", Service: "jellyfin", Number: "1",

@@ -9,7 +9,7 @@
 #
 # Inspect mode:
 #   - removes Config.Env
-#   - replaces label values except com.docker.compose.* and whalenurse.*
+#   - replaces label values except com.docker.compose.* and dokdosta.*
 #   - replaces hostnames, IPs (except 0.0.0.0 and 127.0.0.1, which error strings need), MACs
 #     and host mount sources with placeholders
 #   Beyond §3.3 (conservative, because a raw capture can hold secrets):
@@ -20,7 +20,7 @@
 #   Container IDs are kept, so NetworkMode "container:<id>" still matches the
 #   parent's Id.
 # Events mode: keeps Type, Action, Actor.ID, scope and a whitelist of attributes
-#   (name, image, exitCode, signal, ...) plus compose/whalenurse labels (all other
+#   (name, image, exitCode, signal, ...) plus compose/dokdosta labels (all other
 #   attributes are dropped, keys included), and
 #   rebases time/timeNano to start at 0.
 set -euo pipefail
@@ -40,7 +40,7 @@ def fix_compose_label($p; $k):
   elif ($k == "com.docker.compose.project.config_files" or $k == "com.docker.compose.project.environment_file")
     then (split(",") | map(stackpath($p) + "/" + (split("/") | last)) | join(","))
   else . end;
-def keep_label: test("^(com\\.docker\\.compose\\.|whalenurse\\.)");
+def keep_label: test("^(com\\.docker\\.compose\\.|dokdosta\\.)");
 '
 
 # shellcheck disable=SC2016
@@ -169,7 +169,7 @@ self_test() {
                         "com.docker.compose.project.working_dir": "/home/alice/stacks/web",
                         "com.docker.compose.project.config_files": "/home/alice/stacks/web/compose.yaml,/home/alice/stacks/web/override.yaml",
                         "com.docker.compose.project.environment_file": "/home/alice/stacks/web/.env",
-                        "whalenurse.enable": "true",
+                        "dokdosta.enable": "true",
                         "traefik.http.routers.x.rule": "Host(`alice.example.com`)",
                         "org.opencontainers.image.source": "https://github.com/alice/private"}},
   "NetworkSettings": {"IPAddress": "172.18.0.5", "Gateway": "172.18.0.1", "MacAddress": "02:42:ac:12:00:05",
@@ -190,7 +190,7 @@ JSON
   check "$out" || fail "check flags the scrubbed inspect output"
   ! check "$tmp/inspect.json" 2>/dev/null || fail "check passed on the raw sample"
   jq -e '.[0].Config.Env == null' "$out" >/dev/null || fail "Env not removed"
-  jq -e '.[0].Config.Labels["com.docker.compose.service"] == "app" and .[0].Config.Labels["whalenurse.enable"] == "true"' "$out" >/dev/null || fail "compose/whalenurse labels not kept"
+  jq -e '.[0].Config.Labels["com.docker.compose.service"] == "app" and .[0].Config.Labels["dokdosta.enable"] == "true"' "$out" >/dev/null || fail "compose/dokdosta labels not kept"
   jq -e '.[0].Config.Labels["traefik.http.routers.x.rule"] == "<scrubbed>" and .[0].Config.Labels["org.opencontainers.image.source"] == "<scrubbed>"' "$out" >/dev/null || fail "other labels not replaced"
   jq -e '.[0].Config.Labels["com.docker.compose.project.config_files"] == "/srv/stacks/web/compose.yaml,/srv/stacks/web/override.yaml"' "$out" >/dev/null || fail "config_files not rewritten"
   jq -e '.[0].HostConfig.NetworkMode | startswith("container:fedcba98")' "$out" >/dev/null || fail "container: reference not preserved"

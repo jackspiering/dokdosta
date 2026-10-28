@@ -7,12 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/api"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 const host = "h"
@@ -801,7 +801,7 @@ func TestEventStreamReconnectsWithSince(t *testing.T) {
 	}
 }
 
-// A daemon that refuses every subscription is down, however often whalenurse
+// A daemon that refuses every subscription is down, however often dokdosta
 // retries: a failed retry must not count as the stream coming back.
 func TestHealthyReportsAStreamThatFailsOnEveryRetry(t *testing.T) {
 	h := newHarness(t, nil, nil)

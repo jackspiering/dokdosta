@@ -5,7 +5,7 @@ import (
 	"net/http"
 )
 
-// Checker reports whether whalenurse is working.
+// Checker reports whether dokdosta is working.
 type Checker interface {
 	Healthy() (ok bool, detail string)
 }

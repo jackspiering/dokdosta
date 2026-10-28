@@ -28,10 +28,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // Suspension reasons.
@@ -194,7 +194,7 @@ func (e *Engine) state(key string) *keyState {
 
 // AttrIncident is the attribute that says which incident of the key an event belongs to: the time it opened. A
 // subscriber that must say something once per incident (notify) keys on it, because an incident survives a restart of
-// whalenurse and its events then arrive without the IncidentOpened.
+// dokdosta and its events then arrive without the IncidentOpened.
 const AttrIncident = "incident"
 
 func (e *Engine) emit(t Target, typ EventType, msg string, attrs map[string]string) {
@@ -498,7 +498,7 @@ func (e *Engine) ObserveDockerEvent(t Target, ev docker.Event) (attributed bool)
 	e.prune(st)
 	for _, w := range st.windows {
 		if !at.Before(w.start) && (w.end.IsZero() || !at.After(w.end)) {
-			e.emit(t, EventAttributed, "docker event during a whalenurse action", map[string]string{"action": ev.Action})
+			e.emit(t, EventAttributed, "docker event during a dokdosta action", map[string]string{"action": ev.Action})
 			return true
 		}
 	}
@@ -537,7 +537,7 @@ func (e *Engine) ObserveDockerEvent(t Target, ev docker.Event) (attributed bool)
 	// marker is left for it to follow.
 	switch ev.Action {
 	case "create":
-		e.reset(t, st, "container was recreated outside whalenurse")
+		e.reset(t, st, "container was recreated outside dokdosta")
 	case "start":
 		switch {
 		case restoring:
@@ -554,7 +554,7 @@ func (e *Engine) reset(t Target, st *keyState, why string) {
 	if st.incident != nil && st.incident.suspended {
 		e.emit(t, Unsuspended, why, map[string]string{"reason": why})
 		e.closeIncident(t, st, "unsuspended")
-	} else if st.incident != nil && why == "container was recreated outside whalenurse" {
+	} else if st.incident != nil && why == "container was recreated outside dokdosta" {
 		e.emit(t, IncidentClosed, why, map[string]string{"reason": "recreated"})
 		e.closeIncident(t, st, "recreated")
 	}
@@ -813,7 +813,7 @@ func (e *Engine) heal(t Target, st *keyState, d rules.Decision, cfg config.Conta
 			}
 			return Plan{Act: act, Rung: r}
 		default:
-			e.emit(t, RungUnavailable, fmt.Sprintf("rung %q is not a rung whalenurse knows; skipped", r), map[string]string{"rung": r})
+			e.emit(t, RungUnavailable, fmt.Sprintf("rung %q is not a rung dokdosta knows; skipped", r), map[string]string{"rung": r})
 			inc.rung++
 			st.dirty = true
 		}
@@ -835,7 +835,7 @@ func (e *Engine) Blocked(t Target, d rules.Decision, findings []string) bool {
 }
 
 // BlockedWith is Blocked with extra attributes on the DriftBlocked event: when the tag that moved was moved by
-// whalenurse's own pull rung, the daemon says which container did it and when (plan §3.6, §3.7).
+// dokdosta's own pull rung, the daemon says which container did it and when (plan §3.6, §3.7).
 func (e *Engine) BlockedWith(t Target, d rules.Decision, findings []string, extra map[string]string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -856,12 +856,12 @@ func (e *Engine) BlockedWith(t Target, d rules.Decision, findings []string, extr
 	return true
 }
 
-// Warned records that WHALENURSE_DRIFT_GUARD=warn let a recreate through despite the findings.
+// Warned records that DOKDOSTA_DRIFT_GUARD=warn let a recreate through despite the findings.
 func (e *Engine) Warned(t Target, findings []string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	cause := strings.Join(findings, "; ")
-	e.emit(t, DriftWarned, "recreating despite the drift guard (WHALENURSE_DRIFT_GUARD=warn): "+cause, map[string]string{"findings": cause})
+	e.emit(t, DriftWarned, "recreating despite the drift guard (DOKDOSTA_DRIFT_GUARD=warn): "+cause, map[string]string{"findings": cause})
 }
 
 // Note publishes an event the daemon observed (the version gate, a post-check) so it reaches the same stream as the
@@ -937,7 +937,7 @@ func (e *Engine) End(t Target, plan Plan, res Result, cfg config.Container) (rec
 	return inc.cooldownUntil
 }
 
-// Interrupt closes the window of an action that whalenurse's own stop cut short (the action outlived the shutdown grace,
+// Interrupt closes the window of an action that dokdosta's own stop cut short (the action outlived the shutdown grace,
 // or the pull, which a stop does not wait for). It is not a result: the rung is not consumed and no failure is reported,
 // so the next run plans the same rung again. The rate-limit slot Begin took stays spent: the action may have changed
 // something before it was stopped.
@@ -951,7 +951,7 @@ func (e *Engine) Interrupt(t Target, plan Plan, err error) {
 			st.windows[i].end = now.Add(e.p.InflightTail)
 		}
 	}
-	msg := string(plan.Act) + " interrupted: whalenurse is stopping; the rung runs again after the restart"
+	msg := string(plan.Act) + " interrupted: dokdosta is stopping; the rung runs again after the restart"
 	if err != nil {
 		msg += " (" + err.Error() + ")"
 	}
@@ -1219,7 +1219,7 @@ type KeyStatus struct {
 	LoopIncreases int       `json:"loop_increases,omitempty"`
 }
 
-// Status is the engine's part of `whalenurse status`.
+// Status is the engine's part of `dokdosta status`.
 type Status struct {
 	Keys         []KeyStatus `json:"keys"`
 	Pauses       []Pause     `json:"pauses"`

@@ -33,6 +33,7 @@ go.work.sum
 # .vscode/
 
 # Build output
+/dokdosta
 /whalenurse
 /dist/
 

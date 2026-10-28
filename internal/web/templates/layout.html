@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <meta name="referrer" content="no-referrer">
-<title>{{.Title}} · whalenurse · {{.Host}}</title>
+<title>{{.Title}} · dokdosta · {{.Host}}</title>
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/app.js" defer></script>
 </head>
 <body>
 <header class="top">
   <div class="top-inner">
-    <a class="brand" href="/">whalenurse <span class="host">{{.Host}}</span></a>
+    <a class="brand" href="/">dokdosta <span class="host">{{.Host}}</span></a>
     <nav aria-label="Pages">
       <a href="/"{{if eq .Page "overview"}} aria-current="page"{{end}}>Overview</a>
       <a href="/containers"{{if eq .Page "containers"}} aria-current="page"{{end}}>Containers</a>
@@ -21,14 +21,14 @@
     <span id="live" class="live" title="The page refreshes when something happens, and every 15 seconds.">live</span>
   </div>
   <div id="banners">
-  {{if .Status.DryRun}}<div class="banner banner-dry" role="status"><strong>Dry run.</strong> whalenurse logs what it would do and changes nothing. Notifications are sent and marked [dry-run]. History is kept in memory only.</div>{{end}}
-  {{if not .Status.Healthy}}<div class="banner banner-bad" role="alert"><strong>whalenurse is not healthy:</strong> {{.Status.HealthDetail}}</div>{{end}}
+  {{if .Status.DryRun}}<div class="banner banner-dry" role="status"><strong>Dry run.</strong> dokdosta logs what it would do and changes nothing. Notifications are sent and marked [dry-run]. History is kept in memory only.</div>{{end}}
+  {{if not .Status.Healthy}}<div class="banner banner-bad" role="alert"><strong>dokdosta is not healthy:</strong> {{.Status.HealthDetail}}</div>{{end}}
   {{if not .Status.VersionGate.RecreateEnabled}}<div class="banner banner-warn" role="status"><strong>Recreate and pull rungs are off:</strong> {{.Status.VersionGate.Reason}}. The ladder ends with a notification and SUSPENDED after the restart.</div>{{end}}
   </div>
 </header>
 <main id="content">
 {{template "body" .}}
 </main>
-<footer class="foot">whalenurse {{.Status.Version}} · read-only dashboard · times are UTC · <a href="/api/v1/status">API</a></footer>
+<footer class="foot">dokdosta {{.Status.Version}} · read-only dashboard · times are UTC · <a href="/api/v1/status">API</a></footer>
 </body>
 </html>{{end}}

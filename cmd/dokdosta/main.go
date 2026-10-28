@@ -1,4 +1,4 @@
-// Command whalenurse is a compose-aware self-healer for Docker hosts.
+// Command dokdosta is a compose-aware self-healer for Docker hosts.
 //
 // `run` heals opted-in containers; `pause`, `resume`, `unsuspend` and `status`
 // talk to the running daemon over its unix control socket; `healthcheck` is the
@@ -24,17 +24,17 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/control"
-	"github.com/jackspiering/whalenurse/internal/daemon"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
-	"github.com/jackspiering/whalenurse/internal/store"
-	"github.com/jackspiering/whalenurse/internal/web"
+	"github.com/jackspiering/dokdosta/internal/api"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/control"
+	"github.com/jackspiering/dokdosta/internal/daemon"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/store"
+	"github.com/jackspiering/dokdosta/internal/web"
 )
 
 // version is set with -ldflags "-X main.version=...".
@@ -55,11 +55,11 @@ func main() {
 	case "notify":
 		err = notifyCmd(args)
 	case "version":
-		fmt.Println("whalenurse", buildVersion())
+		fmt.Println("dokdosta", buildVersion())
 	case "help":
 		usage()
 	default:
-		fmt.Fprintf(os.Stderr, "whalenurse: unknown command %q\n\n", cmd)
+		fmt.Fprintf(os.Stderr, "dokdosta: unknown command %q\n\n", cmd)
 		usage()
 		os.Exit(2)
 	}
@@ -67,13 +67,13 @@ func main() {
 		return // the flag set has printed its own usage
 	}
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "whalenurse:", err)
+		fmt.Fprintln(os.Stderr, "dokdosta:", err)
 		os.Exit(1)
 	}
 }
 
 // command splits the arguments into the command and its own arguments. The command is the first argument unless that
-// is a flag (`whalenurse --dry-run` is `run --dry-run`); -h, -help and --help there ask for the usage.
+// is a flag (`dokdosta --dry-run` is `run --dry-run`); -h, -help and --help there ask for the usage.
 func command(args []string) (string, []string) {
 	if len(args) == 0 {
 		return "run", nil
@@ -88,25 +88,25 @@ func command(args []string) (string, []string) {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `usage: whalenurse [run] [--dry-run]
-       whalenurse pause <project>[/<service>] [--for 2h]
-       whalenurse resume <project>[/<service>]
-       whalenurse unsuspend <project>[/<service>]
-       whalenurse status [--json]
-       whalenurse notify test
-       whalenurse healthcheck
-       whalenurse version
+	fmt.Fprint(os.Stderr, `usage: dokdosta [run] [--dry-run]
+       dokdosta pause <project>[/<service>] [--for 2h]
+       dokdosta resume <project>[/<service>]
+       dokdosta unsuspend <project>[/<service>]
+       dokdosta status [--json]
+       dokdosta notify test
+       dokdosta healthcheck
+       dokdosta version
 
 run          watch Docker and heal opted-in containers (the default command)
 pause        stop all actions for a project or service; --for takes 30m, 2h, 1d ... (default 2h; 0 = until resume)
 resume       lift a pause
 unsuspend    lift SUSPENDED so the ladder may run again
 status       show incidents, SUSPENDED and PAUSED containers, flap counts and the rate-limit budget
-notify test  send one test message to every WHALENURSE_NOTIFY_URLS URL and report each (needs no running daemon)
+notify test  send one test message to every DOKDOSTA_NOTIFY_URLS URL and report each (needs no running daemon)
 healthcheck  exit 0 if the running daemon reports healthy (for the image HEALTHCHECK)
 
 pause, resume, unsuspend and status talk to the running daemon over its control socket
-(WHALENURSE_CONTROL_SOCKET, default /run/whalenurse.sock): run them with docker exec.
+(DOKDOSTA_CONTROL_SOCKET, default /run/dokdosta.sock): run them with docker exec.
 `)
 }
 
@@ -123,7 +123,7 @@ func buildVersion() string {
 // parseRunFlags reads the flags of `run`.
 func parseRunFlags(args []string) (dry bool, err error) {
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	d := fs.Bool("dry-run", false, "log decisions only; change nothing (same as WHALENURSE_DRY_RUN=true)")
+	d := fs.Bool("dry-run", false, "log decisions only; change nothing (same as DOKDOSTA_DRY_RUN=true)")
 	if err := fs.Parse(args); err != nil {
 		return false, err
 	}
@@ -151,7 +151,7 @@ func runCmd(args []string) error {
 	// lock stops a second live run as well, but a dry run opens no store.
 	if cfg.ControlSocket != "" {
 		if err := control.CheckFree(cfg.ControlSocket); err != nil {
-			return fmt.Errorf("%w: a whalenurse is already running here; give a second one its own WHALENURSE_CONTROL_SOCKET (and, for a live run, its own WHALENURSE_DATA_DIR)", err)
+			return fmt.Errorf("%w: a dokdosta is already running here; give a second one its own DOKDOSTA_CONTROL_SOCKET (and, for a live run, its own DOKDOSTA_DATA_DIR)", err)
 		}
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
@@ -184,7 +184,7 @@ func runCmd(args []string) error {
 	selfID := ownContainerID()
 	if selfID != "" {
 		if me, err := cli.Inspect(ctx, selfID); err == nil && docker.ContainerRef(me.NetworkMode) != "" {
-			log.Warn("whalenurse runs with network_mode container:<id>; it would become a dependent of a container it may heal. Do not do this.", "network_mode", me.NetworkMode)
+			log.Warn("dokdosta runs with network_mode container:<id>; it would become a dependent of a container it may heal. Do not do this.", "network_mode", me.NetworkMode)
 		}
 		log.Info("running in a container", "self", docker.ShortID(selfID))
 	}
@@ -198,7 +198,7 @@ func runCmd(args []string) error {
 	bus := &engine.Bus{}
 	bus.Subscribe(daemon.LogSink(log, red))
 
-	// State lives in SQLite under WHALENURSE_DATA_DIR. A dry run stores nothing: its
+	// State lives in SQLite under DOKDOSTA_DATA_DIR. A dry run stores nothing: its
 	// incidents and SUSPENDED states are not real, and must not be there for the next
 	// real run to find.
 	opts := daemon.Options{Config: cfg, Reader: cli, Clock: clock.Real{}, Bus: bus, Log: log, SelfID: selfID, Version: buildVersion()}
@@ -269,7 +269,7 @@ func runCmd(args []string) error {
 			if err := control.Serve(ctx, cfg.ControlSocket, sockHandler); err != nil {
 				msg := "control socket unavailable; the image healthcheck will fail"
 				if errors.Is(err, control.ErrInUse) {
-					msg = "control socket in use by another whalenurse; this one has none (the CLI reaches the other)"
+					msg = "control socket in use by another dokdosta; this one has none (the CLI reaches the other)"
 				}
 				log.Error(msg, "path", cfg.ControlSocket, "error", err.Error())
 			}
@@ -306,12 +306,12 @@ func runCmd(args []string) error {
 }
 
 // hostIDWarning is the startup warning for a host ID that is the own container's ID: the default (the hostname) in a
-// container without WHALENURSE_HOST_ID or hostname:, which changes whenever whalenurse is recreated.
+// container without DOKDOSTA_HOST_ID or hostname:, which changes whenever dokdosta is recreated.
 func hostIDWarning(hostID, selfID string) string {
 	if selfID == "" || hostID != docker.ShortID(selfID) {
 		return ""
 	}
-	return "the host ID is this container's ID (its hostname, the default without WHALENURSE_HOST_ID), which changes whenever whalenurse is recreated: the state is carried over at startup, but keys, notifications and the API name another host after every upgrade. Set WHALENURSE_HOST_ID"
+	return "the host ID is this container's ID (its hostname, the default without DOKDOSTA_HOST_ID), which changes whenever dokdosta is recreated: the state is carried over at startup, but keys, notifications and the API name another host after every upgrade. Set DOKDOSTA_HOST_ID"
 }
 
 // openStore opens the state store, re-keys what it holds to the current host ID (plan v3.13 item 12: in a container the
@@ -322,7 +322,7 @@ func openStore(cfg config.Global, log *slog.Logger, now time.Time) (*store.Store
 		if errors.Is(err, store.ErrLocked) {
 			return nil, engine.Snapshot{}, err
 		}
-		return nil, engine.Snapshot{}, fmt.Errorf("cannot open the state store in %s (is WHALENURSE_DATA_DIR a writable volume?): %w", cfg.DataDir, err)
+		return nil, engine.Snapshot{}, fmt.Errorf("cannot open the state store in %s (is DOKDOSTA_DATA_DIR a writable volume?): %w", cfg.DataDir, err)
 	}
 	n, err := st.Rekey(cfg.HostID, store.RekeyMeta{Keyed: daemon.MetaKeyed, WithKey: daemon.MetaWithKey})
 	if err != nil {
@@ -360,7 +360,7 @@ func setupNotify(cfg config.Global, log *slog.Logger, bus *engine.Bus, ledger no
 	})
 	bus.Subscribe(nt.Handle)
 	if len(cfg.NotifyURLs) == 0 {
-		log.Info("notifications are off: WHALENURSE_NOTIFY_URLS is not set")
+		log.Info("notifications are off: DOKDOSTA_NOTIFY_URLS is not set")
 	} else {
 		log.Info("notifications", "urls", len(cfg.NotifyURLs), "per_url_limit_per_hour", cfg.NotifyRateLimit, "dry_run_marked", cfg.DryRun)
 	}
@@ -373,7 +373,7 @@ func newRedactor(cfg config.Global, secrets []string) *notify.Redactor {
 	return notify.NewRedactorWith(secrets, append(append([]string{}, cfg.NotifyURLs...), cfg.PingURL, cfg.HTTPToken)...)
 }
 
-// composeFor finds the compose binary (plan §3.4: WHALENURSE_COMPOSE_BIN, then the host plugin mounted read-only, then
+// composeFor finds the compose binary (plan §3.4: DOKDOSTA_COMPOSE_BIN, then the host plugin mounted read-only, then
 // the bundled copy) and builds the compose Reader and Actor. With none, rungs 2 and 3 are disabled by the version gate
 // and the note says why. In dry-run mode the Actor is a no-op; the Reader still runs the drift guard, which only reads.
 // The commands get an empty directory of their own as DOCKER_CONFIG, next to the control socket (writable in both
@@ -445,7 +445,7 @@ func ownContainerID() string {
 	return docker.SelfID(f)
 }
 
-// pruneLoop applies WHALENURSE_HISTORY_RETENTION once an hour.
+// pruneLoop applies DOKDOSTA_HISTORY_RETENTION once an hour.
 func pruneLoop(ctx context.Context, st *store.Store, cfg config.Global, log *slog.Logger) {
 	prune := func() {
 		if n, err := st.Prune(time.Now(), cfg.HistoryRetention, cfg.FlapWindow); err != nil {
@@ -506,7 +506,7 @@ func scopeCmd(name string, args []string) error {
 		return err
 	}
 	if len(pos) != 1 {
-		return fmt.Errorf("usage: whalenurse %s <project>[/<service>]%s", name, map[bool]string{true: " [--for 2h]", false: ""}[name == "pause"])
+		return fmt.Errorf("usage: dokdosta %s <project>[/<service>]%s", name, map[bool]string{true: " [--for 2h]", false: ""}[name == "pause"])
 	}
 	sock, err := socketPath()
 	if err != nil {
@@ -540,7 +540,7 @@ func statusCmd(args []string) error {
 	defer cancel()
 	code, body, err := control.Do(ctx, sock, "GET", "/v1/status", nil)
 	if err != nil {
-		return fmt.Errorf("cannot reach the whalenurse daemon on %s (is it running, and are you in the same container?): %w", sock, err)
+		return fmt.Errorf("cannot reach the dokdosta daemon on %s (is it running, and are you in the same container?): %w", sock, err)
 	}
 	if code != 200 {
 		return fmt.Errorf("status: HTTP %d: %.200s", code, body)
@@ -557,11 +557,11 @@ func statusCmd(args []string) error {
 	return nil
 }
 
-// notifyCmd is `whalenurse notify test`: one message to every URL, one line per URL. It reads the environment like the
+// notifyCmd is `dokdosta notify test`: one message to every URL, one line per URL. It reads the environment like the
 // daemon does (so `docker exec` sees the container's), needs no daemon, and prints URLs by position and scheme only.
 func notifyCmd(args []string) error {
 	if len(args) != 1 || args[0] != "test" {
-		return errors.New("usage: whalenurse notify test")
+		return errors.New("usage: dokdosta notify test")
 	}
 	cfg, _, err := config.FromEnv(os.Environ())
 	if err != nil {
@@ -575,7 +575,7 @@ func notifyCmd(args []string) error {
 // runNotifyTest sends the test message to every URL of cfg and prints one line per URL.
 func runNotifyTest(ctx context.Context, w io.Writer, cfg config.Global) error {
 	if len(cfg.NotifyURLs) == 0 {
-		return errors.New("WHALENURSE_NOTIFY_URLS is not set: there is nothing to test")
+		return errors.New("DOKDOSTA_NOTIFY_URLS is not set: there is nothing to test")
 	}
 	red := notify.NewRedactor(cfg.NotifyURLs...)
 	targets := notify.NewTargets(cfg.NotifyURLs, red, cfg.NotifyTimeout)
@@ -593,7 +593,7 @@ func runNotifyTest(ctx context.Context, w io.Writer, cfg config.Global) error {
 	return nil
 }
 
-// regAuth is the checked WHALENURSE_REGISTRY_AUTH_DIR; the zero value (nil) is "off".
+// regAuth is the checked DOKDOSTA_REGISTRY_AUTH_DIR; the zero value (nil) is "off".
 type regAuth struct{ a *compose.RegistryAuth }
 
 func (r regAuth) secrets() []string {
@@ -610,17 +610,17 @@ func (r regAuth) hosts() []string {
 	return r.a.Hosts
 }
 
-// loadRegistryAuth checks WHALENURSE_REGISTRY_AUTH_DIR (plan v3.12 item 4). No message quotes the file's values.
+// loadRegistryAuth checks DOKDOSTA_REGISTRY_AUTH_DIR (plan v3.12 item 4). No message quotes the file's values.
 func loadRegistryAuth(cfg config.Global, log *slog.Logger) (regAuth, error) {
 	if cfg.RegistryAuthDir == "" {
 		return regAuth{}, nil
 	}
 	a, err := compose.LoadRegistryAuth(cfg.RegistryAuthDir)
 	if err != nil {
-		return regAuth{}, fmt.Errorf("WHALENURSE_REGISTRY_AUTH_DIR: %w", err)
+		return regAuth{}, fmt.Errorf("DOKDOSTA_REGISTRY_AUTH_DIR: %w", err)
 	}
 	for _, w := range a.Warnings {
-		log.Warn("WHALENURSE_REGISTRY_AUTH_DIR: " + w)
+		log.Warn("DOKDOSTA_REGISTRY_AUTH_DIR: " + w)
 	}
 	log.Info("registry credentials for the pull rung", "registries", strings.Join(a.Hosts, ", "))
 	return regAuth{a}, nil
@@ -768,16 +768,16 @@ func httpWarnings(cfg config.Global) []string {
 	host, _, err := net.SplitHostPort(cfg.HTTPAddr)
 	loopback := err == nil && (host == "localhost" || (net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback()))
 	if cfg.HTTPToken == "" && !loopback {
-		w = append(w, "the dashboard listens on "+cfg.HTTPAddr+" without WHALENURSE_HTTP_TOKEN: anyone who can reach the port can read container names, states and the event history. Set a token, or publish the port on 127.0.0.1 or behind a reverse proxy or Tailscale (never network_mode)")
+		w = append(w, "the dashboard listens on "+cfg.HTTPAddr+" without DOKDOSTA_HTTP_TOKEN: anyone who can reach the port can read container names, states and the event history. Set a token, or publish the port on 127.0.0.1 or behind a reverse proxy or Tailscale (never network_mode)")
 	}
 	if cfg.HTTPToken != "" && len(cfg.HTTPAllowedHosts) > 0 {
-		w = append(w, "WHALENURSE_HTTP_ALLOWED_HOSTS is ignored while WHALENURSE_HTTP_TOKEN is set")
+		w = append(w, "DOKDOSTA_HTTP_ALLOWED_HOSTS is ignored while DOKDOSTA_HTTP_TOKEN is set")
 	}
 	if cfg.HTTPToken == "" && len(cfg.HTTPTrustedProxies) > 0 {
-		w = append(w, "WHALENURSE_HTTP_TRUSTED_PROXIES is ignored without WHALENURSE_HTTP_TOKEN (it only changes the wrong-token limit)")
+		w = append(w, "DOKDOSTA_HTTP_TRUSTED_PROXIES is ignored without DOKDOSTA_HTTP_TOKEN (it only changes the wrong-token limit)")
 	}
 	if cfg.HTTPToken != "" && len(cfg.HTTPToken) < 16 {
-		w = append(w, "WHALENURSE_HTTP_TOKEN is shorter than 16 characters; use a long random token")
+		w = append(w, "DOKDOSTA_HTTP_TOKEN is shorter than 16 characters; use a long random token")
 	}
 	return w
 }

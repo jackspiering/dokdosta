@@ -1,5 +1,7 @@
 # Dashboard screenshots (M5)
 
+> whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
+
 Retaken on 19 Oct 2026 (after the last review fixes; `detail-sidecar-*` is from the round before, it shows none of the changed texts) from the branch `t3/m5-dashboard`, against a real demo stack (compose project `whalenurse-test-demo`, busybox containers only) managed by a real `whalenurse run` with the dashboard on `127.0.0.1` behind a token. Headless Chromium through Playwright, full page, device scale 1, HTTP Basic with the token as the password (the way a browser sends it). The host is called `demo-nas`; the paths are the demo stack's. Nothing here is personal data. Each image exists as `-light` and `-dark` (`prefers-color-scheme`), at `desktop` (1440×900 viewport) and `phone` (390×844, touch, mobile); the three pages that matter most (`overview`, `containers`, `detail-upgraded`) also at `tablet` (768×1024), because the tables turn into cards up to 900 px.
 
 The demo state, as the pages show it (names are `whalenurse-test-demo-<service>-1`):

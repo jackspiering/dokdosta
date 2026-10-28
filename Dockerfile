@@ -6,7 +6,7 @@ RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
 ARG VERSION=dev
-RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/whalenurse ./cmd/whalenurse
+RUN go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/dokdosta ./cmd/dokdosta
 
 # The bundled docker compose plugin: the fallback when the host's plugin is not mounted (plan section 3.4). It is a static
 # binary and runs standalone. The checksums are those of the release assets; to bundle another release, pass all three.
@@ -33,11 +33,11 @@ RUN mkdir -p /out/data
 # To recreate, mount the host's compose plugin read-only at /host/docker-compose (used first) and the stacks root
 # read-only at the identical host path; without the plugin the bundled copy above is used.
 FROM gcr.io/distroless/static:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
-COPY --from=build /out/whalenurse /whalenurse
-COPY --from=build --chmod=0755 /out/docker-compose /usr/libexec/whalenurse/docker-compose
+COPY --from=build /out/dokdosta /dokdosta
+COPY --from=build --chmod=0755 /out/docker-compose /usr/libexec/dokdosta/docker-compose
 COPY --from=build --chown=65532:65532 /out/data /data
 VOLUME ["/data"]
 USER 65532:65532
-HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD ["/whalenurse", "healthcheck"]
-ENTRYPOINT ["/whalenurse"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD ["/dokdosta", "healthcheck"]
+ENTRYPOINT ["/dokdosta"]
 CMD ["run"]

@@ -6,7 +6,7 @@
 # every candidate comparator next to the `com.docker.compose.image` label that compose recorded:
 #   a comparator is USABLE if it equals the label before the re-tag and differs from it after.
 # It also records what `compose --dry-run --progress json up` says (the oracle): no `Recreate` before, `Recreate` after.
-# Exit 0 only if at least one comparator is usable and the oracle behaves. Project: whalenurse-m0-b-imgdrift (guarded).
+# Exit 0 only if at least one comparator is usable and the oracle behaves. Project: dokdosta-m0-b-imgdrift (guarded).
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=lib.sh
@@ -21,7 +21,7 @@ while (($#)); do
 done
 m0b_need jq docker
 m0_sanitize_env
-P=whalenurse-m0-b-imgdrift
+P=dokdosta-m0-b-imgdrift
 m0b_require_project "$P"
 [[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$P")" ]] || m0_die "project $P already exists; run test/m0/m0b/teardown.sh"
 store="$(docker info --format '{{.Driver}}')"
@@ -33,20 +33,20 @@ mkdir -p "$dir"
 cat >"$dir/compose.yaml" <<'YAML'
 services:
   tagged:
-    image: whalenurse-m0/imgdrift:latest
+    image: dokdosta-m0/imgdrift:latest
     command: ["sh", "-c", "while true; do sleep 1; done"]
     stop_grace_period: 1s
 YAML
 sum="$out/summary.txt"
 : >"$sum"
 say() { printf '%s\n' "$*" | tee -a "$sum"; }
-cleanup() { m0_down "$P"; m0_rmi whalenurse-m0/imgdrift:latest; }
+cleanup() { m0_down "$P"; m0_rmi dokdosta-m0/imgdrift:latest; }
 trap cleanup EXIT
 
 for b in busybox:1.37 alpine:3.22; do docker image inspect "$b" >/dev/null 2>&1 || m0_pull "$b"; done
 arch=$(docker version --format '{{.Server.Arch}}')
-m0_tag busybox:1.37 whalenurse-m0/imgdrift:latest
-ref=whalenurse-m0/imgdrift:latest
+m0_tag busybox:1.37 dokdosta-m0/imgdrift:latest
+ref=dokdosta-m0/imgdrift:latest
 dcs "$P" "$dir" up -d --pull never --no-build >"$out/up.txt" 2>&1 || { cat "$out/up.txt"; m0_die "compose up failed"; }
 c=$(cid "$P" tagged)
 

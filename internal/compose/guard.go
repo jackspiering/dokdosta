@@ -15,7 +15,7 @@ const (
 	CheckUnverified = "unverified" // a check could not run
 )
 
-// Mode is WHALENURSE_DRIFT_GUARD.
+// Mode is DOKDOSTA_DRIFT_GUARD.
 type Mode string
 
 const (
@@ -32,7 +32,7 @@ type Finding struct {
 func (f Finding) String() string { return f.Check + ": " + f.Cause }
 
 // Verified reports whether the finding is real drift that was established (config or image). The others (a check that
-// could not be made, a version skew that makes drift unverifiable) are "can't verify": WHALENURSE_DRIFT_GUARD=warn does
+// could not be made, a version skew that makes drift unverifiable) are "can't verify": DOKDOSTA_DRIFT_GUARD=warn does
 // not override them (plan v3.6).
 func (f Finding) Verified() bool { return f.Check == CheckConfig || f.Check == CheckImage }
 
@@ -243,9 +243,9 @@ func (g Guard) skew(in GuardInput) string {
 		return ""
 	}
 	if in.RefHolder {
-		return fmt.Sprintf("can't verify drift (compose %s on host vs %s in whalenurse): the container was made by another compose release than the bundled one, and its own compose config is not checked", have, b.Version)
+		return fmt.Sprintf("can't verify drift (compose %s on host vs %s in dokdosta): the container was made by another compose release than the bundled one, and its own compose config is not checked", have, b.Version)
 	}
-	return fmt.Sprintf("can't verify drift (compose %s on host vs %s in whalenurse): the container was made by another compose release than the bundled one, and compose sees a change", have, b.Version)
+	return fmt.Sprintf("can't verify drift (compose %s on host vs %s in dokdosta): the container was made by another compose release than the bundled one, and compose sees a change", have, b.Version)
 }
 
 // upgraded is information for a config-drift message when the compose in use is not the release that made the container

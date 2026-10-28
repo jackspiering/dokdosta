@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // M3: notifications reach a local webhook receiver through Shoutrrr's generic service, for real heals of real containers.
@@ -138,7 +138,7 @@ func TestNotificationsReachTheReceiverWhenTheLadderEndsInSuspended(t *testing.T)
 		t.Fatalf("want exactly one giving-up message: %v", titles(all))
 	}
 	if !strings.Contains(giving[0].Message, "cause:") || !strings.Contains(giving[0].Message, "unhealthy") ||
-		!strings.Contains(giving[0].Message, "whalenurse unsuspend "+s.project+"/app") {
+		!strings.Contains(giving[0].Message, "dokdosta unsuspend "+s.project+"/app") {
 		t.Errorf("the giving-up message has no cause or next step: %q", giving[0].Message)
 	}
 

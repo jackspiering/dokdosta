@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
+	"github.com/jackspiering/dokdosta/internal/api"
 )
 
 // publishedPort is the host port Docker chose for 127.0.0.1::8484 of the container.
@@ -36,12 +36,12 @@ func publishedPort(t *testing.T, id string) string {
 
 func dashboardImage(t *testing.T) (string, uint32) {
 	t.Helper()
-	img := os.Getenv("WHALENURSE_TEST_IMAGE")
+	img := os.Getenv("DOKDOSTA_TEST_IMAGE")
 	if img == "" {
-		t.Skip("set WHALENURSE_TEST_IMAGE to a locally built image to test it")
+		t.Skip("set DOKDOSTA_TEST_IMAGE to a locally built image to test it")
 	}
-	if !strings.HasPrefix(img, "whalenurse-test/") {
-		t.Fatalf("image %q: only whalenurse-test/* local tags are used", img)
+	if !strings.HasPrefix(img, "dokdosta-test/") {
+		t.Fatalf("image %q: only dokdosta-test/* local tags are used", img)
 	}
 	fi, err := os.Stat("/var/run/docker.sock")
 	if err != nil {
@@ -53,11 +53,11 @@ func dashboardImage(t *testing.T) (string, uint32) {
 func dashboardCompose(img string, gid uint32, token string, withApp bool) string {
 	env := ""
 	if token != "" {
-		env = fmt.Sprintf("      WHALENURSE_HTTP_TOKEN: %s\n", token)
+		env = fmt.Sprintf("      DOKDOSTA_HTTP_TOKEN: %s\n", token)
 	}
 	svc := fmt.Sprintf(`
 services:
-  whalenurse:
+  dokdosta:
     image: %s
     read_only: true
     cap_drop: [ALL]
@@ -67,12 +67,12 @@ services:
     ports: ["127.0.0.1::8484"]
     volumes: ["/var/run/docker.sock:/var/run/docker.sock", "data:/data"]
     environment:
-      WHALENURSE_HOST_ID: %s
-      WHALENURSE_HTTP_ADDR: ":8484"
-      WHALENURSE_METRICS: "true"
-      WHALENURSE_GRACE: 2s
-      WHALENURSE_POLL_INTERVAL: 5s
-      WHALENURSE_STARTUP_SETTLE: 0s
+      DOKDOSTA_HOST_ID: %s
+      DOKDOSTA_HTTP_ADDR: ":8484"
+      DOKDOSTA_METRICS: "true"
+      DOKDOSTA_GRACE: 2s
+      DOKDOSTA_POLL_INTERVAL: 5s
+      DOKDOSTA_STARTUP_SETTLE: 0s
 %s`, img, gid, testHost, env)
 	if withApp {
 		svc += appService("app")
@@ -112,9 +112,9 @@ func TestImageServesTheDashboardBehindTheToken(t *testing.T) {
 	s := newStack(t, g, cli, "dash-token", dashboardCompose(img, gid, token, true))
 	s.up("app")
 	waitFor(t, "app to be healthy", 60*time.Second, func() bool { return s.container("app").Health == "healthy" })
-	s.up("whalenurse")
-	waitFor(t, "the image HEALTHCHECK to pass", 90*time.Second, func() bool { return s.container("whalenurse").Health == "healthy" })
-	base := "http://127.0.0.1:" + publishedPort(t, s.container("whalenurse").ID)
+	s.up("dokdosta")
+	waitFor(t, "the image HEALTHCHECK to pass", 90*time.Second, func() bool { return s.container("dokdosta").Health == "healthy" })
+	base := "http://127.0.0.1:" + publishedPort(t, s.container("dokdosta").ID)
 
 	if code, hdr, body := httpDo(t, "GET", base+"/api/v1/status"); code != 401 || strings.Contains(body, token) || len(hdr.Values("WWW-Authenticate")) == 0 {
 		t.Fatalf("without a token: %d %v %s", code, hdr, body)
@@ -134,7 +134,7 @@ func TestImageServesTheDashboardBehindTheToken(t *testing.T) {
 		t.Fatalf("security headers: %v", hdr)
 	}
 	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("me:"+token))
-	if code, _, body := httpDo(t, "GET", base+"/", "Authorization", basic); code != 200 || !strings.Contains(body, "whalenurse") || !strings.Contains(body, "Overview") {
+	if code, _, body := httpDo(t, "GET", base+"/", "Authorization", basic); code != 200 || !strings.Contains(body, "dokdosta") || !strings.Contains(body, "Overview") {
 		t.Fatalf("the dashboard with Basic: %d", code)
 	}
 	if code, _, _ := httpDo(t, "GET", base+"/"); code != 401 {
@@ -143,7 +143,7 @@ func TestImageServesTheDashboardBehindTheToken(t *testing.T) {
 	if code, _, body := httpDo(t, "GET", base+"/healthz"); code != 200 || strings.TrimSpace(body) != "ok" {
 		t.Fatalf("/healthz needs no token and says only ok: %d %q", code, body)
 	}
-	if code, _, body := httpDo(t, "GET", base+"/metrics", "Authorization", "Bearer "+token); code != 200 || !strings.Contains(body, "whalenurse_healthy 1") {
+	if code, _, body := httpDo(t, "GET", base+"/metrics", "Authorization", "Bearer "+token); code != 200 || !strings.Contains(body, "dokdosta_healthy 1") {
 		t.Fatalf("/metrics: %d", code)
 	}
 	if code, _, _ := httpDo(t, "GET", base+"/metrics"); code != 401 {
@@ -169,7 +169,7 @@ func TestImageServesTheDashboardBehindTheToken(t *testing.T) {
 		t.Fatalf("detail: %d %s", code, body)
 	}
 	for k := range c.Labels {
-		if !strings.HasPrefix(k, "com.docker.compose.") && !strings.HasPrefix(k, "whalenurse.") {
+		if !strings.HasPrefix(k, "com.docker.compose.") && !strings.HasPrefix(k, "dokdosta.") {
 			t.Errorf("label %q is shown", k)
 		}
 	}
@@ -206,9 +206,9 @@ func TestImageServesTheDashboardWithoutATokenOnLoopback(t *testing.T) {
 	g, cli := requireIntegration(t)
 	img, gid := dashboardImage(t)
 	s := newStack(t, g, cli, "dash-open", dashboardCompose(img, gid, "", false))
-	s.up("whalenurse")
-	waitFor(t, "the image HEALTHCHECK to pass", 90*time.Second, func() bool { return s.container("whalenurse").Health == "healthy" })
-	base := "http://127.0.0.1:" + publishedPort(t, s.container("whalenurse").ID)
+	s.up("dokdosta")
+	waitFor(t, "the image HEALTHCHECK to pass", 90*time.Second, func() bool { return s.container("dokdosta").Health == "healthy" })
+	base := "http://127.0.0.1:" + publishedPort(t, s.container("dokdosta").ID)
 	code, _, body := httpDo(t, "GET", base+"/api/v1/status")
 	var st api.StatusDoc
 	if code != 200 || json.Unmarshal([]byte(body), &st) != nil || st.Host != testHost {

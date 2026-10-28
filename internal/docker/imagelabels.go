@@ -10,21 +10,21 @@ import (
 	"time"
 )
 
-// Label namespaces whalenurse reads from a container.
+// Label namespaces dokdosta reads from a container.
 const (
-	composeLabelPrefix    = "com.docker.compose."
-	whalenurseLabelPrefix = "whalenurse."
+	composeLabelPrefix  = "com.docker.compose."
+	dokdostaLabelPrefix = "dokdosta."
 )
 
-// ImageLabelFilter keeps the labels an image ships from steering whalenurse (plan v3.13 item 10). Docker copies an image's
+// ImageLabelFilter keeps the labels an image ships from steering dokdosta (plan v3.13 item 10). Docker copies an image's
 // own labels (its Config.Labels) onto every container created from it, for each key the create request did not set (moby
 // daemon/commit.go, merge), so a container's merged labels hold both the operator's and the image publisher's. The filter
 // reads the image's labels by the container's image ID and removes, from the labels List and Inspect return:
 //
 //   - every com.docker.compose.* label, when one of them has the value the image carries for that key: the compose
 //     identity is the image's, the container was not made by compose, and it falls back to its name and rung 1;
-//   - on a compose container, every whalenurse.* label that the service's `labels:` in the compose file does not declare
-//     (Declared); when the compose file cannot be read, or on any other container, every whalenurse.* label whose value is
+//   - on a compose container, every dokdosta.* label that the service's `labels:` in the compose file does not declare
+//     (Declared); when the compose file cannot be read, or on any other container, every dokdosta.* label whose value is
 //     the image's own value for that key.
 //
 // What is removed is decided once per container: its labels never change. The one decision that can change is one that
@@ -33,7 +33,7 @@ const (
 // image is looked for again on the next read.
 type ImageLabelFilter struct {
 	Reader
-	// Declared returns the whalenurse.* keys the compose file declares in the labels of the service of the compose
+	// Declared returns the dokdosta.* keys the compose file declares in the labels of the service of the compose
 	// container with these labels. ok is false when that cannot be known (compose unavailable, the files unreadable, the
 	// read failed). Nil means never known.
 	Declared func(ctx context.Context, labels map[string]string) (keys map[string]bool, ok bool)
@@ -83,7 +83,7 @@ const maxImagesCached = 512
 
 func hasSteering(labels map[string]string) bool {
 	for k := range labels {
-		if strings.HasPrefix(k, composeLabelPrefix) || strings.HasPrefix(k, whalenurseLabelPrefix) {
+		if strings.HasPrefix(k, composeLabelPrefix) || strings.HasPrefix(k, dokdostaLabelPrefix) {
 			return true
 		}
 	}
@@ -134,7 +134,7 @@ func (f *ImageLabelFilter) resolve(ctx context.Context, id, name, imageID string
 			if iv, has := img[k]; has && iv == v {
 				identity = append(identity, k)
 			}
-		case strings.HasPrefix(k, whalenurseLabelPrefix):
+		case strings.HasPrefix(k, dokdostaLabelPrefix):
 			steering = append(steering, k)
 		}
 	}

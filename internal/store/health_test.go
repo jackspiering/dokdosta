@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // A failed read is counted, named a read, and told apart from an absent value; the health names a fixed operation, never
@@ -47,7 +47,7 @@ func TestLastIDIsTheHighestOfTheSequenceAndTheTable(t *testing.T) {
 	}
 }
 
-// A store whose event sequence cannot be read is not opened: whalenurse would seed its events from 0 and lose them.
+// A store whose event sequence cannot be read is not opened: dokdosta would seed its events from 0 and lose them.
 func TestOpenFailsWhenTheEventSequenceCannotBeRead(t *testing.T) {
 	dir := t.TempDir()
 	open(t, dir).Close()

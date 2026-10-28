@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/docker"
 )
 
 // QuarantineWindow is how far back a stream loss reaches: the daemon's shutdown
@@ -37,11 +37,11 @@ const (
 )
 
 // StreamLost is the pseudo-event Summarize understands for "the events stream
-// ended here for a reason other than whalenurse stopping" (EOF or an error).
+// ended here for a reason other than dokdosta stopping" (EOF or an error).
 const StreamLost = "stream_lost"
 
 // Tracker folds container events into Evidence for one state key. Feed it the
-// events of that key in order, minus any attributed to a whalenurse action.
+// events of that key in order, minus any attributed to a dokdosta action.
 type Tracker struct {
 	ev          Evidence
 	markedAt    time.Time // when the manual-stop marker was set; zero if none or unknown

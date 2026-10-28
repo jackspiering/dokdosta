@@ -20,14 +20,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/daemon"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/api"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/daemon"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
 )
 
 type fakeDaemon struct{ calls []string }
@@ -157,8 +157,8 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(regDir, "config.json"), []byte(regFile), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"WHALENURSE_REGISTRY_AUTH_DIR=" + regDir, "WHALENURSE_NOTIFY_URLS=" + strings.Join(urls, " "), "WHALENURSE_HEARTBEAT_URL=" + ping,
-		"WHALENURSE_NOTIFY_TIMEOUT=2s", "WHALENURSE_HOST_ID=nas", "WHALENURSE_HTTP_TOKEN=tok-HTTPTOKEN-66666", "WHALENURSE_HTTP_ADDR=0.0.0.0:8484"}
+	env := []string{"DOKDOSTA_REGISTRY_AUTH_DIR=" + regDir, "DOKDOSTA_NOTIFY_URLS=" + strings.Join(urls, " "), "DOKDOSTA_HEARTBEAT_URL=" + ping,
+		"DOKDOSTA_NOTIFY_TIMEOUT=2s", "DOKDOSTA_HOST_ID=nas", "DOKDOSTA_HTTP_TOKEN=tok-HTTPTOKEN-66666", "DOKDOSTA_HTTP_ADDR=0.0.0.0:8484"}
 	cfg, warns, err := config.FromEnv(env)
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +352,7 @@ func TestDryRunWiresOnlyNoOpActors(t *testing.T) {
 	for _, dry := range []bool{true, false} {
 		cfg := config.Defaults()
 		cfg.DryRun = dry
-		cfg.ControlSocket = filepath.Join(t.TempDir(), "whalenurse.sock")
+		cfg.ControlSocket = filepath.Join(t.TempDir(), "dokdosta.sock")
 
 		rd, act, note, remove := composeFor(context.Background(), cfg, lookup, log)
 		remove()
@@ -441,7 +441,7 @@ func TestOpenStoreRekeysToTheHostID(t *testing.T) {
 	st.SaveKey(engine.KeyRecord{Key: "0123456789ab/p/web/1", Name: "p-web-1", MarkerAt: time.Now()})
 	st.Close()
 
-	cfg.HostID = "ba9876543210" // whalenurse recreated
+	cfg.HostID = "ba9876543210" // dokdosta recreated
 	st, snap, err := openStore(cfg, log, time.Now())
 	if err != nil {
 		t.Fatal(err)

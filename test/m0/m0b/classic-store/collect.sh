@@ -30,7 +30,7 @@ say "== pulling the base images into the classic store (the only pulls)"
 for b in "${M0_BASE_IMAGES[@]}"; do m0_pull "$b" && say "pulled $b"; done
 docker image inspect busybox:1.37 >/dev/null 2>&1 || m0_pull busybox:1.37
 docker image inspect alpine:3.22 >/dev/null 2>&1 || m0_pull alpine:3.22
-m0_tag busybox:1.37 whalenurse-m0/busybox:1
+m0_tag busybox:1.37 dokdosta-m0/busybox:1
 say "== image-drift check on overlay2"
 rc=0
 "$M0B_HERE/image-drift.sh" --out "$out/imgdrift-classic" | tee -a "$sum" || rc=$?

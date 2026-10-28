@@ -6,12 +6,12 @@ import (
 	"io"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
-// TestMessage is what `whalenurse notify test` sends.
+// TestMessage is what `dokdosta notify test` sends.
 func TestMessage(host string, dryRun bool) Message {
-	return compose(rctx{host: host, dryRun: dryRun}, engine.Event{Host: host}, "", "test notification", []string{"sent by: whalenurse notify test", "If you can read this, notifications work."}, nil, false)
+	return compose(rctx{host: host, dryRun: dryRun}, engine.Event{Host: host}, "", "test notification", []string{"sent by: dokdosta notify test", "If you can read this, notifications work."}, nil, false)
 }
 
 // TestResult is the outcome for one URL.

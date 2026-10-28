@@ -43,13 +43,13 @@ type StoreDoc struct {
 	LastErrorOp string    `json:"last_error_op,omitempty"` // "write pause", "read meta", ...
 }
 
-// PullAuthDoc says which registries the pull rung has credentials for (WHALENURSE_REGISTRY_AUTH_DIR): the hosts, sorted,
+// PullAuthDoc says which registries the pull rung has credentials for (DOKDOSTA_REGISTRY_AUTH_DIR): the hosts, sorted,
 // and nothing else. Never a user name, a secret or the path.
 type PullAuthDoc struct {
 	Registries []string `json:"registries"`
 }
 
-// ComposeDoc says which compose binary whalenurse uses and where it came from.
+// ComposeDoc says which compose binary dokdosta uses and where it came from.
 type ComposeDoc struct {
 	Binary  string `json:"binary,omitempty"`
 	Source  string `json:"source,omitempty"` // env, host-plugin, bundled, path
@@ -68,7 +68,7 @@ type VersionGateDoc struct {
 	MinCompose      string   `json:"min_compose"`
 }
 
-// RateLimitDoc is the global action budget (WHALENURSE_RATE_LIMIT).
+// RateLimitDoc is the global action budget (DOKDOSTA_RATE_LIMIT).
 type RateLimitDoc struct {
 	Limit     int       `json:"limit_per_hour"`
 	Used      int       `json:"used_last_hour"`
@@ -76,7 +76,7 @@ type RateLimitDoc struct {
 	NextSlot  time.Time `json:"next_slot,omitzero"` // set only while the budget is spent
 }
 
-// CountsDoc counts the containers by what whalenurse thinks of them.
+// CountsDoc counts the containers by what dokdosta thinks of them.
 type CountsDoc struct {
 	Containers int `json:"containers"`
 	Watched    int `json:"watched"`
@@ -142,10 +142,10 @@ type ContainerDoc struct {
 	Decision     *DecisionDoc      `json:"decision,omitempty"`
 	Parent       *RelationDoc      `json:"parent,omitempty"`
 	Dependents   []RelationDoc     `json:"dependents,omitempty"`
-	Labels       map[string]string `json:"labels,omitempty"` // com.docker.compose.* and whalenurse.* only
+	Labels       map[string]string `json:"labels,omitempty"` // com.docker.compose.* and dokdosta.* only
 }
 
-// HealerDoc is whalenurse's state for the container.
+// HealerDoc is dokdosta's state for the container.
 type HealerDoc struct {
 	State          string       `json:"state"` // ok, incident, recovering, SUSPENDED, PAUSED
 	Class          string       `json:"class,omitempty"`

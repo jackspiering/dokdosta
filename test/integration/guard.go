@@ -1,25 +1,25 @@
 // Package integration holds the tests that run against a real Docker daemon.
 // They run in CI on GitHub-hosted runners, never as part of `go test ./...`
 // on a developer machine (the tests need -tags integration and
-// WHALENURSE_INTEGRATION=1).
+// DOKDOSTA_INTEGRATION=1).
 //
 // SAFETY MODEL (fails closed), a port of test/m0/lib.sh. Everything in this
 // package that changes anything goes through Guard, and each method refuses to
-// act unless the compose project of its target matches ^whalenurse-test-...$:
+// act unless the compose project of its target matches ^dokdosta-test-...$:
 //
 //	Compose   docker compose, always with -p <project>; refuses -p, --project-name, down and rm
 //	Down      the ONLY place that runs `down -v`, and only for matching projects
 //	Ctr       stop/start/restart/kill/exec on a container whose project label matches
 //	PullBase  pulls only the base images in BaseImages
-//	Tag/Untag/Build  image tags under whalenurse-test/ (or in the test registry, 127.0.0.1:<port>/whalenurse-test/) only; a
+//	Tag/Untag/Build  image tags under dokdosta-test/ (or in the test registry, 127.0.0.1:<port>/dokdosta-test/) only; a
 //	          build may start FROM a base image only
 //	Push/PullRegistry  push or pull references of the test registry only (M4: a registry:2 on loopback, started as a
-//	          whalenurse-test-* compose project)
+//	          dokdosta-test-* compose project)
 //	RunRollback  runs the rollback commands of an "upgraded during heal" message, after checking them line by line
-//	Actor     wraps whalenurse's own docker.Actor so the in-process healer under test cannot
+//	Actor     wraps dokdosta's own docker.Actor so the in-process healer under test cannot
 //	          touch a container outside a matching project either
 //	PreflightNoStrangers  refuses to start while any container outside a matching project is opted in. The tests that run
-//	          a whalenurse the guard cannot wrap (the built binary, the published image) rely on this alone
+//	          a dokdosta the guard cannot wrap (the built binary, the published image) rely on this alone
 //	ComposeRunner  the compose Runner the healer under test runs compose through: only `up` (with -d --no-deps --pull never
 //	          --no-build), `pull --policy always -- <one service>` (rung 3), `config --hash` and `version`, only with -p
 //	          <matching project>; never down, rm, build or an up that could pull
@@ -40,13 +40,13 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
 )
 
 // ProjectRE is the only compose project name the tests may act on.
-var ProjectRE = regexp.MustCompile(`^whalenurse-test-[a-z0-9][a-z0-9_-]*$`)
+var ProjectRE = regexp.MustCompile(`^dokdosta-test-[a-z0-9][a-z0-9_-]*$`)
 
 // BaseImages are the only images the tests may pull.
 var BaseImages = []string{"busybox:1.37", "registry:2"}
@@ -211,16 +211,16 @@ func (g *Guard) PullBase(ctx context.Context, ref string) error {
 	return refuse("pull of %q: not an allowed base image", ref)
 }
 
-// PreflightNoStrangers fails if whalenurse could act on anything outside a
-// matching project: it refuses WHALENURSE_MODE=all and any container outside a
-// whalenurse-test-* project whose whalenurse.enable value whalenurse reads as an
+// PreflightNoStrangers fails if dokdosta could act on anything outside a
+// matching project: it refuses DOKDOSTA_MODE=all and any container outside a
+// dokdosta-test-* project whose dokdosta.enable value dokdosta reads as an
 // opt-in. The daemon lists every container and decides with config.ParseLabels
 // (strconv.ParseBool of the trimmed value: 1, t, T, TRUE, True, true, " true"), but
 // `docker ps --filter label=k=v` matches the value as an exact string. So the
-// filter is by key only and the value is parsed here, by whalenurse's own parser.
+// filter is by key only and the value is parsed here, by dokdosta's own parser.
 func (g *Guard) PreflightNoStrangers(ctx context.Context) error {
-	if m := os.Getenv("WHALENURSE_MODE"); m != "" && m != string(config.ModeLabel) {
-		return refuse("WHALENURSE_MODE=%s: integration tests run in label mode only", m)
+	if m := os.Getenv("DOKDOSTA_MODE"); m != "" && m != string(config.ModeLabel) {
+		return refuse("DOKDOSTA_MODE=%s: integration tests run in label mode only", m)
 	}
 	out, err := g.R.Run(ctx, "docker", "ps", "-a", "--filter", "label="+config.LabelEnable,
 		"--format", `{{.ID}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "`+config.LabelEnable+`"}}`)
@@ -245,7 +245,7 @@ func (g *Guard) PreflightNoStrangers(ctx context.Context) error {
 	return nil
 }
 
-// Actor wraps whalenurse's own Actor: the healer under test can restart or
+// Actor wraps dokdosta's own Actor: the healer under test can restart or
 // start only containers of a matching project.
 type Actor struct {
 	Reader docker.Reader
@@ -258,7 +258,7 @@ func (a Actor) check(ctx context.Context, id string) error {
 		return refuse("cannot inspect %q: %v", id, err)
 	}
 	if p := c.Labels[docker.LabelProject]; !ProjectRE.MatchString(p) {
-		return refuse("whalenurse tried to act on %q (project %q)", c.Name, p)
+		return refuse("dokdosta tried to act on %q (project %q)", c.Name, p)
 	}
 	return nil
 }
@@ -280,12 +280,12 @@ func (a Actor) Start(ctx context.Context, id string) error {
 var _ docker.Actor = Actor{}
 
 // TagPrefix is the only image namespace the tests may create.
-const TagPrefix = "whalenurse-test/"
+const TagPrefix = "dokdosta-test/"
 
 // RegistryRE is the only kind of registry reference the tests may push to or pull from: the loopback registry:2 that a
-// test starts for itself, in the whalenurse-test/ namespace. 127.0.0.1 and not localhost: no resolver, no ::1, and the
+// test starts for itself, in the dokdosta-test/ namespace. 127.0.0.1 and not localhost: no resolver, no ::1, and the
 // Engine treats 127.0.0.0/8 as an insecure (plain HTTP) registry by default.
-var RegistryRE = regexp.MustCompile(`^127\.0\.0\.1:[0-9]{2,5}/whalenurse-test/[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$`)
+var RegistryRE = regexp.MustCompile(`^127\.0\.0\.1:[0-9]{2,5}/dokdosta-test/[a-z0-9][a-z0-9._/-]*(:[A-Za-z0-9._-]+)?$`)
 
 // ImageIDRE is an image ID as `docker image inspect --format {{.Id}}` prints it.
 var ImageIDRE = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -299,7 +299,7 @@ func requireTag(tag string) error {
 
 func requireRegistryRef(ref string) error {
 	if !RegistryRE.MatchString(ref) {
-		return refuse("%q is not a reference of the test registry (127.0.0.1:<port>/whalenurse-test/...)", ref)
+		return refuse("%q is not a reference of the test registry (127.0.0.1:<port>/dokdosta-test/...)", ref)
 	}
 	return nil
 }
@@ -314,7 +314,7 @@ func (g *Guard) Push(ctx context.Context, ref string) error {
 }
 
 // DockerConfigPrefix is the only kind of directory the tests may hand to `docker --config`: one they made themselves.
-const DockerConfigPrefix = "whalenurse-test-docker-config-"
+const DockerConfigPrefix = "dokdosta-test-docker-config-"
 
 // PushWith is Push with a docker config directory of the test's own, which holds the credentials of an authenticated
 // test registry (M7). Anything else as a config directory is refused: it could hold another registry's login.
@@ -365,7 +365,7 @@ func (g *Guard) ImageID(ctx context.Context, ref string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
-// Tag points dst, a whalenurse-test/ tag, at src: a base image or another whalenurse-test/ tag.
+// Tag points dst, a dokdosta-test/ tag, at src: a base image or another dokdosta-test/ tag.
 func (g *Guard) Tag(ctx context.Context, src, dst string) error {
 	if err := requireTag(dst); err != nil {
 		return err
@@ -381,7 +381,7 @@ func (g *Guard) Tag(ctx context.Context, src, dst string) error {
 	return err
 }
 
-// Untag removes a whalenurse-test/ tag (the image stays if something else uses it).
+// Untag removes a dokdosta-test/ tag (the image stays if something else uses it).
 func (g *Guard) Untag(ctx context.Context, tag string) error {
 	if err := requireTag(tag); err != nil {
 		return err
@@ -392,7 +392,7 @@ func (g *Guard) Untag(ctx context.Context, tag string) error {
 
 var fromRE = regexp.MustCompile(`(?im)^\s*FROM\s+(\S+)`)
 
-// Build builds a whalenurse-test/ image from a Dockerfile held in memory, whose every FROM is a base image.
+// Build builds a dokdosta-test/ image from a Dockerfile held in memory, whose every FROM is a base image.
 func (g *Guard) Build(ctx context.Context, tag, dockerfile string) error {
 	if err := requireTag(tag); err != nil {
 		return err
@@ -410,7 +410,7 @@ func (g *Guard) Build(ctx context.Context, tag, dockerfile string) error {
 			return refuse("FROM %q is not a base image", m[1])
 		}
 	}
-	dir, err := os.MkdirTemp("", "whalenurse-test-build-")
+	dir, err := os.MkdirTemp("", "dokdosta-test-build-")
 	if err != nil {
 		return err
 	}
@@ -452,10 +452,10 @@ func (g *Guard) ImagePullRefs(ctx context.Context, since, until string) ([]strin
 	return refs, nil
 }
 
-// ---- compose, as whalenurse runs it --------------------------------------------------------------------------------
+// ---- compose, as dokdosta runs it --------------------------------------------------------------------------------
 
-// CheckComposeCommand is the filter in front of whalenurse's compose: it accepts exactly the five shapes the compose
-// package builds and nothing else. A command whalenurse should never run (down, rm, build, run, a different project,
+// CheckComposeCommand is the filter in front of dokdosta's compose: it accepts exactly the five shapes the compose
+// package builds and nothing else. A command dokdosta should never run (down, rm, build, run, a different project,
 // a pull that is not `--policy always -- <one service>`, an up that could pull or build or touch other services) is REFUSED.
 func CheckComposeCommand(args []string) error {
 	if len(args) < 3 || args[0] != "-p" {
@@ -533,7 +533,7 @@ sub:
 			return refuse("compose up needs --pull never and exactly one service after --: %v (force=%v)", rest, force)
 		}
 	default:
-		return refuse("compose %s is not something whalenurse runs", args[i])
+		return refuse("compose %s is not something dokdosta runs", args[i])
 	}
 	return nil
 }
@@ -545,7 +545,7 @@ type ComposeRunner struct {
 	mu    sync.Mutex
 	log   []string
 
-	// authDir is the one directory a `pull` may be given as DOCKER_CONFIG (WHALENURSE_REGISTRY_AUTH_DIR, M7); pullDirs
+	// authDir is the one directory a `pull` may be given as DOCKER_CONFIG (DOKDOSTA_REGISTRY_AUTH_DIR, M7); pullDirs
 	// records the ConfigDir of each pull, in order.
 	authDir  string
 	pullDirs []string
@@ -561,7 +561,7 @@ func (r *ComposeRunner) PullConfigDirs() []string {
 	return append([]string(nil), r.pullDirs...)
 }
 
-// NewComposeRunner runs real compose behind the filter, with configDir (an empty directory, as whalenurse gives it) as its
+// NewComposeRunner runs real compose behind the filter, with configDir (an empty directory, as dokdosta gives it) as its
 // DOCKER_CONFIG.
 func NewComposeRunner(configDir string) *ComposeRunner {
 	return &ComposeRunner{Inner: compose.ExecRunner{ConfigDir: configDir}}
@@ -606,7 +606,7 @@ func (r *ComposeRunner) Mutating() []string {
 	return out
 }
 
-// Pulls returns the logged `compose pull` commands: rung 3, the only place whalenurse fetches an image.
+// Pulls returns the logged `compose pull` commands: rung 3, the only place dokdosta fetches an image.
 func (r *ComposeRunner) Pulls() []string {
 	var out []string
 	for _, l := range r.Log() {

@@ -29,7 +29,7 @@ func (r *recRunner) Run(_ context.Context, c Command) (Result, error) {
 }
 
 func proj() Project {
-	return Project{Name: "whalenurse-test-x", WorkingDir: "/opt/stacks/x", ConfigFiles: []string{"/opt/stacks/x/compose.yaml", "/opt/stacks/x/override.yaml"},
+	return Project{Name: "dokdosta-test-x", WorkingDir: "/opt/stacks/x", ConfigFiles: []string{"/opt/stacks/x/compose.yaml", "/opt/stacks/x/override.yaml"},
 		EnvFiles: []string{"/opt/stacks/x/.env"}, Service: "web"}
 }
 
@@ -161,7 +161,7 @@ func TestProjectFromLabelsRefusesFlagShapedIdentity(t *testing.T) {
 	}
 	// What compose itself accepts still passes: a normalized project name, a service name of the compose spec.
 	for _, tc := range []struct{ project, service string }{
-		{"p", "web"}, {"whalenurse-test-x", "web_1"}, {"0p_q-r", "Web.app-2"}, {"p", "_x"}, {"p", ".x"},
+		{"p", "web"}, {"dokdosta-test-x", "web_1"}, {"0p_q-r", "Web.app-2"}, {"p", "_x"}, {"p", ".x"},
 	} {
 		l := maps.Clone(good)
 		l[LabelProject], l[LabelService] = tc.project, tc.service
@@ -277,7 +277,7 @@ func TestCommandLines(t *testing.T) {
 	if h, err := c.ConfigHash(ctx, p); err != nil || h != "abc123" {
 		t.Fatalf("%q %v", h, err)
 	}
-	base := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env "
+	base := "-p dokdosta-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env "
 	want := []string{
 		base + "up -d --force-recreate --no-deps --pull never --no-build -- web",
 		base + "up -d --no-deps --pull never --no-build -- web",
@@ -324,7 +324,7 @@ func TestPullCommandLine(t *testing.T) {
 	if err := c.Pull(context.Background(), proj()); err != nil {
 		t.Fatal(err)
 	}
-	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env pull --policy always -- web"
+	want := "-p dokdosta-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env pull --policy always -- web"
 	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want || r.cmds[0].Dir != "/" {
 		t.Fatalf("%v", r.cmds)
 	}
@@ -340,7 +340,7 @@ func TestRollbackCommandsAreExactAndQuoted(t *testing.T) {
 	if want := "docker image tag sha256:" + strings.Repeat("a", 64) + " localhost:5000/app:latest"; tag != want {
 		t.Errorf("tag = %q", tag)
 	}
-	if want := "docker compose -p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env up -d --no-deps --pull never --no-build web"; up != want {
+	if want := "docker compose -p dokdosta-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env up -d --no-deps --pull never --no-build web"; up != want {
 		t.Errorf("up = %q", up)
 	}
 	// A path with a space or a quote is one shell word.
@@ -358,9 +358,9 @@ func TestRollbackCommandsAreExactAndQuoted(t *testing.T) {
 
 func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
 	env := ChildEnv([]string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "COMPOSE_PROJECT_NAME=evil", "COMPOSE_FILE=/x", "COMPOSE_PROFILES=a",
-		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "DOCKER_AUTH_CONFIG={}", "WHALENURSE_NOTIFY_URLS=secret://", "NO_COLOR=0"}, "")
+		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "DOCKER_AUTH_CONFIG={}", "DOKDOSTA_NOTIFY_URLS=secret://", "NO_COLOR=0"}, "")
 	got := strings.Join(env, "\n")
-	for _, bad := range []string{"COMPOSE_", "DOCKER_CONTEXT", "/elsewhere", "DOCKER_AUTH_CONFIG", "WHALENURSE_", "NO_COLOR=0"} {
+	for _, bad := range []string{"COMPOSE_", "DOCKER_CONTEXT", "/elsewhere", "DOCKER_AUTH_CONFIG", "DOKDOSTA_", "NO_COLOR=0"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("%s survived: %v", bad, env)
 		}
@@ -373,14 +373,14 @@ func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
 }
 
 // HOME is passed through, so DOCKER_CONFIG must be set, not only removed: unset, the Docker CLI reads $HOME/.docker
-// (under the example systemd unit that is /var/lib/whalenurse/.docker).
+// (under the example systemd unit that is /var/lib/dokdosta/.docker).
 func TestChildEnvNeverLetsComposeReadAConfigDirectory(t *testing.T) {
 	for _, tc := range []struct {
 		env       []string
 		dir, want string
 	}{
-		{[]string{"HOME=/h"}, "/run/whalenurse-docker-config-1", "/run/whalenurse-docker-config-1"},
-		{[]string{"HOME=/h", "DOCKER_CONFIG=/h/.docker"}, "/run/whalenurse-docker-config-1", "/run/whalenurse-docker-config-1"},
+		{[]string{"HOME=/h"}, "/run/dokdosta-docker-config-1", "/run/dokdosta-docker-config-1"},
+		{[]string{"HOME=/h", "DOCKER_CONFIG=/h/.docker"}, "/run/dokdosta-docker-config-1", "/run/dokdosta-docker-config-1"},
 		{[]string{"HOME=/h", "DOCKER_CONFIG=/h/.docker"}, "", NoDockerConfig},
 	} {
 		var got []string
@@ -566,9 +566,9 @@ func TestResolveOrder(t *testing.T) {
 	if b, notes, err := Resolve(ctx, mk("")); err == nil || b != nil || len(notes) < 3 {
 		t.Fatalf("nothing found must be an error with notes: %v %v %v", b, notes, err)
 	}
-	// An explicit WHALENURSE_COMPOSE_BIN that does not work is an error, never a reason to use another binary.
+	// An explicit DOKDOSTA_COMPOSE_BIN that does not work is an error, never a reason to use another binary.
 	present["/host/docker-compose"] = true
-	if b, _, err := Resolve(ctx, mk("/env/missing")); err == nil || b != nil || !strings.Contains(err.Error(), "WHALENURSE_COMPOSE_BIN=/env/missing") {
+	if b, _, err := Resolve(ctx, mk("/env/missing")); err == nil || b != nil || !strings.Contains(err.Error(), "DOKDOSTA_COMPOSE_BIN=/env/missing") {
 		t.Fatalf("%v %v", b, err)
 	}
 	// A directory is not a binary.
@@ -600,7 +600,7 @@ func TestPullPolicyCommandLineAndParsing(t *testing.T) {
 	if err != nil || got != "never" {
 		t.Fatalf("%q %v", got, err)
 	}
-	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution -- web"
+	want := "-p dokdosta-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution -- web"
 	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want {
 		t.Fatalf("%v", r.cmds)
 	}
@@ -640,14 +640,14 @@ func TestRollbackCommandsNameTheSidecarsInOneUp(t *testing.T) {
 
 func TestDeclaredLabelsCommandLineAndParsing(t *testing.T) {
 	r := &recRunner{out: func(Command) (Result, error) {
-		return Result{Stdout: []byte(`{"services":{"web":{"labels":{"whalenurse.enable":"true","traefik.x":"${SECRET}","whalenurse.cooldown":"1m"}},"db":{"labels":["whalenurse.enable=true"]}}}`)}, nil
+		return Result{Stdout: []byte(`{"services":{"web":{"labels":{"dokdosta.enable":"true","traefik.x":"${SECRET}","dokdosta.cooldown":"1m"}},"db":{"labels":["dokdosta.enable=true"]}}}`)}, nil
 	}}
 	c := New(Binary{Path: "/host/docker-compose", Source: SourceHost}, r)
 	got, err := c.DeclaredLabels(context.Background(), proj())
-	if err != nil || !slices.Equal(got, []string{"whalenurse.cooldown", "whalenurse.enable"}) {
+	if err != nil || !slices.Equal(got, []string{"dokdosta.cooldown", "dokdosta.enable"}) {
 		t.Fatalf("%v %v", got, err)
 	}
-	want := "-p whalenurse-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution -- web"
+	want := "-p dokdosta-test-x --project-directory /opt/stacks/x -f /opt/stacks/x/compose.yaml -f /opt/stacks/x/override.yaml --env-file /opt/stacks/x/.env config --format json --no-env-resolution -- web"
 	if len(r.cmds) != 1 || strings.Join(r.cmds[0].Args, " ") != want {
 		t.Fatalf("%v", r.cmds)
 	}
@@ -656,7 +656,7 @@ func TestDeclaredLabelsCommandLineAndParsing(t *testing.T) {
 		want []string
 		bad  bool
 	}{
-		{`{"services":{"db":{"labels":["whalenurse.enable=true","x=y"]}}}`, []string{"whalenurse.enable"}, false},
+		{`{"services":{"db":{"labels":["dokdosta.enable=true","x=y"]}}}`, []string{"dokdosta.enable"}, false},
 		{`{"services":{"db":{}}}`, nil, false},
 		{`{"services":{"db":{"labels":null}}}`, nil, false},
 		{`{"services":{"web":{}}}`, nil, true}, // not the service asked about

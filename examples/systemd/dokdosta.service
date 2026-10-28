@@ -1,47 +1,47 @@
-# whalenurse under systemd, hardened. Install:
-#   sudo useradd --system --home-dir /var/lib/whalenurse --shell /usr/sbin/nologin --groups docker whalenurse
-#   sudo install -m 0755 whalenurse /usr/local/bin/whalenurse
-#   sudo install -m 0644 whalenurse.service /etc/systemd/system/whalenurse.service
-#   sudo install -d -m 0750 -o root -g whalenurse /etc/whalenurse
-#   sudo install -m 0640 -o root -g whalenurse whalenurse.env /etc/whalenurse/whalenurse.env   # settings and secrets (see whalenurse.env.example)
-#   sudo systemctl daemon-reload && sudo systemctl enable --now whalenurse
+# dokdosta under systemd, hardened. Install:
+#   sudo useradd --system --home-dir /var/lib/dokdosta --shell /usr/sbin/nologin --groups docker dokdosta
+#   sudo install -m 0755 dokdosta /usr/local/bin/dokdosta
+#   sudo install -m 0644 dokdosta.service /etc/systemd/system/dokdosta.service
+#   sudo install -d -m 0750 -o root -g dokdosta /etc/dokdosta
+#   sudo install -m 0640 -o root -g dokdosta dokdosta.env /etc/dokdosta/dokdosta.env   # settings and secrets (see dokdosta.env.example)
+#   sudo systemctl daemon-reload && sudo systemctl enable --now dokdosta
 #
 # The user is in the docker group, which is root-equivalent on this host (docs/security.md): the hardening below limits what
-# a bug in whalenurse can do besides what the Docker socket already allows. Your stacks must be readable by that user (for the
+# a bug in dokdosta can do besides what the Docker socket already allows. Your stacks must be readable by that user (for the
 # recreate rung); they are mounted read-only into the service by ProtectSystem/ProtectHome below.
 # To use the CLI (the control socket is mode 0600, and this unit moves it):
-#   sudo -u whalenurse env WHALENURSE_CONTROL_SOCKET=/run/whalenurse/whalenurse.sock whalenurse status
+#   sudo -u dokdosta env DOKDOSTA_CONTROL_SOCKET=/run/dokdosta/dokdosta.sock dokdosta status
 [Unit]
-Description=whalenurse, compose-aware self-healing for Docker hosts
-Documentation=https://github.com/jackspiering/whalenurse/tree/main/docs
+Description=dokdosta, compose-aware self-healing for Docker hosts
+Documentation=https://github.com/jackspiering/dokdosta/tree/main/docs
 After=docker.service network-online.target
 Wants=network-online.target
 Requires=docker.service
 
 [Service]
 Type=simple
-User=whalenurse
-Group=whalenurse
+User=dokdosta
+Group=dokdosta
 SupplementaryGroups=docker
-ExecStart=/usr/local/bin/whalenurse run
+ExecStart=/usr/local/bin/dokdosta run
 Restart=on-failure
 RestartSec=5s
 # A stop lets an action in flight (a compose recreate) finish for up to 30 s, then stops compose with SIGTERM and kills
-# it 10 s later; it also writes the heartbeat. mixed sends the SIGTERM to whalenurse only, so systemd does not stop the
+# it 10 s later; it also writes the heartbeat. mixed sends the SIGTERM to dokdosta only, so systemd does not stop the
 # compose child halfway itself (it still SIGKILLs what is left at the timeout).
 KillMode=mixed
 TimeoutStopSec=60s
 
 # State and the control socket, created and owned by systemd.
-StateDirectory=whalenurse
+StateDirectory=dokdosta
 StateDirectoryMode=0700
-RuntimeDirectory=whalenurse
+RuntimeDirectory=dokdosta
 RuntimeDirectoryMode=0700
-Environment=WHALENURSE_DATA_DIR=/var/lib/whalenurse
-Environment=WHALENURSE_CONTROL_SOCKET=/run/whalenurse/whalenurse.sock
-# Everything else (WHALENURSE_NOTIFY_URLS, WHALENURSE_HTTP_ADDR, WHALENURSE_HTTP_TOKEN ...): see docs/configuration.md.
+Environment=DOKDOSTA_DATA_DIR=/var/lib/dokdosta
+Environment=DOKDOSTA_CONTROL_SOCKET=/run/dokdosta/dokdosta.sock
+# Everything else (DOKDOSTA_NOTIFY_URLS, DOKDOSTA_HTTP_ADDR, DOKDOSTA_HTTP_TOKEN ...): see docs/configuration.md.
 # The file holds secrets; the leading "-" lets the unit start without it.
-EnvironmentFile=-/etc/whalenurse/whalenurse.env
+EnvironmentFile=-/etc/dokdosta/dokdosta.env
 
 # Hardening
 NoNewPrivileges=yes
@@ -71,6 +71,6 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 
 [Install]
-# docker.service too: Requires= above stops whalenurse when Docker is stopped, and only this starts it again when Docker is
+# docker.service too: Requires= above stops dokdosta when Docker is stopped, and only this starts it again when Docker is
 # started (by hand or by socket activation). After= keeps it ordered after Docker, so the stop order is unchanged.
 WantedBy=multi-user.target docker.service

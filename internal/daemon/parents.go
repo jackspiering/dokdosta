@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // metaParents is the prefix of the store keys that remember which services a dependent hangs on.
@@ -32,10 +32,10 @@ const parentsGoneAfter = time.Hour
 
 // A dependent (network_mode: service:X, or an ipc or pid reference) is tied to its parent by the compose depends_on label
 // once the parent's ID is gone (plan §3.5, v3.6 decision 9). Compose writes that label from the services it has in scope,
-// so a dependent recreated with `up --no-deps` (which is how whalenurse does it) comes back with an empty label (compose
+// so a dependent recreated with `up --no-deps` (which is how dokdosta does it) comes back with an empty label (compose
 // pkg/compose/create.go builds com.docker.compose.depends_on from service.DependsOn; v5.6.0 up.go narrows the project with
 // types.IgnoreDependencies for --no-deps). From then on the label cannot find the parent, so the dependent would not be
-// repaired when the parent is recreated the next time. whalenurse therefore remembers, per key, the services a dependent
+// repaired when the parent is recreated the next time. dokdosta therefore remembers, per key, the services a dependent
 // depends on, learned while the label or a live container: reference still shows them (plan v3.11).
 
 // parentServices returns the services that the dependent holding these labels depends on: the label while it has any,
@@ -49,7 +49,7 @@ func (d *Daemon) parentServices(key string, labels map[string]string) []string {
 
 func (d *Daemon) knownParents(key string) []string { return d.known(d.parents, metaParents, key) }
 
-// namespaceParents are the services that the live container: references of a dependent resolved to when whalenurse last
+// namespaceParents are the services that the live container: references of a dependent resolved to when dokdosta last
 // saw them (plan v3.13 item 3); nil when it never saw one, as for a sidecar first seen after its parent was gone. They are
 // kept per reference ("network:web", "ipc:db"), so that one reference resolving does not wipe what was learned for another.
 func (d *Daemon) namespaceParents(key string) []string {
@@ -206,7 +206,7 @@ func parentIdentity(parents []rules.Parent) string {
 }
 
 // dependsOnConditions is the raw depends_on label, for the one reader that needs the conditions and not only the names
-// (waitsFor, plan v3.13 item 14). A created container that whalenurse has not recreated still has the compose-written label;
+// (waitsFor, plan v3.13 item 14). A created container that dokdosta has not recreated still has the compose-written label;
 // an emptied one has no condition to wait on, so nothing holds it.
 func dependsOnConditions(labels map[string]string) string {
 	return labels[compose.LabelDependsOn]

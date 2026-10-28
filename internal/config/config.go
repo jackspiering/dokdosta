@@ -1,4 +1,4 @@
-// Package config parses the WHALENURSE_* environment and the whalenurse.*
+// Package config parses the DOKDOSTA_* environment and the dokdosta.*
 // container labels. Variables that belong to later milestones are accepted
 // with a warning so a full config file does not break an earlier deployment.
 package config
@@ -19,8 +19,8 @@ import (
 type Mode string
 
 const (
-	ModeLabel Mode = "label" // only containers with whalenurse.enable=true
-	ModeAll   Mode = "all"   // everything except whalenurse.enable=false
+	ModeLabel Mode = "label" // only containers with dokdosta.enable=true
+	ModeAll   Mode = "all"   // everything except dokdosta.enable=false
 )
 
 // Global is the daemon-wide configuration.
@@ -36,12 +36,12 @@ type Global struct {
 	StartupSettle  time.Duration
 	LogLevel       slog.Level
 	HTTPAddr       string // empty: no TCP listener
-	HTTPToken      string // WHALENURSE_HTTP_TOKEN: when set, the dashboard and the API need it. A secret: never logged or shown.
-	Metrics        bool   // WHALENURSE_METRICS: serve /metrics on the HTTP listener
+	HTTPToken      string // DOKDOSTA_HTTP_TOKEN: when set, the dashboard and the API need it. A secret: never logged or shown.
+	Metrics        bool   // DOKDOSTA_METRICS: serve /metrics on the HTTP listener
 	// HTTPAllowedHosts are the Host names served besides localhost, 127.0.0.1 and [::1] when there is no token
-	// (WHALENURSE_HTTP_ALLOWED_HOSTS: a DNS rebinding defence). Ignored when a token is set.
+	// (DOKDOSTA_HTTP_ALLOWED_HOSTS: a DNS rebinding defence). Ignored when a token is set.
 	HTTPAllowedHosts []string
-	// HTTPTrustedProxies are the reverse proxies (WHALENURSE_HTTP_TRUSTED_PROXIES, CIDRs or single addresses) whose
+	// HTTPTrustedProxies are the reverse proxies (DOKDOSTA_HTTP_TRUSTED_PROXIES, CIDRs or single addresses) whose
 	// X-Forwarded-For the wrong-token limiter believes. Empty: the peer address is the client. Only matters with a token.
 	HTTPTrustedProxies []netip.Prefix
 	ControlSocket      string // unix socket for /healthz and the CLI (pause, resume, unsuspend, status)
@@ -53,21 +53,21 @@ type Global struct {
 	HistoryRetention time.Duration // closed incidents older than this are pruned
 
 	DriftGuard DriftGuard // strict (default): a recreate that would deploy a change is skipped and SUSPENDS; warn: recreate anyway and say so
-	ComposeBin string     // WHALENURSE_COMPOSE_BIN: the compose binary to use, ahead of the host plugin and the bundled copy
+	ComposeBin string     // DOKDOSTA_COMPOSE_BIN: the compose binary to use, ahead of the host plugin and the bundled copy
 
 	// Notifications (M3). The URLs hold tokens: never log them, never show them in status.
-	NotifyURLs      []string      // WHALENURSE_NOTIFY_URLS, Shoutrrr URLs
+	NotifyURLs      []string      // DOKDOSTA_NOTIFY_URLS, Shoutrrr URLs
 	NotifyTimeout   time.Duration // one delivery attempt, per URL
 	NotifyRateLimit int           // messages per hour per URL; the second half of that budget is kept for the important ones
-	PingURL         string        // WHALENURSE_HEARTBEAT_URL: pinged while whalenurse is healthy (healthchecks.io, Uptime Kuma push)
-	PingInterval    time.Duration // WHALENURSE_HEARTBEAT_INTERVAL
+	PingURL         string        // DOKDOSTA_HEARTBEAT_URL: pinged while dokdosta is healthy (healthchecks.io, Uptime Kuma push)
+	PingInterval    time.Duration // DOKDOSTA_HEARTBEAT_INTERVAL
 
-	// RegistryAuthDir is WHALENURSE_REGISTRY_AUTH_DIR (M7): a directory with a config.json of inline "auths", given to
+	// RegistryAuthDir is DOKDOSTA_REGISTRY_AUTH_DIR (M7): a directory with a config.json of inline "auths", given to
 	// `compose pull` as DOCKER_CONFIG and to no other command. The path is not a secret; the file is.
 	RegistryAuthDir string
 }
 
-// DriftGuard is WHALENURSE_DRIFT_GUARD.
+// DriftGuard is DOKDOSTA_DRIFT_GUARD.
 type DriftGuard string
 
 const (
@@ -91,7 +91,7 @@ func Defaults() Global {
 		RateLimit:      10,
 		StartupSettle:  2 * time.Minute,
 		LogLevel:       slog.LevelInfo,
-		ControlSocket:  "/run/whalenurse.sock",
+		ControlSocket:  "/run/dokdosta.sock",
 
 		RecoveryPeriod:   10 * time.Minute,
 		FlapLimit:        3,
@@ -110,13 +110,13 @@ func Defaults() Global {
 var later = map[string]string{}
 
 // FromEnv parses environ ("KEY=value" strings, as os.Environ returns). It
-// returns warnings for ignored or unknown WHALENURSE_* variables, and an error
+// returns warnings for ignored or unknown DOKDOSTA_* variables, and an error
 // for a value that is present but invalid.
 func FromEnv(environ []string) (Global, []string, error) {
 	g := Defaults()
 	env := map[string]string{}
 	for _, kv := range environ {
-		if k, v, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "WHALENURSE_") {
+		if k, v, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "DOKDOSTA_") {
 			env[k] = v
 		}
 	}
@@ -142,11 +142,11 @@ func FromEnv(environ []string) (Global, []string, error) {
 		}
 	}
 
-	if v, ok := take("WHALENURSE_HOST_ID"); ok {
+	if v, ok := take("DOKDOSTA_HOST_ID"); ok {
 		if strings.Contains(v, "/") {
 			// The state key is host/project/service/n; a slash in the host would shift every part of it, and pause
 			// and unsuspend scopes would match nothing.
-			errs = append(errs, fmt.Sprintf("WHALENURSE_HOST_ID=%q: must not contain a '/'", v))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_HOST_ID=%q: must not contain a '/'", v))
 		} else {
 			g.HostID = v
 		}
@@ -154,113 +154,113 @@ func FromEnv(environ []string) (Global, []string, error) {
 	if g.HostID == "" {
 		g.HostID = "unknown"
 	}
-	if v, ok := take("WHALENURSE_MODE"); ok {
+	if v, ok := take("DOKDOSTA_MODE"); ok {
 		switch Mode(strings.ToLower(v)) {
 		case ModeLabel, ModeAll:
 			g.Mode = Mode(strings.ToLower(v))
 		default:
-			errs = append(errs, fmt.Sprintf("WHALENURSE_MODE=%q: want label or all", v))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_MODE=%q: want label or all", v))
 		}
 	}
-	if v, ok := take("WHALENURSE_DRY_RUN"); ok {
+	if v, ok := take("DOKDOSTA_DRY_RUN"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("WHALENURSE_DRY_RUN=%q: %v", v, err))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_DRY_RUN=%q: %v", v, err))
 		}
 		g.DryRun = b
 	}
-	dur("WHALENURSE_POLL_INTERVAL", &g.PollInterval, false)
-	dur("WHALENURSE_GRACE", &g.Grace, true)
-	dur("WHALENURSE_COOLDOWN", &g.Cooldown, true)
-	dur("WHALENURSE_CRASHLOOP_AFTER", &g.CrashloopAfter, false)
-	dur("WHALENURSE_STARTUP_SETTLE", &g.StartupSettle, true)
-	dur("WHALENURSE_RECOVERY_PERIOD", &g.RecoveryPeriod, false)
-	dur("WHALENURSE_FLAP_WINDOW", &g.FlapWindow, false)
-	dur("WHALENURSE_HISTORY_RETENTION", &g.HistoryRetention, false)
-	if v, ok := take("WHALENURSE_FLAP_LIMIT"); ok {
+	dur("DOKDOSTA_POLL_INTERVAL", &g.PollInterval, false)
+	dur("DOKDOSTA_GRACE", &g.Grace, true)
+	dur("DOKDOSTA_COOLDOWN", &g.Cooldown, true)
+	dur("DOKDOSTA_CRASHLOOP_AFTER", &g.CrashloopAfter, false)
+	dur("DOKDOSTA_STARTUP_SETTLE", &g.StartupSettle, true)
+	dur("DOKDOSTA_RECOVERY_PERIOD", &g.RecoveryPeriod, false)
+	dur("DOKDOSTA_FLAP_WINDOW", &g.FlapWindow, false)
+	dur("DOKDOSTA_HISTORY_RETENTION", &g.HistoryRetention, false)
+	if v, ok := take("DOKDOSTA_FLAP_LIMIT"); ok {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
-			errs = append(errs, fmt.Sprintf("WHALENURSE_FLAP_LIMIT=%q: want a positive integer", v))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_FLAP_LIMIT=%q: want a positive integer", v))
 		} else {
 			g.FlapLimit = n
 		}
 	}
-	if v, ok := take("WHALENURSE_DATA_DIR"); ok {
+	if v, ok := take("DOKDOSTA_DATA_DIR"); ok {
 		g.DataDir = v
 	}
-	if v, ok := take("WHALENURSE_RATE_LIMIT"); ok {
+	if v, ok := take("DOKDOSTA_RATE_LIMIT"); ok {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
-			errs = append(errs, fmt.Sprintf("WHALENURSE_RATE_LIMIT=%q: want a positive integer", v))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_RATE_LIMIT=%q: want a positive integer", v))
 		} else {
 			g.RateLimit = n
 		}
 	}
-	if v, ok := take("WHALENURSE_LOG_LEVEL"); ok {
+	if v, ok := take("DOKDOSTA_LOG_LEVEL"); ok {
 		if err := g.LogLevel.UnmarshalText([]byte(v)); err != nil {
-			errs = append(errs, fmt.Sprintf("WHALENURSE_LOG_LEVEL=%q: %v", v, err))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_LOG_LEVEL=%q: %v", v, err))
 		}
 	}
-	if v, ok := take("WHALENURSE_HTTP_ADDR"); ok {
+	if v, ok := take("DOKDOSTA_HTTP_ADDR"); ok {
 		g.HTTPAddr = v
 	}
 	// The token is a secret: an error about it never quotes the value.
-	if v, ok := take("WHALENURSE_HTTP_TOKEN"); ok {
+	if v, ok := take("DOKDOSTA_HTTP_TOKEN"); ok {
 		// The examples' placeholders ("replace-with-...") pass the length check and the compose ":?" check, and would
 		// leave the dashboard behind a token that is published in the repository.
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(v)), "replace-with") {
-			errs = append(errs, "WHALENURSE_HTTP_TOKEN is still the placeholder from the example env file; generate one with openssl rand -hex 24")
+			errs = append(errs, "DOKDOSTA_HTTP_TOKEN is still the placeholder from the example env file; generate one with openssl rand -hex 24")
 		} else {
 			g.HTTPToken = v
 		}
 	}
-	if v, ok := take("WHALENURSE_HTTP_ALLOWED_HOSTS"); ok {
+	if v, ok := take("DOKDOSTA_HTTP_ALLOWED_HOSTS"); ok {
 		g.HTTPAllowedHosts = strings.FieldsFunc(v, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' })
 	}
-	if v, ok := take("WHALENURSE_HTTP_TRUSTED_PROXIES"); ok {
+	if v, ok := take("DOKDOSTA_HTTP_TRUSTED_PROXIES"); ok {
 		ps, err := ParseProxies(v)
 		if err != nil {
-			errs = append(errs, "WHALENURSE_HTTP_TRUSTED_PROXIES: "+err.Error())
+			errs = append(errs, "DOKDOSTA_HTTP_TRUSTED_PROXIES: "+err.Error())
 		}
 		g.HTTPTrustedProxies = ps
 	}
-	if v, ok := take("WHALENURSE_METRICS"); ok {
+	if v, ok := take("DOKDOSTA_METRICS"); ok {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
-			errs = append(errs, fmt.Sprintf("WHALENURSE_METRICS=%q: %v", v, err))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_METRICS=%q: %v", v, err))
 		}
 		g.Metrics = b
 	}
-	if v, ok := take("WHALENURSE_CONTROL_SOCKET"); ok {
+	if v, ok := take("DOKDOSTA_CONTROL_SOCKET"); ok {
 		g.ControlSocket = v
 	}
-	if v, ok := take("WHALENURSE_DRIFT_GUARD"); ok {
+	if v, ok := take("DOKDOSTA_DRIFT_GUARD"); ok {
 		switch DriftGuard(strings.ToLower(v)) {
 		case DriftStrict, DriftWarn:
 			g.DriftGuard = DriftGuard(strings.ToLower(v))
 		default:
-			errs = append(errs, fmt.Sprintf("WHALENURSE_DRIFT_GUARD=%q: want strict or warn", v))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_DRIFT_GUARD=%q: want strict or warn", v))
 		}
 	}
-	if v, ok := take("WHALENURSE_COMPOSE_BIN"); ok {
+	if v, ok := take("DOKDOSTA_COMPOSE_BIN"); ok {
 		g.ComposeBin = v
 	}
 	// The notification variables hold tokens, so an error about them never quotes the value.
-	if v, ok := take("WHALENURSE_NOTIFY_URLS"); ok {
+	if v, ok := take("DOKDOSTA_NOTIFY_URLS"); ok {
 		g.NotifyURLs = SplitURLs(v)
 	}
-	if v, ok := take("WHALENURSE_HEARTBEAT_URL"); ok {
+	if v, ok := take("DOKDOSTA_HEARTBEAT_URL"); ok {
 		g.PingURL = v
 	}
-	if v, ok := take("WHALENURSE_REGISTRY_AUTH_DIR"); ok {
+	if v, ok := take("DOKDOSTA_REGISTRY_AUTH_DIR"); ok {
 		g.RegistryAuthDir = v
 	}
-	dur("WHALENURSE_NOTIFY_TIMEOUT", &g.NotifyTimeout, false)
-	dur("WHALENURSE_HEARTBEAT_INTERVAL", &g.PingInterval, false)
-	if v, ok := take("WHALENURSE_NOTIFY_RATE_LIMIT"); ok {
+	dur("DOKDOSTA_NOTIFY_TIMEOUT", &g.NotifyTimeout, false)
+	dur("DOKDOSTA_HEARTBEAT_INTERVAL", &g.PingInterval, false)
+	if v, ok := take("DOKDOSTA_NOTIFY_RATE_LIMIT"); ok {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 {
-			errs = append(errs, fmt.Sprintf("WHALENURSE_NOTIFY_RATE_LIMIT=%q: want a positive integer", v))
+			errs = append(errs, fmt.Sprintf("DOKDOSTA_NOTIFY_RATE_LIMIT=%q: want a positive integer", v))
 		} else {
 			g.NotifyRateLimit = n
 		}
@@ -298,7 +298,7 @@ func CooldownFor(base, override time.Duration, rung int) time.Duration {
 }
 
 // ParseDuration is time.ParseDuration plus a day suffix ("30d", "2d12h"), which the
-// plan's defaults use (WHALENURSE_HISTORY_RETENTION=30d).
+// plan's defaults use (DOKDOSTA_HISTORY_RETENTION=30d).
 func ParseDuration(v string) (time.Duration, error) {
 	if d, rest, ok := strings.Cut(v, "d"); ok && d != "" && strings.Trim(d, "0123456789") == "" {
 		days, err := strconv.Atoi(d)

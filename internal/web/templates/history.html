@@ -7,7 +7,7 @@
   {{range .Filters}}<a class="chip{{if .Active}} chip-on{{end}}" href="{{.Href}}"{{if .Active}} aria-current="true"{{end}}>{{.Label}}</a>{{end}}
 </p>
 {{if .Key}}<p>Only <code>{{.Key}}</code>. <a href="/history">Clear</a></p>{{end}}
-{{if not .Debug}}<p class="muted">The <code>EventAttributed</code> events (a Docker event during a whalenurse action) are hidden. <strong>Debug (everything)</strong> shows them.</p>{{end}}
+{{if not .Debug}}<p class="muted">The <code>EventAttributed</code> events (a Docker event during a dokdosta action) are hidden. <strong>Debug (everything)</strong> shows them.</p>{{end}}
 {{template "eventtable" .Events}}
-{{if .Retention}}<p class="muted">Kept for {{.Retention}} (WHALENURSE_HISTORY_RETENTION){{if not .Persistent}}, but this is a dry run: it is kept in memory only and lost on a restart{{end}}.</p>{{end}}
+{{if .Retention}}<p class="muted">Kept for {{.Retention}} (DOKDOSTA_HISTORY_RETENTION){{if not .Persistent}}, but this is a dry run: it is kept in memory only and lost on a restart{{end}}.</p>{{end}}
 {{end}}

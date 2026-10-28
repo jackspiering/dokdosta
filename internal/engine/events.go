@@ -14,7 +14,7 @@ const (
 	IncidentClosed      EventType = "IncidentClosed" // closed without recovery: gone, stopped by hand, recreated
 	ActionStarted       EventType = "ActionStarted"
 	ActionResult        EventType = "ActionResult"
-	ActionInterrupted   EventType = "ActionInterrupted" // whalenurse was stopped while the action ran and it was cut short: the rung is not spent
+	ActionInterrupted   EventType = "ActionInterrupted" // dokdosta was stopped while the action ran and it was cut short: the rung is not spent
 	RungUnavailable     EventType = "RungUnavailable"   // a configured rung cannot run: disabled by the version gate, no usable compose inputs, or not built yet (pull)
 	Suspended           EventType = "Suspended"         // the ladder is spent, or the key is flapping; nothing more is tried
 	Recovered           EventType = "Recovered"         // recovered for RECOVERY_PERIOD: the incident closes
@@ -34,7 +34,7 @@ const (
 	RestoreEvent        EventType = "RestoreEvent"  // a kill or start seen inside the restore window; interpreted as a restore
 	SignalIgnored       EventType = "SignalIgnored" // a kill with a reload signal (HUP, USR1, USR2, WINCH): not a stop, so no manual-stop marker
 	DriftBlocked        EventType = "DriftBlocked"  // the drift guard skipped a recreate; the container is SUSPENDED
-	DriftWarned         EventType = "DriftWarned"   // WHALENURSE_DRIFT_GUARD=warn: the recreate went ahead despite what the guard found
+	DriftWarned         EventType = "DriftWarned"   // DOKDOSTA_DRIFT_GUARD=warn: the recreate went ahead despite what the guard found
 	RungsDisabled       EventType = "RungsDisabled"
 	DependentPostCheck  EventType = "DependentPostCheck" // a dependent was still stale after a non-forced up: recreating it with --force-recreate
 	TagMoved            EventType = "TagMoved"           // rung 3 pulled a newer image: the tag now points elsewhere, for every stack that shares it

@@ -7,11 +7,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
 )
 
 // M3: the notifier as one more subscriber of the daemon's event stream.
@@ -81,7 +81,7 @@ func TestTheLadderEndingInSuspendedIsNotifiedOncePerStepWithTheCause(t *testing.
 			t.Errorf("message %d lacks the host or the key: %v", i+1, got[i])
 		}
 	}
-	if !strings.Contains(got[2].Body, "cause:") || !strings.Contains(got[2].Body, "unhealthy") || !strings.Contains(got[2].Body, "whalenurse unsuspend p/web") {
+	if !strings.Contains(got[2].Body, "cause:") || !strings.Contains(got[2].Body, "unhealthy") || !strings.Contains(got[2].Body, "dokdosta unsuspend p/web") {
 		t.Errorf("the giving-up message has no cause or next step: %v", got[2])
 	}
 	if !strings.Contains(got[0].Body, "why:") {

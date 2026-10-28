@@ -3,7 +3,7 @@ package engine
 import (
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // crashLoopIncreases is how many RestartCount increases make a crash loop (rule 3).
@@ -16,7 +16,7 @@ type Obs struct {
 	HasHealthcheck bool
 	// Unavailable lists the rungs that cannot run for this container right now, with the reason: "recreate" when the
 	// version gate disabled the compose rungs, the container has no usable compose inputs, or it is not enabled by
-	// whalenurse.actions. The ladder records the reason and goes on; for a decision that needs a recreate it is advisory.
+	// dokdosta.actions. The ladder records the reason and goes on; for a decision that needs a recreate it is advisory.
 	Unavailable map[string]string
 	// Parent identifies the parent a dependents-step repair is made against: the container IDs and start times of the
 	// containers the sidecar's namespaces hang on, as the daemon sees them now. Empty when it is not known or the decision

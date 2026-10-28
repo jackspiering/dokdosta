@@ -11,9 +11,9 @@ import (
 
 	"github.com/nicholas-fedor/shoutrrr/pkg/types"
 
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/store"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/store"
 )
 
 func suspended(incident string) engine.Event {
@@ -304,7 +304,7 @@ func TestHandleDropsInsteadOfBlockingWhenTheQueueIsFull(t *testing.T) {
 }
 
 // A panic in a notification service must not take the healer down (Shoutrrr's router runs services in goroutines of its
-// own with no recover, so whalenurse sends by calling the service itself, under a recover).
+// own with no recover, so dokdosta sends by calling the service itself, under a recover).
 type panicSender struct{ recSender }
 
 func (*panicSender) Send(context.Context, Message) error { panic("boom with token-in-panic-9999") }
@@ -403,9 +403,9 @@ func (l *memLedger) ForgetNotified(typ, key string) {
 	}
 }
 
-// A restart of whalenurse does not say the same thing twice: the first process's notifier writes the ledger, the second
+// A restart of dokdosta does not say the same thing twice: the first process's notifier writes the ledger, the second
 // one's reads it.
-func TestTheDedupeSurvivesARestartOfWhalenurse(t *testing.T) {
+func TestTheDedupeSurvivesARestartOfDokdosta(t *testing.T) {
 	dir := t.TempDir()
 	run := func(events ...engine.Event) []string {
 		st, err := store.Open(dir, nil)
@@ -664,14 +664,14 @@ func TestASuspensionAgainAfterADriftBlockIsNews(t *testing.T) {
 		}
 	}
 	again := got[2]
-	if !again.Critical || !strings.Contains(again.Body, "drift guard") || !strings.Contains(again.Body, "whalenurse unsuspend stack/web") || utf8.RuneCountInString(again.Body) > MaxBody {
+	if !again.Critical || !strings.Contains(again.Body, "drift guard") || !strings.Contains(again.Body, "dokdosta unsuspend stack/web") || utf8.RuneCountInString(again.Body) > MaxBody {
 		t.Errorf("the re-suspension is a giving-up message that keeps the drift context: %v", again)
 	}
 }
 
 // Suspended and Unsuspended make each other news again only once per incident (plan v3.13 item 18): the first Unsuspended
 // after a Suspended and the first Suspended after that are sent; a healthcheck that keeps flipping sends nothing more in
-// that incident, also across a restart of whalenurse. A new incident is news again.
+// that incident, also across a restart of dokdosta. A new incident is news again.
 func TestSuspendedAndUnsuspendedAlternateOnlyOncePerIncident(t *testing.T) {
 	l := &memLedger{}
 	susp := func(inc string) engine.Event {
@@ -688,7 +688,7 @@ func TestSuspendedAndUnsuspendedAlternateOnlyOncePerIncident(t *testing.T) {
 	if got := s[0].titles(); len(got) != 3 || !strings.Contains(got[0], "giving up") || !strings.Contains(got[1], "unsuspended") || !strings.Contains(got[2], "giving up") {
 		t.Fatalf("want giving up, unsuspended, giving up: %q", got)
 	}
-	// A restart of whalenurse in the same incident: still nothing more.
+	// A restart of dokdosta in the same incident: still nothing more.
 	nt2, s2, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l })
 	nt2.Handle(back("i"))
 	nt2.Handle(susp("i"))
@@ -712,7 +712,7 @@ func TestSuspendedAndUnsuspendedAlternateOnlyOncePerIncident(t *testing.T) {
 }
 
 // A message that no URL could take is not recorded as sent: with no URL, or only invalid ones, nothing is written to the
-// ledger, so the warning goes out once a working URL is added and whalenurse restarts. A URL that takes the message and
+// ledger, so the warning goes out once a working URL is added and dokdosta restarts. A URL that takes the message and
 // then fails to deliver it still records it (the dedupe is written as messages are accepted).
 func TestNothingIsRecordedAsSentWhenNoURLCanTakeIt(t *testing.T) {
 	events := []engine.Event{
@@ -730,7 +730,7 @@ func TestNothingIsRecordedAsSentWhenNoURLCanTakeIt(t *testing.T) {
 			if len(l.rows) != 0 {
 				t.Fatalf("recorded %d rows with no usable URL: %v", len(l.rows), l.rows)
 			}
-			nt2, s, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l }) // a URL is added, whalenurse restarts
+			nt2, s, _, _ := newTest(t, 1, func(o *Options) { o.Ledger = l }) // a URL is added, dokdosta restarts
 			for _, e := range events {
 				nt2.Handle(e)
 			}

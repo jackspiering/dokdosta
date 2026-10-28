@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // M4: rung 3, the opt-in pull, against a fake Docker and a fake compose. Nothing here runs a process or touches a registry.
@@ -39,7 +39,7 @@ func breakAndRun(h *cfH, id string, d time.Duration) {
 
 // ---- the label --------------------------------------------------------------------------------------------------
 
-// Without whalenurse.heal.pull=true there is never a pull: the ladder is restart, recreate, SUSPENDED, whatever the
+// Without dokdosta.heal.pull=true there is never a pull: the ladder is restart, recreate, SUSPENDED, whatever the
 // image registry has.
 func TestNoPullWithoutTheLabel(t *testing.T) {
 	h := newCompose(t, nil, nil, docker.ServerInfo{})
@@ -398,11 +398,11 @@ func TestDriftBlockOnASharedTagNamesWhoMovedIt(t *testing.T) {
 	if b.Attrs["moved_by"] != key("p", "web") || b.Attrs["moved_at"] == "" || b.Attrs["moved_ref"] != "web:1" {
 		t.Fatalf("the block must say who moved the tag and when: %+v", b.Attrs)
 	}
-	if !strings.Contains(b.Message, "whalenurse moved this tag: "+key("p", "web")+" pulled it at ") || !strings.Contains(b.Message, "the tag moved") {
+	if !strings.Contains(b.Message, "dokdosta moved this tag: "+key("p", "web")+" pulled it at ") || !strings.Contains(b.Message, "the tag moved") {
 		t.Fatalf("%s", b.Message)
 	}
 
-	// It survives a restart of whalenurse (the store's meta): a second daemon on the same store still knows.
+	// It survives a restart of dokdosta (the store's meta): a second daemon on the same store still knows.
 	h.start(func(o *Options) {
 		o.Meta, o.Compose, o.ComposeActor, o.Stat = meta, h.cf, h.cf, okStat
 	})
@@ -431,7 +431,7 @@ func TestNormalizeRef(t *testing.T) {
 	same := [][]string{
 		{"nginx", "nginx:latest", "docker.io/library/nginx:latest", "library/nginx", "index.docker.io/library/nginx", "docker.io/nginx"},
 		{"ghcr.io/o/app", "ghcr.io/o/app:latest"},
-		{"127.0.0.1:5000/whalenurse-test/app:1"},
+		{"127.0.0.1:5000/dokdosta-test/app:1"},
 	}
 	for _, group := range same {
 		for _, r := range group {

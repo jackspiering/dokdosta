@@ -27,7 +27,7 @@ type Options struct {
 	OnBlock        func(client string, d time.Duration)
 }
 
-// Handler is the handler of the TCP listener (WHALENURSE_HTTP_ADDR). It is read-only: it answers GET and HEAD and
+// Handler is the handler of the TCP listener (DOKDOSTA_HTTP_ADDR). It is read-only: it answers GET and HEAD and
 // refuses every other method, there is no route that changes anything, and the CLI's commands live on the unix socket
 // only (plan §2: no network-exposed write endpoints in v1).
 func Handler(o Options) http.Handler {
@@ -190,7 +190,7 @@ func Secure(o SecureOptions, next http.Handler) http.Handler {
 		if o.Token == "" {
 			// No token: the only defence against a web page reading this through DNS rebinding is the Host header.
 			if !HostAllowed(r.Host, allowed) {
-				writeError(w, http.StatusForbidden, "this Host name is not allowed; set WHALENURSE_HTTP_ALLOWED_HOSTS or WHALENURSE_HTTP_TOKEN")
+				writeError(w, http.StatusForbidden, "this Host name is not allowed; set DOKDOSTA_HTTP_ALLOWED_HOSTS or DOKDOSTA_HTTP_TOKEN")
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -212,8 +212,8 @@ func Secure(o SecureOptions, next http.Handler) http.Handler {
 					return
 				}
 			}
-			h.Add("WWW-Authenticate", `Bearer realm="whalenurse"`)
-			h.Add("WWW-Authenticate", `Basic realm="whalenurse", charset="UTF-8"`)
+			h.Add("WWW-Authenticate", `Bearer realm="dokdosta"`)
+			h.Add("WWW-Authenticate", `Basic realm="dokdosta", charset="UTF-8"`)
 			writeError(w, http.StatusUnauthorized, "a token is required")
 			return
 		}

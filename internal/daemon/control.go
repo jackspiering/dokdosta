@@ -5,14 +5,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
-	"github.com/jackspiering/whalenurse/internal/control"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/api"
+	"github.com/jackspiering/dokdosta/internal/control"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
-// Status is the reply of `whalenurse status`.
+// Status is the reply of `dokdosta status`.
 type Status struct {
 	Host         string        `json:"host"`
 	Mode         string        `json:"mode"`
@@ -74,7 +74,7 @@ func (d *Daemon) Pause(scope string, dur time.Duration) (string, error) {
 	return msg, nil
 }
 
-// watchedIn reports whether the last pass saw a container under the pause scope that whalenurse looks after.
+// watchedIn reports whether the last pass saw a container under the pause scope that dokdosta looks after.
 func (d *Daemon) watchedIn(scope string) bool {
 	_, seen := d.view.snapshot()
 	for key, s := range seen {

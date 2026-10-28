@@ -1,5 +1,7 @@
 # M1 notes
 
+> whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
+
 Decisions, deviations and open points for milestone M1 (restart-only heal MVP) of [PLAN.md](PLAN.md). Most items fill a gap the plan leaves open. Two were deviations from the plan text, **approved by the maintainer on 17 Oct 2026 and recorded in PLAN v3.2**: decision 2 (§3.2, external `start`) and decision 11 (§3.3 rule 3, crash-loop detection). M2 replaces M1's crash-loop code with the stricter rule in PLAN §3.3 (≥3 `RestartCount` increases, the first ≥ `CRASHLOOP_AFTER` ago, cleared after `RECOVERY_PERIOD`).
 
 ## Upstream check (17 Oct 2026)

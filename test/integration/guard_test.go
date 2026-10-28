@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
 )
 
 // stub is a Runner that records argv and answers inspect lookups from a table.
@@ -22,7 +22,7 @@ type stub struct {
 	psRows   []psRow // when set, `docker ps` honours --filter label=<k>[=<v>] and --format over these rows
 }
 
-// psRow is a container as `docker ps -a` sees it: its ID, its project label and its whalenurse.enable value.
+// psRow is a container as `docker ps -a` sees it: its ID, its project label and its dokdosta.enable value.
 type psRow struct{ id, project, enable string }
 
 // psFiltered answers `docker ps` the way Docker does: a label filter with a value matches that exact string, one
@@ -42,15 +42,15 @@ func (s *stub) psFiltered(args []string) string {
 	}
 	var b strings.Builder
 	for _, r := range s.psRows {
-		if key == "whalenurse.enable" && r.enable == "" {
+		if key == "dokdosta.enable" && r.enable == "" {
 			continue // the label is absent
 		}
-		if key == "whalenurse.enable" && hasVal && r.enable != val {
+		if key == "dokdosta.enable" && hasVal && r.enable != val {
 			continue
 		}
 		line := strings.NewReplacer("{{.ID}}", r.id,
 			`{{.Label "com.docker.compose.project"}}`, r.project,
-			`{{.Label "whalenurse.enable"}}`, r.enable, `\t`, "\t").Replace(format)
+			`{{.Label "dokdosta.enable"}}`, r.enable, `\t`, "\t").Replace(format)
 		b.WriteString(line + "\n")
 	}
 	return b.String()
@@ -99,9 +99,11 @@ func refused(t *testing.T, err error) {
 }
 
 var badProjects = []string{
-	"", "whalenurse-test-", "whalenurse-test", "prod", "default", "whalenurse", "whalenurse-m0-e1", "xwhalenurse-test-a",
-	"whalenurse-test-A", "whalenurse-test-a b", "whalenurse-test-a/b", "whalenurse-test-a\nprod", "whalenurse-test--x", "WHALENURSE-TEST-a",
-	"whalenurse-test-a;rm", "../whalenurse-test-a", "whalenurse-test-é",
+	"", "dokdosta-test-", "dokdosta-test", "prod", "default", "dokdosta", "dokdosta-m0-e1", "xdokdosta-test-a",
+	"dokdosta-test-A", "dokdosta-test-a b", "dokdosta-test-a/b", "dokdosta-test-a\nprod", "dokdosta-test--x", "DOKDOSTA-TEST-a",
+	"dokdosta-test-a;rm", "../dokdosta-test-a", "dokdosta-test-é",
+	// The names from before the rename (plan v3.15) are strangers too.
+	"whalenurse-test-a", "whalenurse-m0-e1",
 }
 
 func TestProjectRegexRejectsBadNames(t *testing.T) {
@@ -110,7 +112,7 @@ func TestProjectRegexRejectsBadNames(t *testing.T) {
 			t.Errorf("project %q was accepted", p)
 		}
 	}
-	for _, p := range []string{"whalenurse-test-a", "whalenurse-test-heal-3f2a", "whalenurse-test-0_x-y"} {
+	for _, p := range []string{"dokdosta-test-a", "dokdosta-test-heal-3f2a", "dokdosta-test-0_x-y"} {
 		if err := RequireProject(p); err != nil {
 			t.Errorf("project %q was refused: %v", p, err)
 		}
@@ -128,7 +130,7 @@ func TestComposeRefusesBadProjectsAndSmuggling(t *testing.T) {
 			t.Errorf("project %q reached docker: %v", p, s.calls)
 		}
 	}
-	good := "whalenurse-test-a"
+	good := "dokdosta-test-a"
 	for _, args := range [][]string{
 		{"-p", "prod", "ps"}, {"-pprod", "ps"}, {"--project-name", "prod"}, {"--project-name=prod", "ps"},
 		{"down"}, {"-f", "x.yml", "down", "-v"}, {"rm", "-f"}, {"up", "-d", "rm"},
@@ -147,19 +149,19 @@ func TestComposeRefusesBadProjectsAndSmuggling(t *testing.T) {
 	if _, err := g.Compose(context.Background(), good, "up", "-d", "--pull", "never", "--progress", "plain"); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.calls[0]; got != "docker compose -p whalenurse-test-a up -d --pull never --progress plain" {
+	if got := s.calls[0]; got != "docker compose -p dokdosta-test-a up -d --pull never --progress plain" {
 		t.Fatal(got)
 	}
 	if err := g.Down(context.Background(), good); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.calls[1]; got != "docker compose -p whalenurse-test-a down -v --timeout 2 --remove-orphans" {
+	if got := s.calls[1]; got != "docker compose -p dokdosta-test-a down -v --timeout 2 --remove-orphans" {
 		t.Fatal(got)
 	}
 }
 
 func TestCtrChecksTheContainersProjectFirst(t *testing.T) {
-	s := &stub{projects: map[string]string{"ours": "whalenurse-test-a", "theirs": "prod", "m0": "whalenurse-m0-e1", "plain": ""}}
+	s := &stub{projects: map[string]string{"ours": "dokdosta-test-a", "theirs": "prod", "m0": "dokdosta-m0-e1", "plain": ""}}
 	g := &Guard{R: s}
 	ctx := context.Background()
 	for _, ctr := range []string{"theirs", "m0", "plain", "unknown", ""} {
@@ -224,20 +226,20 @@ func TestCleanEnvDropsRedirectingVariables(t *testing.T) {
 
 func TestPreflightFindsOptedInStrangers(t *testing.T) {
 	ctx := context.Background()
-	t.Setenv("WHALENURSE_MODE", "")
-	ok := &stub{psRows: []psRow{{"abc", "whalenurse-test-a", "true"}, {"def", "whalenurse-test-b", "true"}}}
+	t.Setenv("DOKDOSTA_MODE", "")
+	ok := &stub{psRows: []psRow{{"abc", "dokdosta-test-a", "true"}, {"def", "dokdosta-test-b", "true"}}}
 	if err := (&Guard{R: ok}).PreflightNoStrangers(ctx); err != nil {
 		t.Fatal(err)
 	}
 	for _, rows := range [][]psRow{
 		{{"abc", "prod", "true"}},
 		{{"abc", "", "true"}},
-		{{"abc", "whalenurse-m0-x", "true"}},
-		{{"abc", "whalenurse-test-a", "true"}, {"def", "media", "true"}},
+		{{"abc", "dokdosta-m0-x", "true"}},
+		{{"abc", "dokdosta-test-a", "true"}, {"def", "media", "true"}},
 	} {
 		refused(t, (&Guard{R: &stub{psRows: rows}}).PreflightNoStrangers(ctx))
 	}
-	t.Setenv("WHALENURSE_MODE", "all")
+	t.Setenv("DOKDOSTA_MODE", "all")
 	refused(t, (&Guard{R: ok}).PreflightNoStrangers(ctx))
 }
 
@@ -246,32 +248,32 @@ func optedIn(v string) bool {
 	return c.OptedIn
 }
 
-// The preflight must see every spelling whalenurse reads as an opt-in, not only the literal "true": the daemon lists every
+// The preflight must see every spelling dokdosta reads as an opt-in, not only the literal "true": the daemon lists every
 // container and decides with config.ParseLabels.
-func TestPreflightRefusesEveryOptInSpellingWhalenurseAccepts(t *testing.T) {
+func TestPreflightRefusesEveryOptInSpellingDokdostaAccepts(t *testing.T) {
 	ctx := context.Background()
-	t.Setenv("WHALENURSE_MODE", "")
+	t.Setenv("DOKDOSTA_MODE", "")
 	for _, v := range []string{"1", "t", "T", "TRUE", "True", "true", " true", "true "} {
 		if !optedIn(v) {
-			t.Fatalf("premise: %q is not an opt-in for whalenurse", v)
+			t.Fatalf("premise: %q is not an opt-in for dokdosta", v)
 		}
 		refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "prod", v}}}}).PreflightNoStrangers(ctx))
 	}
 	// Not an opt-in: not refused, whatever the project.
 	for _, v := range []string{"false", "0", "f", "no", "garbage", ""} {
 		if optedIn(v) {
-			t.Fatalf("premise: %q is an opt-in for whalenurse", v)
+			t.Fatalf("premise: %q is an opt-in for dokdosta", v)
 		}
 		if err := (&Guard{R: &stub{psRows: []psRow{{"abc", "prod", v}}}}).PreflightNoStrangers(ctx); err != nil {
 			t.Fatalf("%q: %v", v, err)
 		}
 	}
 	// An opt-in inside a matching project is fine, whatever its spelling.
-	if err := (&Guard{R: &stub{psRows: []psRow{{"abc", "whalenurse-test-a", "1"}}}}).PreflightNoStrangers(ctx); err != nil {
+	if err := (&Guard{R: &stub{psRows: []psRow{{"abc", "dokdosta-test-a", "1"}}}}).PreflightNoStrangers(ctx); err != nil {
 		t.Fatal(err)
 	}
 	// A line that does not split into three fields (a newline in the value, a tab in a label) is not guessed at.
-	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "whalenurse-test-a", "\ntrue"}}}}).PreflightNoStrangers(ctx))
+	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "dokdosta-test-a", "\ntrue"}}}}).PreflightNoStrangers(ctx))
 	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "prod\tx", "true"}}}}).PreflightNoStrangers(ctx))
 	// No project label at all is a stranger.
 	refused(t, (&Guard{R: &stub{psRows: []psRow{{"abc", "", "T"}}}}).PreflightNoStrangers(ctx))
@@ -279,7 +281,7 @@ func TestPreflightRefusesEveryOptInSpellingWhalenurseAccepts(t *testing.T) {
 
 func TestGuardedActorRefusesOtherProjects(t *testing.T) {
 	f := docker.NewFake()
-	f.Put(docker.Container{ID: "ours", Name: "ours", Labels: map[string]string{docker.LabelProject: "whalenurse-test-a"}})
+	f.Put(docker.Container{ID: "ours", Name: "ours", Labels: map[string]string{docker.LabelProject: "dokdosta-test-a"}})
 	f.Put(docker.Container{ID: "theirs", Name: "theirs", Labels: map[string]string{docker.LabelProject: "media"}})
 	f.Put(docker.Container{ID: "plain", Name: "plain", Labels: map[string]string{}})
 	a := Actor{Reader: f, Inner: f}
@@ -304,18 +306,18 @@ func TestGuardedActorRefusesOtherProjects(t *testing.T) {
 
 // ---- the compose filter and the image helpers (M2b) ----------------------------------------------------------------
 
-const goodUp = "-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env up -d --force-recreate --no-deps --pull never --no-build -- web"
+const goodUp = "-p dokdosta-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env up -d --force-recreate --no-deps --pull never --no-build -- web"
 
 func TestComposeFilterAcceptsExactlyWhatTheComposePackageBuilds(t *testing.T) {
 	for _, ok := range []string{
 		goodUp,
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml up -d --no-deps --pull never --no-build -- web",
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --dry-run --progress json up -d --no-deps --pull never --no-build -- web",
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --hash=web",
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml config --format json --no-env-resolution -- web", // the pull rung's policy read
-		"-p whalenurse-test-a version --short",
-		"-p whalenurse-test-a version",
-		"-p whalenurse-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env pull --policy always -- web", // rung 3
+		"-p dokdosta-test-a --project-directory /s -f /s/compose.yaml up -d --no-deps --pull never --no-build -- web",
+		"-p dokdosta-test-a --project-directory /s -f /s/compose.yaml --dry-run --progress json up -d --no-deps --pull never --no-build -- web",
+		"-p dokdosta-test-a --project-directory /s -f /s/compose.yaml config --hash=web",
+		"-p dokdosta-test-a --project-directory /s -f /s/compose.yaml config --format json --no-env-resolution -- web", // the pull rung's policy read
+		"-p dokdosta-test-a version --short",
+		"-p dokdosta-test-a version",
+		"-p dokdosta-test-a --project-directory /s -f /s/compose.yaml --env-file /s/.env pull --policy always -- web", // rung 3
 	} {
 		if err := CheckComposeCommand(strings.Fields(ok)); err != nil {
 			t.Errorf("%s: %v", ok, err)
@@ -325,55 +327,56 @@ func TestComposeFilterAcceptsExactlyWhatTheComposePackageBuilds(t *testing.T) {
 
 func TestComposeFilterRefuses(t *testing.T) {
 	for name, args := range map[string]string{
-		"down":                       "-p whalenurse-test-a down -v",
-		"down after the files":       "-p whalenurse-test-a --project-directory /s -f /s/c.yaml down",
-		"rm":                         "-p whalenurse-test-a rm -f web",
-		"pull":                       "-p whalenurse-test-a pull web",
-		"pull with the policy first": "-p whalenurse-test-a pull web --policy always",
-		"pull policy missing":        "-p whalenurse-test-a pull --policy missing web",
-		"pull with dependencies":     "-p whalenurse-test-a pull --policy always --include-deps web",
-		"pull all services":          "-p whalenurse-test-a pull --policy always",
-		"pull two services":          "-p whalenurse-test-a pull --policy always web db",
-		"pull a flag as a service":   "-p whalenurse-test-a pull --policy always --quiet",
+		"down":                       "-p dokdosta-test-a down -v",
+		"down after the files":       "-p dokdosta-test-a --project-directory /s -f /s/c.yaml down",
+		"rm":                         "-p dokdosta-test-a rm -f web",
+		"pull":                       "-p dokdosta-test-a pull web",
+		"pull with the policy first": "-p dokdosta-test-a pull web --policy always",
+		"pull policy missing":        "-p dokdosta-test-a pull --policy missing web",
+		"pull with dependencies":     "-p dokdosta-test-a pull --policy always --include-deps web",
+		"pull all services":          "-p dokdosta-test-a pull --policy always",
+		"pull two services":          "-p dokdosta-test-a pull --policy always web db",
+		"pull a flag as a service":   "-p dokdosta-test-a pull --policy always --quiet",
 		"pull of another project":    "-p prod pull --policy always -- web",
-		"build":                      "-p whalenurse-test-a build web",
-		"run":                        "-p whalenurse-test-a run web",
-		"stop":                       "-p whalenurse-test-a stop web",
+		"build":                      "-p dokdosta-test-a build web",
+		"run":                        "-p dokdosta-test-a run web",
+		"stop":                       "-p dokdosta-test-a stop web",
 		"another project":            "-p prod up -d --no-deps --pull never --no-build -- web",
-		"an m0 project":              "-p whalenurse-m0-e1 up -d --no-deps --pull never --no-build -- web",
+		"an m0 project":              "-p dokdosta-m0-e1 up -d --no-deps --pull never --no-build -- web",
+		"a pre-rename test project":  "-p whalenurse-test-a up -d --no-deps --pull never --no-build -- web",
 		"no project":                 "up -d --no-deps --pull never --no-build -- web",
-		"project via --project-name": "--project-name whalenurse-test-a up -d --no-deps --pull never --no-build -- web",
-		"up may pull":                "-p whalenurse-test-a up -d --no-deps --pull always --no-build -- web",
-		"up pull missing":            "-p whalenurse-test-a up -d --no-deps --pull missing --no-build -- web",
-		"up without --pull":          "-p whalenurse-test-a up -d --no-deps --no-build -- web",
-		"up may build":               "-p whalenurse-test-a up -d --no-deps --pull never --build web",
-		"up without --no-build":      "-p whalenurse-test-a up -d --no-deps --pull never web",
-		"up with dependencies":       "-p whalenurse-test-a up -d --pull never --no-build -- web",
-		"up attached":                "-p whalenurse-test-a up --no-deps --pull never --no-build -- web",
-		"up all services":            "-p whalenurse-test-a up -d --no-deps --pull never --no-build",
-		"up two services":            "-p whalenurse-test-a up -d --no-deps --pull never --no-build web db",
-		"up --remove-orphans":        "-p whalenurse-test-a up -d --no-deps --pull never --no-build --remove-orphans web",
-		"up --renew-anon-volumes":    "-p whalenurse-test-a up -d --no-deps --pull never --no-build -V web",
-		"config hash of all":         "-p whalenurse-test-a config --hash=*",
-		"config hash of two":         "-p whalenurse-test-a config --hash=a,b",
-		"config rendered":            "-p whalenurse-test-a config",
-		"config json of all":         "-p whalenurse-test-a config --format json --no-env-resolution",
-		"config json with env":       "-p whalenurse-test-a config --format json web",
-		"config yaml":                "-p whalenurse-test-a config --format yaml --no-env-resolution -- web",
-		"config json of two":         "-p whalenurse-test-a config --format json --no-env-resolution web db",
-		"config json, flag service":  "-p whalenurse-test-a config --format json --no-env-resolution --hash=web",
-		"version -f":                 "-p whalenurse-test-a version --format json",
-		"flag without value":         "-p whalenurse-test-a -f",
-		"no subcommand":              "-p whalenurse-test-a --dry-run",
-		"up service without --":      "-p whalenurse-test-a up -d --no-deps --pull never --no-build web",
-		"up flag after --":           "-p whalenurse-test-a up -d --no-deps --pull never --no-build -- --dry-run=false",
-		"up flags after --":          "-p whalenurse-test-a up -d --no-deps --pull never -- --no-build web",
-		"up two services after --":   "-p whalenurse-test-a up -d --no-deps --pull never --no-build -- web db",
-		"up -- without a service":    "-p whalenurse-test-a up -d --no-deps --pull never --no-build --",
-		"pull service without --":    "-p whalenurse-test-a pull --policy always web",
-		"pull flag after --":         "-p whalenurse-test-a pull --policy always -- --include-deps",
-		"config json without --":     "-p whalenurse-test-a config --format json --no-env-resolution web",
-		"config json flag after --":  "-p whalenurse-test-a config --format json --no-env-resolution -- --hash=web",
+		"project via --project-name": "--project-name dokdosta-test-a up -d --no-deps --pull never --no-build -- web",
+		"up may pull":                "-p dokdosta-test-a up -d --no-deps --pull always --no-build -- web",
+		"up pull missing":            "-p dokdosta-test-a up -d --no-deps --pull missing --no-build -- web",
+		"up without --pull":          "-p dokdosta-test-a up -d --no-deps --no-build -- web",
+		"up may build":               "-p dokdosta-test-a up -d --no-deps --pull never --build web",
+		"up without --no-build":      "-p dokdosta-test-a up -d --no-deps --pull never web",
+		"up with dependencies":       "-p dokdosta-test-a up -d --pull never --no-build -- web",
+		"up attached":                "-p dokdosta-test-a up --no-deps --pull never --no-build -- web",
+		"up all services":            "-p dokdosta-test-a up -d --no-deps --pull never --no-build",
+		"up two services":            "-p dokdosta-test-a up -d --no-deps --pull never --no-build web db",
+		"up --remove-orphans":        "-p dokdosta-test-a up -d --no-deps --pull never --no-build --remove-orphans web",
+		"up --renew-anon-volumes":    "-p dokdosta-test-a up -d --no-deps --pull never --no-build -V web",
+		"config hash of all":         "-p dokdosta-test-a config --hash=*",
+		"config hash of two":         "-p dokdosta-test-a config --hash=a,b",
+		"config rendered":            "-p dokdosta-test-a config",
+		"config json of all":         "-p dokdosta-test-a config --format json --no-env-resolution",
+		"config json with env":       "-p dokdosta-test-a config --format json web",
+		"config yaml":                "-p dokdosta-test-a config --format yaml --no-env-resolution -- web",
+		"config json of two":         "-p dokdosta-test-a config --format json --no-env-resolution web db",
+		"config json, flag service":  "-p dokdosta-test-a config --format json --no-env-resolution --hash=web",
+		"version -f":                 "-p dokdosta-test-a version --format json",
+		"flag without value":         "-p dokdosta-test-a -f",
+		"no subcommand":              "-p dokdosta-test-a --dry-run",
+		"up service without --":      "-p dokdosta-test-a up -d --no-deps --pull never --no-build web",
+		"up flag after --":           "-p dokdosta-test-a up -d --no-deps --pull never --no-build -- --dry-run=false",
+		"up flags after --":          "-p dokdosta-test-a up -d --no-deps --pull never -- --no-build web",
+		"up two services after --":   "-p dokdosta-test-a up -d --no-deps --pull never --no-build -- web db",
+		"up -- without a service":    "-p dokdosta-test-a up -d --no-deps --pull never --no-build --",
+		"pull service without --":    "-p dokdosta-test-a pull --policy always web",
+		"pull flag after --":         "-p dokdosta-test-a pull --policy always -- --include-deps",
+		"config json without --":     "-p dokdosta-test-a config --format json --no-env-resolution web",
+		"config json flag after --":  "-p dokdosta-test-a config --format json --no-env-resolution -- --hash=web",
 	} {
 		if err := CheckComposeCommand(strings.Fields(args)); !errors.Is(err, ErrRefused) {
 			t.Errorf("%s: %s was not refused (%v)", name, args, err)
@@ -397,19 +400,19 @@ func TestComposeRunnerOnlyRunsWhatTheFilterAccepts(t *testing.T) {
 	if _, err := r.Run(context.Background(), compose.Command{Bin: "/usr/bin/docker", Args: strings.Fields(goodUp)}); !errors.Is(err, ErrRefused) {
 		t.Fatalf("another binary: %v", err)
 	}
-	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a down")}); !errors.Is(err, ErrRefused) {
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p dokdosta-test-a down")}); !errors.Is(err, ErrRefused) {
 		t.Fatalf("down: %v", err)
 	}
 	if len(rec.ran) != 1 || len(r.Log()) != 1 || len(r.Mutating()) != 1 || len(r.Pulls()) != 0 {
 		t.Fatalf("%v %v", rec.ran, r.Log())
 	}
-	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a pull --policy always -- web")}); err != nil {
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p dokdosta-test-a pull --policy always -- web")}); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.Pulls()) != 1 || len(r.Mutating()) != 1 {
 		t.Fatalf("a pull is counted by Pulls: %v / %v", r.Pulls(), r.Mutating())
 	}
-	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p whalenurse-test-a --dry-run --progress json up -d --no-deps --pull never --no-build -- web")}); err != nil {
+	if _, err := r.Run(context.Background(), compose.Command{Bin: "/x/docker-compose", Args: strings.Fields("-p dokdosta-test-a --dry-run --progress json up -d --no-deps --pull never --no-build -- web")}); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.Mutating()) != 1 {
@@ -421,29 +424,29 @@ func TestImageHelpersStayInTheirNamespace(t *testing.T) {
 	s := &stub{}
 	g := &Guard{R: s}
 	ctx := context.Background()
-	for _, dst := range []string{"busybox:1.37", "prod/app:1", "whalenurse:1", "", "whalenurse-test", "whalenurse-test/x y", "whalenurse-test/x;rm"} {
+	for _, dst := range []string{"busybox:1.37", "prod/app:1", "dokdosta:1", "", "dokdosta-test", "dokdosta-test/x y", "dokdosta-test/x;rm"} {
 		refused(t, g.Tag(ctx, "busybox:1.37", dst))
 		refused(t, g.Untag(ctx, dst))
 		refused(t, g.Build(ctx, dst, "FROM busybox:1.37\n"))
 	}
-	refused(t, g.Tag(ctx, "alpine:3", "whalenurse-test/x:1"))
-	refused(t, g.Tag(ctx, "prod/app:1", "whalenurse-test/x:1"))
-	refused(t, g.Build(ctx, "whalenurse-test/x:1", "FROM alpine:3.22\n"))
-	refused(t, g.Build(ctx, "whalenurse-test/x:1", "FROM busybox:1.37\nFROM prod/app:1\n"))
-	refused(t, g.Build(ctx, "whalenurse-test/x:1", "RUN true\n"))
+	refused(t, g.Tag(ctx, "alpine:3", "dokdosta-test/x:1"))
+	refused(t, g.Tag(ctx, "prod/app:1", "dokdosta-test/x:1"))
+	refused(t, g.Build(ctx, "dokdosta-test/x:1", "FROM alpine:3.22\n"))
+	refused(t, g.Build(ctx, "dokdosta-test/x:1", "FROM busybox:1.37\nFROM prod/app:1\n"))
+	refused(t, g.Build(ctx, "dokdosta-test/x:1", "RUN true\n"))
 	if len(s.mutations()) != 0 {
 		t.Fatalf("a refused call ran: %v", s.mutations())
 	}
-	if err := g.Tag(ctx, "busybox:1.37", "whalenurse-test/x:1"); err != nil {
+	if err := g.Tag(ctx, "busybox:1.37", "dokdosta-test/x:1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.Tag(ctx, "whalenurse-test/x:1", "whalenurse-test/y:1"); err != nil {
+	if err := g.Tag(ctx, "dokdosta-test/x:1", "dokdosta-test/y:1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.Build(ctx, "whalenurse-test/z:1", "FROM busybox:1.37\nRUN touch /x\n"); err != nil {
+	if err := g.Build(ctx, "dokdosta-test/z:1", "FROM busybox:1.37\nRUN touch /x\n"); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.Untag(ctx, "whalenurse-test/x:1"); err != nil {
+	if err := g.Untag(ctx, "dokdosta-test/x:1"); err != nil {
 		t.Fatal(err)
 	}
 	if len(s.mutations()) != 4 {
@@ -453,17 +456,17 @@ func TestImageHelpersStayInTheirNamespace(t *testing.T) {
 
 // ---- the test registry (M4) ---------------------------------------------------------------------------------------
 
-const regRef = "127.0.0.1:49153/whalenurse-test/pull-app:latest"
+const regRef = "127.0.0.1:49153/dokdosta-test/pull-app:latest"
 
 func TestRegistryHelpersStayInTheTestRegistry(t *testing.T) {
-	s := &stub{projects: map[string]string{"reg": "whalenurse-test-registry-ab12", "other": "prod"}}
+	s := &stub{projects: map[string]string{"reg": "dokdosta-test-registry-ab12", "other": "prod"}}
 	g := &Guard{R: s}
 	ctx := context.Background()
 	for _, ref := range []string{
-		"", "busybox:1.37", "localhost:5000/whalenurse-test/x:1", "127.0.0.1/whalenurse-test/x:1", "127.0.0.1:5000/x:1",
-		"127.0.0.1:5000/whalenurse-test", "127.0.0.1:5000/other/x:1", "127.0.0.1:5000/whalenurse-test/x y", "127.0.0.1:5000/whalenurse-test/x;rm",
-		"ghcr.io/jackspiering/whalenurse:latest", "10.0.0.5:5000/whalenurse-test/x:1", "127.0.0.1:5000/whalenurse-test/../x:1x/$(id)",
-		"127.0.0.1:5000@evil.com/whalenurse-test/x:1", "docker.io/127.0.0.1:5000/whalenurse-test/x:1",
+		"", "busybox:1.37", "localhost:5000/dokdosta-test/x:1", "127.0.0.1/dokdosta-test/x:1", "127.0.0.1:5000/x:1",
+		"127.0.0.1:5000/dokdosta-test", "127.0.0.1:5000/other/x:1", "127.0.0.1:5000/dokdosta-test/x y", "127.0.0.1:5000/dokdosta-test/x;rm",
+		"ghcr.io/jackspiering/dokdosta:latest", "10.0.0.5:5000/dokdosta-test/x:1", "127.0.0.1:5000/dokdosta-test/../x:1x/$(id)",
+		"127.0.0.1:5000@evil.com/dokdosta-test/x:1", "docker.io/127.0.0.1:5000/dokdosta-test/x:1",
 	} {
 		refused(t, g.Push(ctx, ref))
 		refused(t, g.PullRegistry(ctx, ref))
@@ -482,7 +485,7 @@ func TestRegistryHelpersStayInTheTestRegistry(t *testing.T) {
 	if err := g.Tag(ctx, id, regRef); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.Tag(ctx, "whalenurse-test/v2:1", regRef); err != nil {
+	if err := g.Tag(ctx, "dokdosta-test/v2:1", regRef); err != nil {
 		t.Fatal(err)
 	}
 	if err := g.Build(ctx, regRef, "FROM busybox:1.37\nRUN echo v1 > /version\n"); err != nil {
@@ -509,7 +512,7 @@ func TestRegistryHelpersStayInTheTestRegistry(t *testing.T) {
 func TestRunRollbackRunsOnlyWhatARollbackIs(t *testing.T) {
 	id := "sha256:" + strings.Repeat("a", 64)
 	tagLine := "docker image tag " + id + " " + regRef
-	good := "docker compose -p whalenurse-test-a --project-directory /tmp/s -f /tmp/s/compose.yaml up -d --no-deps --pull never --no-build web"
+	good := "docker compose -p dokdosta-test-a --project-directory /tmp/s -f /tmp/s/compose.yaml up -d --no-deps --pull never --no-build web"
 	// The form written before plan v3.13 item 7, without --no-build, is still a rollback.
 	if err := (&Guard{R: &stub{}}).RunRollback(context.Background(), tagLine, strings.Replace(good, " --no-build", "", 1)); err != nil {
 		t.Fatal(err)
@@ -530,10 +533,10 @@ func TestRunRollbackRunsOnlyWhatARollbackIs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, tc := range map[string][2]string{
-		"another project":       {tagLine, strings.Replace(good, "whalenurse-test-a", "prod", 1)},
+		"another project":       {tagLine, strings.Replace(good, "dokdosta-test-a", "prod", 1)},
 		"an extra flag":         {tagLine, strings.Replace(good, "up -d", "up -d --force-recreate", 1)},
-		"a different command":   {tagLine, "docker compose -p whalenurse-test-a down"},
-		"down in the middle":    {tagLine, "docker compose -p whalenurse-test-a down && " + good},
+		"a different command":   {tagLine, "docker compose -p dokdosta-test-a down"},
+		"down in the middle":    {tagLine, "docker compose -p dokdosta-test-a down && " + good},
 		"quoted path":           {tagLine, strings.Replace(good, "/tmp/s ", "'/tmp/s;x' ", 1)},
 		"a shell metacharacter": {tagLine, good + " ; id"},
 		"pull may pull":         {tagLine, strings.Replace(good, "--pull never", "--pull always", 1)},
@@ -557,23 +560,23 @@ func TestRunRollbackRunsOnlyWhatARollbackIs(t *testing.T) {
 func TestComposeRunnerOnlyLetsAPullUseTheCredentialsDirectory(t *testing.T) {
 	rec := &recordingCompose{}
 	r := &ComposeRunner{Inner: rec}
-	r.AllowAuthDir("/tmp/whalenurse-test-auth-1")
-	pull := strings.Fields("-p whalenurse-test-a pull --policy always -- web")
+	r.AllowAuthDir("/tmp/dokdosta-test-auth-1")
+	pull := strings.Fields("-p dokdosta-test-a pull --policy always -- web")
 	ctx := context.Background()
-	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/tmp/whalenurse-test-auth-1"}); err != nil {
+	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/tmp/dokdosta-test-auth-1"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/home/me/.docker"}); !errors.Is(err, ErrRefused) {
 		t.Fatalf("another directory: %v", err)
 	}
-	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: strings.Fields(goodUp), ConfigDir: "/tmp/whalenurse-test-auth-1"}); !errors.Is(err, ErrRefused) {
+	if _, err := r.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: strings.Fields(goodUp), ConfigDir: "/tmp/dokdosta-test-auth-1"}); !errors.Is(err, ErrRefused) {
 		t.Fatalf("an up with the credentials: %v", err)
 	}
 	none := &ComposeRunner{Inner: rec}
-	if _, err := none.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/tmp/whalenurse-test-auth-1"}); !errors.Is(err, ErrRefused) {
+	if _, err := none.Run(ctx, compose.Command{Bin: "/x/docker-compose", Args: pull, ConfigDir: "/tmp/dokdosta-test-auth-1"}); !errors.Is(err, ErrRefused) {
 		t.Fatalf("no directory registered: %v", err)
 	}
-	if got := r.PullConfigDirs(); len(got) != 1 || got[0] != "/tmp/whalenurse-test-auth-1" {
+	if got := r.PullConfigDirs(); len(got) != 1 || got[0] != "/tmp/dokdosta-test-auth-1" {
 		t.Fatalf("%v", got)
 	}
 }
@@ -581,7 +584,7 @@ func TestComposeRunnerOnlyLetsAPullUseTheCredentialsDirectory(t *testing.T) {
 func TestPushWithOnlyUsesTheTestsOwnDockerConfig(t *testing.T) {
 	s := &stub{}
 	g := &Guard{R: s}
-	ref := "127.0.0.1:5000/whalenurse-test/x:v1"
+	ref := "127.0.0.1:5000/dokdosta-test/x:v1"
 	for _, dir := range []string{"/home/me/.docker", os.TempDir() + "/other-dir", os.TempDir() + "/" + DockerConfigPrefix + "1/sub", ""} {
 		if err := g.PushWith(context.Background(), ref, dir); !errors.Is(err, ErrRefused) {
 			t.Errorf("%q: %v", dir, err)

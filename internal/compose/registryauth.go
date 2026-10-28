@@ -12,10 +12,10 @@ import (
 	"syscall"
 )
 
-// RegistryAuthFile is the file WHALENURSE_REGISTRY_AUTH_DIR must hold.
+// RegistryAuthFile is the file DOKDOSTA_REGISTRY_AUTH_DIR must hold.
 const RegistryAuthFile = "config.json"
 
-// RegistryAuth is what whalenurse knows about the credentials the pull rung may use (plan v3.12 items 3 to 5). The
+// RegistryAuth is what dokdosta knows about the credentials the pull rung may use (plan v3.12 items 3 to 5). The
 // directory is given to `compose pull` as DOCKER_CONFIG and to no other command, so the file must say nothing but
 // credentials: a currentContext would point the pull at another daemon, a credsStore or credHelpers needs a helper
 // binary the image does not have, proxies would be sent to every build.
@@ -23,11 +23,11 @@ type RegistryAuth struct {
 	Dir      string
 	Hosts    []string // the keys of "auths", sorted; shown by status, the API and the home page
 	Secrets  []string // everything that must never reach a log: the redactor learns these
-	Warnings []string // startup warnings: the directory or the file can be written by whalenurse
+	Warnings []string // startup warnings: the directory or the file can be written by dokdosta
 }
 
-// authEntry is the part of an "auths" entry that whalenurse reads. Docker accepts more fields (email, serveraddress,
-// registrytoken); they are not credentials of the kinds whalenurse supports and are ignored.
+// authEntry is the part of an "auths" entry that dokdosta reads. Docker accepts more fields (email, serveraddress,
+// registrytoken); they are not credentials of the kinds dokdosta supports and are ignored.
 type authEntry struct {
 	Auth          string `json:"auth"`
 	Username      string `json:"username"`
@@ -118,7 +118,7 @@ func LoadRegistryAuth(dir string) (*RegistryAuth, error) {
 	sort.Strings(a.Secrets)
 	for _, p := range []string{dir, path} {
 		if syscall.Access(p, 2) == nil { // W_OK
-			a.Warnings = append(a.Warnings, fmt.Sprintf("%s can be written by whalenurse: mount the credentials read-only", p))
+			a.Warnings = append(a.Warnings, fmt.Sprintf("%s can be written by dokdosta: mount the credentials read-only", p))
 		}
 	}
 	return a, nil

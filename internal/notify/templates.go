@@ -7,8 +7,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	wncompose "github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	wncompose "github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // Message is one notification: a title and a body, both short enough for a phone push.
@@ -123,7 +123,7 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		headline = "action rate limit reached, healing waits"
 		critical = true
 		class, spacing = "RateLimited", RateLimitedEvery
-		detail = append(detail, e.Message, "every container waits for a free slot (WHALENURSE_RATE_LIMIT); this is sent at most once an hour")
+		detail = append(detail, e.Message, "every container waits for a free slot (DOKDOSTA_RATE_LIMIT); this is sent at most once an hour")
 
 	case engine.Suspended:
 		switch attr("reason") {
@@ -150,7 +150,7 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		critical = true
 		detail = append(detail, "reason: "+shortFindings(findings))
 		if by := attr("moved_by"); by != "" {
-			detail = append(detail, "tag moved by whalenurse's pull rung: "+scopeOf(by)+" at "+movedAt(attr("moved_at")))
+			detail = append(detail, "tag moved by dokdosta's pull rung: "+scopeOf(by)+" at "+movedAt(attr("moved_at")))
 		}
 		// The next step comes before the hint: when the body is full it is the hint that gives way, never the command.
 		detail = append(detail, "then: "+unsuspendCmd(scope))
@@ -159,7 +159,7 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		}
 
 	case engine.DriftWarned:
-		headline = "recreating despite drift (WHALENURSE_DRIFT_GUARD=warn)"
+		headline = "recreating despite drift (DOKDOSTA_DRIFT_GUARD=warn)"
 		discr = attr("findings")
 		detail = append(detail, "found: "+attr("findings"))
 
@@ -330,9 +330,9 @@ func tagMovedMessage(e engine.Event, headline *string, detail *[]string) (pinned
 	return nil
 }
 
-// rollbackDoesNotLast stands before the rollback commands: with whalenurse.heal.pull still on, the next heal reaches the pull
+// rollbackDoesNotLast stands before the rollback commands: with dokdosta.heal.pull still on, the next heal reaches the pull
 // rung again and the registry's newer image comes back.
-const rollbackDoesNotLast = "the rollback does not last while whalenurse.heal.pull stays on: to keep the old image, pin it in the compose file or remove the label"
+const rollbackDoesNotLast = "the rollback does not last while dokdosta.heal.pull stays on: to keep the old image, pin it in the compose file or remove the label"
 
 // movedAt prints the time of a move for a phone: minutes, UTC.
 func movedAt(rfc string) string {
@@ -382,7 +382,7 @@ func subjectOf(e engine.Event) string {
 	return ""
 }
 
-// scopeOf is the `whalenurse pause|unsuspend` scope of a key: project/service for a compose container (the key is
+// scopeOf is the `dokdosta pause|unsuspend` scope of a key: project/service for a compose container (the key is
 // host/project/service/number), the name for any other (host/name). For a pause the key is host/scope already.
 func scopeOf(key string) string {
 	parts := strings.Split(key, "/")
@@ -397,9 +397,9 @@ func scopeOf(key string) string {
 
 func unsuspendCmd(scope string) string {
 	if scope == "" {
-		return "whalenurse unsuspend <scope>"
+		return "dokdosta unsuspend <scope>"
 	}
-	return "whalenurse unsuspend " + wncompose.ShellWord(scope) // the scope comes from labels: quoted when it needs it
+	return "dokdosta unsuspend " + wncompose.ShellWord(scope) // the scope comes from labels: quoted when it needs it
 }
 
 // verbOf names an action for a message: the past tense, and the failure.
@@ -438,7 +438,7 @@ func causeOf(msg string) string {
 var (
 	reDryRunSays = regexp.MustCompile(`\s*\(its dry-run says:[^)]*\)`)
 	reUpgraded   = regexp.MustCompile(`\s*\(compose upgraded from ([^ ]+) to ([^ ]+) since[^)]*\)`)
-	reMovedBy    = regexp.MustCompile(`\s*\(whalenurse moved this tag:[^)]*\)`)
+	reMovedBy    = regexp.MustCompile(`\s*\(dokdosta moved this tag:[^)]*\)`)
 )
 
 // shortFindings drops from the guard's text what a phone has no room for: compose's own dry-run wording, and the
@@ -455,7 +455,7 @@ func shortFindings(f string) string {
 func driftHint(findings, scope string) string {
 	switch {
 	case strings.Contains(findings, "can't verify drift (compose"):
-		return "hint: whalenurse's compose is not the one that made it. Mount the host plugin at /host/docker-compose, or: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
+		return "hint: dokdosta's compose is not the one that made it. Mount the host plugin at /host/docker-compose, or: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
 	case reUpgraded.MatchString(findings):
 		v := reUpgraded.FindStringSubmatch(findings)
 		return "hint: compose upgraded " + v[1] + " to " + v[2] + " since creation: maybe a new hash layout, not an edit. If the file is fine: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))

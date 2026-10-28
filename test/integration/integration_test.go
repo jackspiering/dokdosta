@@ -18,25 +18,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/control"
-	"github.com/jackspiering/whalenurse/internal/daemon"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/api"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/control"
+	"github.com/jackspiering/dokdosta/internal/daemon"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
 )
 
 const testHost = "itest"
 
-// Run with: WHALENURSE_INTEGRATION=1 go test -tags integration ./test/integration/
+// Run with: DOKDOSTA_INTEGRATION=1 go test -tags integration ./test/integration/
 // CI does this on a GitHub-hosted runner. Do not run it on a Docker host you care about.
 func requireIntegration(t *testing.T) (*Guard, *docker.Moby) {
 	t.Helper()
-	if os.Getenv("WHALENURSE_INTEGRATION") != "1" {
-		t.Skip("set WHALENURSE_INTEGRATION=1 to run the integration tests (they need a disposable Docker host)")
+	if os.Getenv("DOKDOSTA_INTEGRATION") != "1" {
+		t.Skip("set DOKDOSTA_INTEGRATION=1 to run the integration tests (they need a disposable Docker host)")
 	}
 	ctx := context.Background()
 	g := NewGuard()
@@ -69,9 +69,9 @@ func newStack(t *testing.T, g *Guard, cli *docker.Moby, name, compose string) *s
 	t.Helper()
 	var b [3]byte
 	_, _ = rand.Read(b[:])
-	// The stack directory is world-readable: a containerized whalenurse (uid 65532) reads it at the identical path to
+	// The stack directory is world-readable: a containerized dokdosta (uid 65532) reads it at the identical path to
 	// recreate from it (t.TempDir() is 0700, which would make every recreate fail as "unreadable").
-	dir, err := os.MkdirTemp("", "whalenurse-test-stack-")
+	dir, err := os.MkdirTemp("", "dokdosta-test-stack-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func newStack(t *testing.T, g *Guard, cli *docker.Moby, name, compose string) *s
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	s := &stack{t: t, g: g, cli: cli, project: "whalenurse-test-" + name + "-" + hex.EncodeToString(b[:]), dir: dir}
+	s := &stack{t: t, g: g, cli: cli, project: "dokdosta-test-" + name + "-" + hex.EncodeToString(b[:]), dir: dir}
 	if err := RequireProject(s.project); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +156,7 @@ func appService(name string) string {
   %s:
     image: busybox:1.37
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     tmpfs: ["/ok"]
     stop_grace_period: 2s
     command: ["sh", "-c", "touch /ok/flag; trap 'exit 0' TERM; while true; do sleep 1; done"]
@@ -206,11 +206,11 @@ type daemonOpts struct {
 	NotifyURLs  []string // Shoutrrr URLs: a real notifier is subscribed to the event stream
 }
 
-// composeBin finds the compose binary the way whalenurse does (WHALENURSE_COMPOSE_BIN, then the host plugin) and logs
+// composeBin finds the compose binary the way dokdosta does (DOKDOSTA_COMPOSE_BIN, then the host plugin) and logs
 // which one it is: the CI matrix runs the same tests against three releases.
 func composeBin(t *testing.T) *compose.Binary {
 	t.Helper()
-	bin, _, err := compose.Resolve(context.Background(), compose.Lookup{Env: os.Getenv("WHALENURSE_COMPOSE_BIN")})
+	bin, _, err := compose.Resolve(context.Background(), compose.Lookup{Env: os.Getenv("DOKDOSTA_COMPOSE_BIN")})
 	if err != nil {
 		t.Fatalf("no compose binary: %v", err)
 	}
@@ -341,15 +341,15 @@ func TestDryRunDoesNothing(t *testing.T) {
 	}
 }
 
-// buildBinary compiles cmd/whalenurse with CGO_ENABLED=0.
+// buildBinary compiles cmd/dokdosta with CGO_ENABLED=0.
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	root, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	out := filepath.Join(t.TempDir(), "whalenurse")
-	cmd := exec.Command("go", "build", "-trimpath", "-o", out, "./cmd/whalenurse")
+	out := filepath.Join(t.TempDir(), "dokdosta")
+	cmd := exec.Command("go", "build", "-trimpath", "-o", out, "./cmd/dokdosta")
 	cmd.Dir = strings.TrimSpace(string(root))
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if b, err := cmd.CombinedOutput(); err != nil {
@@ -358,9 +358,9 @@ func buildBinary(t *testing.T) string {
 	return out
 }
 
-// TestBinaryDryRunLogsDecisions is the milestone's done-criterion: `whalenurse
+// TestBinaryDryRunLogsDecisions is the milestone's done-criterion: `dokdosta
 // run --dry-run` against a test stack logs the expected decisions and changes
-// nothing; `whalenurse healthcheck` passes while it runs.
+// nothing; `dokdosta healthcheck` passes while it runs.
 func TestBinaryDryRunLogsDecisions(t *testing.T) {
 	g, cli := requireIntegration(t)
 	s := appStack(t, g, cli, "bin")
@@ -370,8 +370,8 @@ func TestBinaryDryRunLogsDecisions(t *testing.T) {
 	bin := buildBinary(t)
 	sock := filepath.Join(t.TempDir(), "w.sock")
 	env := append(os.Environ(),
-		"WHALENURSE_HOST_ID="+testHost, "WHALENURSE_GRACE=2s", "WHALENURSE_POLL_INTERVAL=5s", "WHALENURSE_COOLDOWN=5s",
-		"WHALENURSE_STARTUP_SETTLE=0s", "WHALENURSE_CONTROL_SOCKET="+sock)
+		"DOKDOSTA_HOST_ID="+testHost, "DOKDOSTA_GRACE=2s", "DOKDOSTA_POLL_INTERVAL=5s", "DOKDOSTA_COOLDOWN=5s",
+		"DOKDOSTA_STARTUP_SETTLE=0s", "DOKDOSTA_CONTROL_SOCKET="+sock)
 	cmd := exec.Command(bin, "run", "--dry-run")
 	cmd.Env = env
 	stderr, err := cmd.StderrPipe()
@@ -406,7 +406,7 @@ loop:
 		select {
 		case m, ok := <-lines:
 			if !ok {
-				t.Fatal("whalenurse exited early")
+				t.Fatal("dokdosta exited early")
 			}
 			msg, _ := m["msg"].(string)
 			key, _ := m["key"].(string)
@@ -458,10 +458,10 @@ loop:
 	select {
 	case err := <-exited:
 		if err != nil {
-			t.Fatalf("whalenurse did not exit cleanly on SIGTERM: %v", err)
+			t.Fatalf("dokdosta did not exit cleanly on SIGTERM: %v", err)
 		}
 	case <-time.After(15 * time.Second):
-		t.Fatal("whalenurse did not stop on SIGTERM")
+		t.Fatal("dokdosta did not stop on SIGTERM")
 	}
 }
 
@@ -469,13 +469,13 @@ loop:
 // the socket's group via group_add, a writable /run, no capabilities. It must
 // become healthy through its own HEALTHCHECK and heal a test container.
 func TestImage(t *testing.T) {
-	img := os.Getenv("WHALENURSE_TEST_IMAGE")
+	img := os.Getenv("DOKDOSTA_TEST_IMAGE")
 	g, cli := requireIntegration(t)
 	if img == "" {
-		t.Skip("set WHALENURSE_TEST_IMAGE to a locally built image to test it")
+		t.Skip("set DOKDOSTA_TEST_IMAGE to a locally built image to test it")
 	}
-	if !strings.HasPrefix(img, "whalenurse-test/") {
-		t.Fatalf("image %q: only whalenurse-test/* local tags are used", img)
+	if !strings.HasPrefix(img, "dokdosta-test/") {
+		t.Fatalf("image %q: only dokdosta-test/* local tags are used", img)
 	}
 	fi, err := os.Stat("/var/run/docker.sock")
 	if err != nil {
@@ -485,7 +485,7 @@ func TestImage(t *testing.T) {
 
 	s := newStack(t, g, cli, "image", fmt.Sprintf(`
 services:
-  whalenurse:
+  dokdosta:
     image: %s
     read_only: true
     cap_drop: [ALL]
@@ -494,11 +494,11 @@ services:
     tmpfs: ["/run:uid=65532,gid=65532,mode=0700"]
     volumes: ["/var/run/docker.sock:/var/run/docker.sock", "data:/data"]
     environment:
-      WHALENURSE_HOST_ID: %s
-      WHALENURSE_GRACE: 2s
-      WHALENURSE_POLL_INTERVAL: 5s
-      WHALENURSE_COOLDOWN: 5s
-      WHALENURSE_STARTUP_SETTLE: 0s
+      DOKDOSTA_HOST_ID: %s
+      DOKDOSTA_GRACE: 2s
+      DOKDOSTA_POLL_INTERVAL: 5s
+      DOKDOSTA_COOLDOWN: 5s
+      DOKDOSTA_STARTUP_SETTLE: 0s
 `, img, gid, testHost)+appService("app")+`
 volumes:
   data: {}
@@ -507,31 +507,31 @@ volumes:
 	waitFor(t, "app to be healthy", 60*time.Second, func() bool { return s.container("app").Health == "healthy" })
 	before := s.container("app")
 	breakApp(t, g, s)
-	s.up("whalenurse")
+	s.up("dokdosta")
 
-	if !s.container("whalenurse").Running {
-		t.Fatal("whalenurse is not running")
+	if !s.container("dokdosta").Running {
+		t.Fatal("dokdosta is not running")
 	}
-	if ro := inspectReadonly(t, s.container("whalenurse").ID); !ro {
+	if ro := inspectReadonly(t, s.container("dokdosta").ID); !ro {
 		t.Fatal("the image test must run with a read-only root filesystem")
 	}
-	waitFor(t, "the app to be restarted by the containerized whalenurse", 90*time.Second, func() bool {
+	waitFor(t, "the app to be restarted by the containerized dokdosta", 90*time.Second, func() bool {
 		return s.container("app").StartedAt.After(before.StartedAt)
 	})
-	waitFor(t, "the image HEALTHCHECK to pass", 90*time.Second, func() bool { return s.container("whalenurse").Health == "healthy" })
+	waitFor(t, "the image HEALTHCHECK to pass", 90*time.Second, func() bool { return s.container("dokdosta").Health == "healthy" })
 
 	// The state store lives on the /data volume, which the nonroot user can write although the rootfs is read-only,
 	// and the CLI works through docker exec (no shell in the image: the binary is the CLI).
-	wn := s.container("whalenurse").ID
+	wn := s.container("dokdosta").ID
 	waitFor(t, "the CLI to reach the daemon through docker exec", 30*time.Second, func() bool {
-		_, err := g.Ctr(context.Background(), "exec", wn, "/whalenurse", "status")
+		_, err := g.Ctr(context.Background(), "exec", wn, "/dokdosta", "status")
 		return err == nil
 	})
-	out, err := g.Ctr(context.Background(), "exec", wn, "/whalenurse", "pause", s.project+"/app", "--for", "5m")
+	out, err := g.Ctr(context.Background(), "exec", wn, "/dokdosta", "pause", s.project+"/app", "--for", "5m")
 	if err != nil || !strings.Contains(out, "paused") {
 		t.Fatalf("pause through docker exec: %v\n%s", err, out)
 	}
-	if out, err = g.Ctr(context.Background(), "exec", wn, "/whalenurse", "status"); err != nil || !strings.Contains(out, s.project+"/app") {
+	if out, err = g.Ctr(context.Background(), "exec", wn, "/dokdosta", "status"); err != nil || !strings.Contains(out, s.project+"/app") {
 		t.Fatalf("status through docker exec: %v\n%s", err, out)
 	}
 }
@@ -551,7 +551,7 @@ func stuckService(name string) string {
   %s:
     image: busybox:1.37
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     stop_grace_period: 2s
     command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done"]
     healthcheck:
@@ -634,7 +634,7 @@ func TestPauseResumeAndUnsuspendOverTheControlSocket(t *testing.T) {
 	}
 }
 
-// runCLI runs a whalenurse CLI command with the daemon's environment (so it finds the control socket).
+// runCLI runs a dokdosta CLI command with the daemon's environment (so it finds the control socket).
 func runCLI(bin string, env []string, args ...string) (string, error) {
 	cmd := exec.Command(bin, args...)
 	cmd.Env = env
@@ -685,7 +685,7 @@ func (r *runningBinary) waitLine(t *testing.T, what string, timeout time.Duratio
 		select {
 		case m, ok := <-r.lines:
 			if !ok {
-				t.Fatalf("whalenurse exited while waiting for %s", what)
+				t.Fatalf("dokdosta exited while waiting for %s", what)
 			}
 			if match(m) {
 				return
@@ -702,23 +702,23 @@ func (r *runningBinary) stop(t *testing.T) {
 	select {
 	case err := <-r.done:
 		if err != nil {
-			t.Fatalf("whalenurse did not exit cleanly on SIGTERM: %v", err)
+			t.Fatalf("dokdosta did not exit cleanly on SIGTERM: %v", err)
 		}
 	case <-time.After(15 * time.Second):
-		t.Fatal("whalenurse did not stop on SIGTERM")
+		t.Fatal("dokdosta did not stop on SIGTERM")
 	}
 }
 
-// M2a done-criterion: state survives a whalenurse restart. SUSPENDED, the pause and the flap count are in
-// SQLite under WHALENURSE_DATA_DIR; the second run does not start the ladder over.
+// M2a done-criterion: state survives a dokdosta restart. SUSPENDED, the pause and the flap count are in
+// SQLite under DOKDOSTA_DATA_DIR; the second run does not start the ladder over.
 func TestStateSurvivesARestartOfTheBinary(t *testing.T) {
 	g, cli := requireIntegration(t)
 	s := stuckStack(t, g, cli, "persist")
 	bin := buildBinary(t)
 	sock := filepath.Join(t.TempDir(), "w.sock")
 	env := append(os.Environ(),
-		"WHALENURSE_HOST_ID="+testHost, "WHALENURSE_GRACE=2s", "WHALENURSE_POLL_INTERVAL=5s", "WHALENURSE_COOLDOWN=5s",
-		"WHALENURSE_STARTUP_SETTLE=0s", "WHALENURSE_CONTROL_SOCKET="+sock, "WHALENURSE_DATA_DIR="+t.TempDir())
+		"DOKDOSTA_HOST_ID="+testHost, "DOKDOSTA_GRACE=2s", "DOKDOSTA_POLL_INTERVAL=5s", "DOKDOSTA_COOLDOWN=5s",
+		"DOKDOSTA_STARTUP_SETTLE=0s", "DOKDOSTA_CONTROL_SOCKET="+sock, "DOKDOSTA_DATA_DIR="+t.TempDir())
 	key := s.key("app")
 	isEvent := func(m map[string]any, typ string) bool { return m["type"] == typ && m["key"] == key }
 

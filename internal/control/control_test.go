@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
+	"github.com/jackspiering/dokdosta/internal/api"
 )
 
 type fakeChecker struct {
@@ -158,7 +158,7 @@ func TestStatusIsNotTruncated(t *testing.T) {
 
 func TestCommandWithoutADaemonSaysSo(t *testing.T) {
 	_, err := Command(context.Background(), filepath.Join(t.TempDir(), "none.sock"), "pause", Request{Scope: "p"})
-	if err == nil || !strings.Contains(err.Error(), "cannot reach the whalenurse daemon") {
+	if err == nil || !strings.Contains(err.Error(), "cannot reach the dokdosta daemon") {
 		t.Fatalf("%v", err)
 	}
 }
@@ -170,7 +170,7 @@ func healthOnly(c api.Checker) http.Handler {
 	return m
 }
 
-// A second whalenurse on the same socket path (a `docker exec ... whalenurse run --dry-run` beside the live daemon) must
+// A second dokdosta on the same socket path (a `docker exec ... dokdosta run --dry-run` beside the live daemon) must
 // not take the path over: the CLI and the image HEALTHCHECK would reach the wrong process, and its exit would unlink the
 // live daemon's socket.
 func TestServeDoesNotTakeOverALiveSocket(t *testing.T) {

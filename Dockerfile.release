@@ -1,5 +1,5 @@
 # The release image, built by GoReleaser (dockers_v2, .goreleaser.yaml). GoReleaser compiles the binaries and puts them in the
-# build context as <os>/<arch>/whalenurse, so this file only copies. The development and CI image is ./Dockerfile, which
+# build context as <os>/<arch>/dokdosta, so this file only copies. The development and CI image is ./Dockerfile, which
 # compiles from source; both must bundle the same compose release (scripts/ci/check-dockerfiles.sh compares them).
 #
 # The first stage downloads the bundled compose plugin and runs on the BUILD platform, so a multi-arch build needs no
@@ -23,13 +23,13 @@ RUN mkdir -p /out/data
 
 FROM gcr.io/distroless/static:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 ARG TARGETPLATFORM
-COPY --chmod=0755 $TARGETPLATFORM/whalenurse /whalenurse
-COPY --from=fetch --chmod=0755 /out/docker-compose /usr/libexec/whalenurse/docker-compose
+COPY --chmod=0755 $TARGETPLATFORM/dokdosta /dokdosta
+COPY --from=fetch --chmod=0755 /out/docker-compose /usr/libexec/dokdosta/docker-compose
 COPY --from=fetch --chown=65532:65532 /out/data /data
 VOLUME ["/data"]
 USER 65532:65532
 # distroless/static has no shell, so the healthcheck calls the binary. The image runs as uid 65532, which cannot read the
 # Docker socket: give it the socket's group at run time with group_add (docs/deployment.md).
-HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD ["/whalenurse", "healthcheck"]
-ENTRYPOINT ["/whalenurse"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 CMD ["/dokdosta", "healthcheck"]
+ENTRYPOINT ["/dokdosta"]
 CMD ["run"]

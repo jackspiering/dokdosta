@@ -17,21 +17,21 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // actionTimeout bounds one restart or start call.
 const actionTimeout = 2 * time.Minute
 
-// shutdownGrace is how long an action in flight may still run once whalenurse is told to stop (SIGTERM, SIGINT). The
+// shutdownGrace is how long an action in flight may still run once dokdosta is told to stop (SIGTERM, SIGINT). The
 // loop is synchronous, so Run returns right after the action. It must stay below the stop timeout the deployment gives
-// whalenurse (stop_grace_period in the compose examples, TimeoutStopSec in the systemd unit, both 60 s), or the action
+// dokdosta (stop_grace_period in the compose examples, TimeoutStopSec in the systemd unit, both 60 s), or the action
 // is killed with the process; a compose command that is stopped gets compose.StopDelay more before it is killed. It is
 // kept short because dockerd's own shutdown waits for the longest stop_grace_period plus 5 s, inside docker.service's
 // stop timeout (systemd's default, 90 s).
@@ -95,7 +95,7 @@ type Options struct {
 	ComposeNote  string
 	Stat         func(string) (os.FileInfo, error)
 
-	// PullAuthHosts are the registries named in WHALENURSE_REGISTRY_AUTH_DIR's "auths" (hosts only, M7); empty when the
+	// PullAuthHosts are the registries named in DOKDOSTA_REGISTRY_AUTH_DIR's "auths" (hosts only, M7); empty when the
 	// pull rung has no credentials.
 	PullAuthHosts []string
 
@@ -199,10 +199,10 @@ func New(o Options) *Daemon {
 
 // checkStartup applies what the previous run left behind (plan §3.3, *Manual-stop markers*):
 //
-//   - mechanism b: the kernel's boot id is kept with the markers. A reboot stops whalenurse in the same second as
+//   - mechanism b: the kernel's boot id is kept with the markers. A reboot stops dokdosta in the same second as
 //     the containers, so a marker can exist with no matching event in this run: if the boot id changed, every
 //     marker is dropped and the first STARTUP_SETTLE is a restore window.
-//   - mechanism d, the heartbeat: whalenurse is itself one of the containers a daemon shutdown kills, so its
+//   - mechanism d, the heartbeat: dokdosta is itself one of the containers a daemon shutdown kills, so its
 //     events stream ends by its own SIGTERM and mechanism a never sees a loss. The previous run's end is treated
 //     as a stream loss instead: markers set in the 30 s before its last_seen are discarded, and when the gap since
 //     then exceeds the poll interval the daemon may be restoring containers, so a restore window opens.
@@ -235,7 +235,7 @@ func (d *Daemon) checkStartup() {
 		}
 		if had && prev != id {
 			bootChanged = true
-			// A reboot stops whalenurse and the containers in the same second, so the kills of the shutdown can be in the
+			// A reboot stops dokdosta and the containers in the same second, so the kills of the shutdown can be in the
 			// markers with no event in this run to tell them from a person's. With the previous run's end known, only the
 			// markers set in the 30 s before it can be such kills, and the last_seen step below discards exactly those; the
 			// older ones are deliberate stops from before the reboot and are kept (plan v3.13 item 16). Without it, all go.
@@ -260,15 +260,15 @@ func (d *Daemon) checkStartup() {
 		}
 		// Containers that stopped between 30 s before last_seen and the daemon's restore were stopped by the host.
 		// After a reboot the restore is whenever we are back; within one boot a daemon restart is over in
-		// minutes, so the window is capped (a crash while whalenurse was down for hours is not a shutdown).
+		// minutes, so the window is capped (a crash while dokdosta was down for hours is not a shutdown).
 		end := now
 		if !bootChanged && seen.Add(shutdownSpan).Before(now) {
 			end = seen.Add(shutdownSpan)
 		}
 		d.eng.AddShutdownWindow(seen.Add(-rules.QuarantineWindow), end)
 		if gap > d.cfg.PollInterval {
-			d.log.Info("whalenurse was not running for a while: the daemon may be restoring containers", "gap", gap.Round(time.Second).String())
-			d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "whalenurse was down for "+gap.Round(time.Second).String())
+			d.log.Info("dokdosta was not running for a while: the daemon may be restoring containers", "gap", gap.Round(time.Second).String())
+			d.eng.OpenRestoreWindow(d.cfg.StartupSettle, "dokdosta was down for "+gap.Round(time.Second).String())
 		}
 	}
 	d.heartbeat(true)
@@ -339,7 +339,7 @@ func (d *Daemon) Run(ctx context.Context) error {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	d.CheckVersions(ctx)
-	d.log.Info("whalenurse started",
+	d.log.Info("dokdosta started",
 		"host", d.cfg.HostID, "mode", d.cfg.Mode, "dry_run", d.cfg.DryRun,
 		"poll", d.cfg.PollInterval.String(), "grace", d.cfg.Grace.String(), "startup_settle", d.cfg.StartupSettle.String())
 	for {
@@ -484,7 +484,7 @@ func (d *Daemon) setEvents(up bool) {
 }
 
 // StreamLost is called when the events stream ended for a reason other than
-// whalenurse stopping (plan §3.3, mechanism a). Every manual-stop marker set in
+// dokdosta stopping (plan §3.3, mechanism a). Every manual-stop marker set in
 // the 30 s before it may be the daemon's shutdown kill rather than a person, so
 // those markers are discarded: that container is then judged by rule 4 without
 // evidence, which for a signal exit is notify-only.
@@ -579,7 +579,7 @@ func (d *Daemon) HandleEvent(ctx context.Context, ev docker.Event) {
 	t := engine.Target{Key: docker.StateKey(d.cfg.HostID, ev.Name, ev.Labels), ID: ev.ID, Name: ev.Name}
 	// A compose sidecar that holds a container: reference without an opt-in of its own is repaired by the dependents step,
 	// so its events feed the engine's evidence like an opted-in container's: a sidecar stopped by hand stays stopped when
-	// its parent is recreated, and whalenurse's own actions on it are attributed (plan v3.13 item 2). Scheduling stays
+	// its parent is recreated, and dokdosta's own actions on it are attributed (plan v3.13 item 2). Scheduling stays
 	// gated on the opt-in. The event carries only labels, so the reference is looked up in the last list; a container that
 	// is not in it yet (a new ID) is followed when the engine already holds state for its key, so that its start clears
 	// the marker the one before it left.
@@ -642,7 +642,7 @@ func (d *Daemon) sweep(ctx context.Context) {
 
 // scheduleAbsent schedules every key the engine holds state for whose container is not in the list, so that process
 // forgets it (closing its incident as "gone"): a container removed while it was exited or SUSPENDED sends only `destroy`,
-// and one removed while whalenurse was down is never listed again. It runs only after a successful List, and not after an
+// and one removed while dokdosta was down is never listed again. It runs only after a successful List, and not after an
 // empty one the first time: Forget wipes SUSPENDED state, and an empty list is more likely a daemon that is not ready than
 // a host with no containers. A second empty list in a row is believed.
 func (d *Daemon) scheduleAbsent(at time.Time) {
@@ -673,7 +673,7 @@ func (d *Daemon) sweepDependents(ctx context.Context) {
 // poll is the level-triggered backstop for edge-triggered events, and the only
 // detector of a failed restart-policy restart (which emits no event). It also
 // reads RestartCount of every opted-in container, because a crash loop that
-// whalenurse saw no `die` events for is otherwise invisible (the container list
+// dokdosta saw no `die` events for is otherwise invisible (the container list
 // does not carry the count).
 func (d *Daemon) poll(ctx context.Context) {
 	if err := d.refresh(ctx); err != nil {
@@ -806,7 +806,7 @@ func (d *Daemon) process(ctx context.Context, key string) {
 }
 
 // adjust applies what the rules cannot know: a recreate that is not available is only advice (never a restart, never a
-// SUSPENDED for something whalenurse could not have done), and a parent that stays down names its dependents.
+// SUSPENDED for something dokdosta could not have done), and a parent that stays down names its dependents.
 func (d *Daemon) adjust(c docker.Container, cfg config.Container, dec rules.Decision, obs engine.Obs) rules.Decision {
 	if dec.Action.IsRecreate() {
 		why := obs.Unavailable[config.RungRecreate]
@@ -833,7 +833,7 @@ func (d *Daemon) adjust(c docker.Container, cfg config.Container, dec rules.Deci
 // dependent into an exited one (E1).
 func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container) {
 	if ctx.Err() != nil {
-		return // whalenurse is stopping: nothing new is started; the next run looks at the key again
+		return // dokdosta is stopping: nothing new is started; the next run looks at the key again
 	}
 	d.markActing()
 	defer d.acting.Store(0)
@@ -877,7 +877,7 @@ func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Containe
 }
 
 // actionContext is the context of a mutating action: ctx's values and the timeout, but not ctx's cancellation, so a stop
-// of whalenurse does not kill a recreate between its create and its start. Once ctx ends, the action gets stopGrace
+// of dokdosta does not kill a recreate between its create and its start. Once ctx ends, the action gets stopGrace
 // more; then it is cancelled, and interrupted says so.
 func (d *Daemon) actionContext(ctx context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
 	actx, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
@@ -885,14 +885,14 @@ func (d *Daemon) actionContext(ctx context.Context, timeout time.Duration) (cont
 		if actx.Err() != nil {
 			return
 		}
-		d.log.Warn("whalenurse is stopping: letting the action in flight finish", "grace", d.stopGrace.String())
+		d.log.Warn("dokdosta is stopping: letting the action in flight finish", "grace", d.stopGrace.String())
 		t := time.AfterFunc(d.stopGrace, cancel)
 		context.AfterFunc(actx, func() { t.Stop() })
 	})
 	return actx, func() { stop(); cancel() }
 }
 
-// interrupted reports whether an action failed because whalenurse is stopping (ctx is the loop's context), not on its
+// interrupted reports whether an action failed because dokdosta is stopping (ctx is the loop's context), not on its
 // own: such an action is not a result and does not spend its rung (engine.Interrupt).
 func interrupted(ctx context.Context, err error) bool { return err != nil && ctx.Err() != nil }
 

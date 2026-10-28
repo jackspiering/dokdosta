@@ -1,6 +1,6 @@
 // The dashboard's only script: it keeps the page current. The server renders every page; this fetches the same page
 // again when the event stream says something happened (and every 15 seconds, because a container's state changes
-// without any whalenurse event) and swaps in the new <main> and banners. Without JavaScript the pages still work.
+// without any dokdosta event) and swaps in the new <main> and banners. Without JavaScript the pages still work.
 (function () {
   'use strict';
   document.documentElement.classList.add('js'); // the copy buttons exist only for browsers that run this script

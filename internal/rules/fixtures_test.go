@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/docker"
 )
 
 // fixtureDir is the repository's scrubbed M0 captures.

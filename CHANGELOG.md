@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to whalenurse are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+All notable changes to dokdosta are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project follows [Semantic Versioning](https://semver.org/). The design history behind each change is in
 [docs/PLAN.md](docs/PLAN.md) and the `docs/m*-notes.md` files.
 
@@ -396,10 +396,10 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-[Unreleased]: https://github.com/jackspiering/whalenurse/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/jackspiering/whalenurse/releases/tag/v0.2.0
-[0.1.3]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.3
-[0.1.2]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.2
-[0.1.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.1
-[0.1.0]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0
-[0.1.0-rc.1]: https://github.com/jackspiering/whalenurse/releases/tag/v0.1.0-rc.1
+[Unreleased]: https://github.com/jackspiering/dokdosta/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.2.0
+[0.1.3]: https://github.com/jackspiering/dokdosta/releases/tag/v0.1.3
+[0.1.2]: https://github.com/jackspiering/dokdosta/releases/tag/v0.1.2
+[0.1.1]: https://github.com/jackspiering/dokdosta/releases/tag/v0.1.1
+[0.1.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.1.0
+[0.1.0-rc.1]: https://github.com/jackspiering/dokdosta/releases/tag/v0.1.0-rc.1

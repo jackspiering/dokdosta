@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify a whalenurse release the way docs/verifying-releases.md describes: downloads the release's checksums file, its cosign
+# Verify a dokdosta release the way docs/verifying-releases.md describes: downloads the release's checksums file, its cosign
 # bundle and its archives, then checks
 #   1. the checksums file's keyless cosign signature, pinned to this repo's release workflow run for this tag,
 #   2. every archive against the signed checksums (sha256sum -c, nothing skipped),
@@ -17,7 +17,7 @@ set -euo pipefail
 ISSUER=https://token.actions.githubusercontent.com
 
 verify() {
-  local tag="" repo=jackspiering/whalenurse dir="" skip_image=0 download=1
+  local tag="" repo=jackspiering/dokdosta dir="" skip_image=0 download=1
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo) repo="${2:?--repo needs owner/name}"; shift 2 ;;
@@ -182,10 +182,10 @@ STUB
   chmod +x "$tmp/bin/"*
   # a fake release
   mkdir -p "$tmp/remote"
-  printf 'archive one\n' >"$tmp/remote/whalenurse_0.1.0_linux_amd64.tar.gz"
-  printf 'archive two\n' >"$tmp/remote/whalenurse_0.1.0_linux_arm64.tar.gz"
+  printf 'archive one\n' >"$tmp/remote/dokdosta_0.1.0_linux_amd64.tar.gz"
+  printf 'archive two\n' >"$tmp/remote/dokdosta_0.1.0_linux_arm64.tar.gz"
   printf '{"bundle":1}\n' >"$tmp/remote/checksums.txt.sigstore.json"
-  (cd "$tmp/remote" && sha256sum whalenurse_0.1.0_linux_amd64.tar.gz whalenurse_0.1.0_linux_arm64.tar.gz >checksums.txt)
+  (cd "$tmp/remote" && sha256sum dokdosta_0.1.0_linux_amd64.tar.gz dokdosta_0.1.0_linux_arm64.tar.gz >checksums.txt)
 
   run() { # run <env assignments...> -- <verify args>  (output in $out)
     local envs=()
@@ -194,37 +194,37 @@ STUB
     : >"$tmp/cosign.calls"; : >"$tmp/gh.calls"; : >"$tmp/curl.calls"
     out=$(env "${envs[@]}" PATH="$tmp/bin:$PATH" "$here/verify.sh" "$@" 2>&1) && rc=0 || rc=$?
   }
-  local out rc want="https://github.com/jackspiering/whalenurse/.github/workflows/release.yml@refs/tags/v0.1.0"
+  local out rc want="https://github.com/jackspiering/dokdosta/.github/workflows/release.yml@refs/tags/v0.1.0"
 
   run X=1 -- v0.1.0 --dir "$tmp/d1"
   [[ $rc -eq 0 && "$out" == *"VERIFIED v0.1.0"* ]] && ok "a good release verifies" || bad "a good release: rc=$rc $out"
   grep -qF -- "verify-blob --bundle $tmp/d1/checksums.txt.sigstore.json --certificate-identity $want --certificate-oidc-issuer https://token.actions.githubusercontent.com $tmp/d1/checksums.txt" "$tmp/cosign.calls" \
     && ok "verify-blob is pinned to the exact workflow identity and issuer" || bad "verify-blob arguments: $(cat "$tmp/cosign.calls")"
-  grep -qF -- "verify ghcr.io/jackspiering/whalenurse:v0.1.0 --certificate-identity $want --certificate-oidc-issuer https://token.actions.githubusercontent.com" "$tmp/cosign.calls" \
+  grep -qF -- "verify ghcr.io/jackspiering/dokdosta:v0.1.0 --certificate-identity $want --certificate-oidc-issuer https://token.actions.githubusercontent.com" "$tmp/cosign.calls" \
     && ok "the image is verified against the same identity" || bad "verify image arguments"
   grep -q -- "--regexp" "$tmp/cosign.calls" && bad "a regexp identity was used" || ok "no regexp identity"
   local dig
   dig="sha256:$(printf 'a%.0s' {1..64})"
-  grep -q "attestation verify oci://ghcr.io/jackspiering/whalenurse@$dig --repo jackspiering/whalenurse --signer-workflow jackspiering/whalenurse/.github/workflows/release.yml" "$tmp/gh.calls" \
+  grep -q "attestation verify oci://ghcr.io/jackspiering/dokdosta@$dig --repo jackspiering/dokdosta --signer-workflow jackspiering/dokdosta/.github/workflows/release.yml" "$tmp/gh.calls" \
     && ok "provenance is checked for the digest cosign verified" || bad "gh image attestation: $(cat "$tmp/gh.calls")"
-  [[ "$out" == *"ghcr.io/jackspiering/whalenurse:v0.1.0 is $dig"* ]] && ok "the image digest it checked is printed" || bad "image digest not printed: $out"
+  [[ "$out" == *"ghcr.io/jackspiering/dokdosta:v0.1.0 is $dig"* ]] && ok "the image digest it checked is printed" || bad "image digest not printed: $out"
   [[ $(grep -c 'attestation verify .*tar.gz' "$tmp/gh.calls") -eq 2 ]] && ok "provenance of both archives is checked" || bad "gh archive attestations"
 
   run X=1 -- v0.1.0 --dir "$tmp/d1" --no-download
   [[ $rc -eq 0 ]] && [[ ! -s "$tmp/curl.calls" ]] && ok "--no-download downloads nothing" || bad "--no-download: rc=$rc"
 
-  echo tampered >"$tmp/d1/whalenurse_0.1.0_linux_arm64.tar.gz"
+  echo tampered >"$tmp/d1/dokdosta_0.1.0_linux_arm64.tar.gz"
   run X=1 -- v0.1.0 --dir "$tmp/d1" --no-download
   [[ $rc -ne 0 && "$out" == *"NOT VERIFIED"* && "$out" == *"arm64"* ]] && ok "an altered archive fails" || bad "altered archive: rc=$rc $out"
 
   run X=1 -- v0.1.0 --dir "$tmp/d1" --no-download
-  rm "$tmp/d1/whalenurse_0.1.0_linux_amd64.tar.gz"
+  rm "$tmp/d1/dokdosta_0.1.0_linux_amd64.tar.gz"
   run X=1 -- v0.1.0 --dir "$tmp/d1" --no-download
   [[ $rc -ne 0 ]] && ok "a file named in checksums.txt but missing fails (nothing is skipped)" || bad "missing archive: rc=$rc"
 
   run STUB_COSIGN_FAIL=verify-blob -- v0.1.0 --dir "$tmp/d2"
   [[ $rc -ne 0 && "$out" == *"not signed by"* ]] && ok "a bad checksums signature fails, and stops before the archives" || bad "verify-blob failure: rc=$rc $out"
-  [[ ! -e "$tmp/d2/whalenurse_0.1.0_linux_amd64.tar.gz" ]] && ok "no archive is downloaded after a failed signature" || bad "archives were downloaded after a bad signature"
+  [[ ! -e "$tmp/d2/dokdosta_0.1.0_linux_amd64.tar.gz" ]] && ok "no archive is downloaded after a failed signature" || bad "archives were downloaded after a bad signature"
 
   run STUB_COSIGN_FAIL=verify -- v0.1.0 --dir "$tmp/d3"
   [[ $rc -ne 0 && "$out" == *"rejected ghcr.io"* ]] && ok "a bad image signature fails" || bad "image verify failure: rc=$rc $out"
@@ -244,7 +244,7 @@ STUB
   [[ $rc -ne 0 && "$out" == *"HTTP 502: Bad Gateway"* ]] && ok "a gh server error shows gh's own text" || bad "gh HTTP error: rc=$rc $out"
 
   run STUB_DIGEST= -- v0.1.0 --dir "$tmp/d4d"
-  [[ $rc -eq 0 && "$out" == *"could not read the digest"* ]] && grep -q 'attestation verify oci://ghcr.io/jackspiering/whalenurse:v0.1.0 ' "$tmp/gh.calls" \
+  [[ $rc -eq 0 && "$out" == *"could not read the digest"* ]] && grep -q 'attestation verify oci://ghcr.io/jackspiering/dokdosta:v0.1.0 ' "$tmp/gh.calls" \
     && ok "without a digest in cosign's output, it says so and checks the tag" || bad "no digest: rc=$rc $out"
   run STUB_DIGEST2="sha256:$(printf 'b%.0s' {1..64})" -- v0.1.0 --dir "$tmp/d4e"
   [[ $rc -ne 0 && "$out" == *"more than one digest"* ]] && ok "two different digests in cosign's output fail" || bad "two digests: rc=$rc $out"

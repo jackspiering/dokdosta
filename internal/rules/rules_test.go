@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 var t0 = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
@@ -104,7 +104,7 @@ var scenarios = []scenario{
 		want: rules.Decision{Class: rules.ClassSkip, Action: rules.ActionNone, Skip: rules.SkipNotOptedIn},
 	},
 	{
-		name: "labelled whalenurse.enable=false: left alone even with an opted-in parent", fixture: "e1-dep-stale-after-parent-recreate",
+		name: "labelled dokdosta.enable=false: left alone even with an opted-in parent", fixture: "e1-dep-stale-after-parent-recreate",
 		cfg:   func(c *config.Container) { c.OptedIn, c.Disabled = false, true },
 		input: func(in *rules.Input, _ map[string]docker.Container) { in.DependentOfOptedIn = true },
 		want:  rules.Decision{Class: rules.ClassSkip, Action: rules.ActionNone, Skip: rules.SkipNotOptedIn},
@@ -618,6 +618,7 @@ var streamLostAfter = map[string]bool{"m0b-daemon-restart-shutdown": true, "m0b-
 func allServices(v rules.Verdict, services ...string) map[string]rules.Verdict {
 	out := map[string]rules.Verdict{}
 	for _, s := range services {
+		// The fixtures were captured before the rename (plan v3.15), so their project keeps the old name.
 		out["h/whalenurse-m0-b-boot/"+s+"/1"] = v
 	}
 	return out

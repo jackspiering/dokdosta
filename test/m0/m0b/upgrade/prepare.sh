@@ -8,8 +8,8 @@ source "$here/../lib.sh"
 
 m0b_need jq docker apt-get apt-cache dpkg-query
 m0_sanitize_env
-left=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | sort -u | grep -E '^whalenurse-m0-' || true)
-[[ -z "$left" ]] || m0_die "whalenurse-m0 projects are still present ($left): run test/m0/m0b/teardown.sh and test/m0/run.sh cleanup first"
+left=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | sort -u | grep -E '^dokdosta-m0-' || true)
+[[ -z "$left" ]] || m0_die "dokdosta-m0 projects are still present ($left): run test/m0/m0b/teardown.sh and test/m0/run.sh cleanup first"
 m0b_preflight_other
 
 m0b_state_new upgrade

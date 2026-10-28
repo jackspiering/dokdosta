@@ -12,14 +12,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // M4: the pull rung (plan §3.7), against a real compose and a local registry:2.
 //
-// The registry is a whalenurse-test-registry-* compose project that publishes 127.0.0.1:<port>, and every image the tests
-// push or pull lives in 127.0.0.1:<port>/whalenurse-test/ (the Guard refuses anything else). The images are busybox with
+// The registry is a dokdosta-test-registry-* compose project that publishes 127.0.0.1:<port>, and every image the tests
+// push or pull lives in 127.0.0.1:<port>/dokdosta-test/ (the Guard refuses anything else). The images are busybox with
 // a /version file: the service's healthcheck is `grep -q v2 /version`, so a v1 container is unhealthy however often it is
 // restarted or recreated, and only a pulled v2 repairs it. That makes the ladder reach rung 3 and makes "newer image" and
 // "no newer image" the only difference between two tests.
@@ -74,7 +74,7 @@ services:
 func (r *testRegistry) ref(name string) string { return r.refTag(name, "latest") }
 
 func (r *testRegistry) refTag(name, tag string) string {
-	return r.host + "/whalenurse-test/" + name + ":" + tag
+	return r.host + "/dokdosta-test/" + name + ":" + tag
 }
 
 func versionImage(marker string) string {
@@ -126,7 +126,7 @@ func (r *testRegistry) publishNewer(t *testing.T, ref, marker string) {
 	}
 }
 
-// pullOpts shapes pullApp: whether the container opts in to the pull rung, whalenurse.actions, the service's own
+// pullOpts shapes pullApp: whether the container opts in to the pull rung, dokdosta.actions, the service's own
 // pull_policy, and the sidecar in its network namespace ("busybox": its own image; "shared": the same image reference).
 type pullOpts struct {
 	pull    bool
@@ -147,10 +147,10 @@ func pullApp(ref string, pull, sidecar bool) string {
 func pullAppWith(ref string, o pullOpts) string {
 	labels := ""
 	if o.pull {
-		labels += "\n      whalenurse.heal.pull: \"true\""
+		labels += "\n      dokdosta.heal.pull: \"true\""
 	}
 	if o.actions != "" {
-		labels += "\n      whalenurse.actions: \"" + o.actions + "\""
+		labels += "\n      dokdosta.actions: \"" + o.actions + "\""
 	}
 	policy := ""
 	if o.policy != "" {
@@ -161,7 +161,7 @@ services:
   app:
     image: %s%s
     labels:
-      whalenurse.enable: "true"%s
+      dokdosta.enable: "true"%s
     stop_grace_period: 2s
     command: %s
     healthcheck:
@@ -227,7 +227,7 @@ func pullEvents(rec *engine.Recorder, key string) (started []string, results []e
 	return
 }
 
-// imagePulls counts the pulls of the test registry's images since a moment: what whalenurse's pull rung would fetch. Other
+// imagePulls counts the pulls of the test registry's images since a moment: what dokdosta's pull rung would fetch. Other
 // pull events on the host (the Engine's own, another test's base image) are logged and not counted: the assertions are
 // about the service's image, and an unrelated event inside the margin of a one-second-resolution query must not fail them.
 func imagePulls(t *testing.T, g *Guard, since time.Time) int {
@@ -275,7 +275,7 @@ func TestLocalRegistryRoundTrip(t *testing.T) {
 	if v2 == v1 || v2 == "" {
 		t.Fatalf("the pull should have brought the newer image: %s -> %s", v1, v2)
 	}
-	// The same comparison whalenurse makes: with and without a platform.
+	// The same comparison dokdosta makes: with and without a platform.
 	arch, err := cli.ServerVersion(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -292,7 +292,7 @@ func TestLocalRegistryRoundTrip(t *testing.T) {
 	}
 }
 
-// Without whalenurse.heal.pull=true there is never a pull, although the registry has a newer image and the container
+// Without dokdosta.heal.pull=true there is never a pull, although the registry has a newer image and the container
 // stays unhealthy to the end of the ladder.
 func TestPullRungNeverRunsWithoutTheLabel(t *testing.T) {
 	g, cli := requireIntegration(t)
@@ -547,7 +547,7 @@ services:
   api:
     image: %s
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     stop_grace_period: 2s
     command: %s
     healthcheck:
@@ -585,7 +585,7 @@ services:
 	if err != nil || at.After(time.Now().Add(time.Second)) || at.Before(moved.Add(-5*time.Minute)) {
 		t.Fatalf("moved_at = %q (%v)", blocked.Attrs["moved_at"], err)
 	}
-	if !strings.Contains(blocked.Message, "the tag moved") || !strings.Contains(blocked.Message, "whalenurse moved this tag: "+a.key("app")+" pulled it at ") {
+	if !strings.Contains(blocked.Message, "the tag moved") || !strings.Contains(blocked.Message, "dokdosta moved this tag: "+a.key("app")+" pulled it at ") {
 		t.Fatalf("%s", blocked.Message)
 	}
 	if b.container("api").ID != apiBefore.ID {
@@ -593,7 +593,7 @@ services:
 	}
 	waitFor(t, "the block message", 30*time.Second, func() bool { return len(hook.matching("blocked")) >= 1 })
 	m := hook.matching("blocked")[0]
-	if !strings.Contains(m.Message, "tag moved by whalenurse's pull rung: "+a.project+"/app at ") || !strings.Contains(m.Message, "whalenurse unsuspend "+b.project+"/api") {
+	if !strings.Contains(m.Message, "tag moved by dokdosta's pull rung: "+a.project+"/app at ") || !strings.Contains(m.Message, "dokdosta unsuspend "+b.project+"/api") {
 		t.Fatalf("%s", m.Message)
 	}
 	for _, e := range r.Rec.Events() {
@@ -771,7 +771,7 @@ func TestPullRungOverridesPullPolicyMissing(t *testing.T) {
 	}
 }
 
-// heal.pull=true without recreate in whalenurse.actions: the pull rung stays off. The ladder is the restart and then
+// heal.pull=true without recreate in dokdosta.actions: the pull rung stays off. The ladder is the restart and then
 // SUSPENDED, and compose is never run.
 func TestHealPullWithoutRecreateKeepsThePullRungOff(t *testing.T) {
 	g, cli := requireIntegration(t)
@@ -819,8 +819,8 @@ services:
   api:
     image: %s
     labels:
-      whalenurse.enable: "true"
-      whalenurse.heal.pull: "true"
+      dokdosta.enable: "true"
+      dokdosta.heal.pull: "true"
     stop_grace_period: 2s
     command: %s
     healthcheck:

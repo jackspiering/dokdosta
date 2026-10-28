@@ -5,7 +5,7 @@
 # shellcheck shell=bash
 exp_e8() {
   begin E8 "failed restart (hypothesis A) and State.Error shapes"
-  local P=whalenurse-m0-e8 dir stuck control t0 t1 i wait="${M0_E8_WAIT:-150}"
+  local P=dokdosta-m0-e8 dir stuck control t0 t1 i wait="${M0_E8_WAIT:-150}"
   dir=$(stage e8 e8)
   mkdir -p "$dir/src"
   t0=$(now)
@@ -39,7 +39,7 @@ exp_e8() {
   m0_down "$P"
 
   say "--- E8c: failed FIRST start (127 / 126 / ENOTDIR), restart: unless-stopped"
-  P=whalenurse-m0-e8c
+  P=dokdosta-m0-e8c
   dir=$(stage e8c e8c)
   rec c-up.txt dcs "$P" "$dir" up -d --pull never --no-build
   say "compose up rc=$REC_RC: $(sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' "$OUT/c-up.txt" | grep -iE 'error|fail|exec|permission' | head -3 | cut -c1-220 | tr '\n' '|')"
@@ -52,7 +52,7 @@ exp_e8() {
   m0_down "$P"
 
   say "--- E8d: port already allocated"
-  P=whalenurse-m0-e8d
+  P=dokdosta-m0-e8d
   dir=$(stage e8d e8d)
   rec d-up.txt dcs "$P" "$dir" up -d --pull never --no-build
   say "compose up rc=$REC_RC: $(sed -E 's/\x1b\[[0-9;]*[A-Za-z]//g' "$OUT/d-up.txt" | grep -iE 'error|allocated' | head -2 | cut -c1-220 | tr '\n' '|')"
@@ -62,7 +62,7 @@ exp_e8() {
   m0_down "$P"
 
   say "--- E8e: stale network reference (parent removed / parent stopped), dependent started via the API"
-  P=whalenurse-m0-e8e
+  P=dokdosta-m0-e8e
   dir=$(stage net e8e)
   rec e-up.txt dcs "$P" "$dir" up -d --pull never --no-build
   wait_for 30 is_healthy "$(cid "$P" parent)" || true

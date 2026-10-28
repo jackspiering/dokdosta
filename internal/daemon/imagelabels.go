@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/docker"
 )
 
 // declaredTimeout bounds one `compose config` read made for the label filter; declaredRetry is how long a read that failed
@@ -36,7 +36,7 @@ type declaredCache struct {
 	downUntil time.Time // after a read timed out, none is tried before this: a hung compose must not stall every service in turn
 }
 
-// declaredLabels is docker.ImageLabelFilter.Declared: the whalenurse.* keys that the compose file declares in the
+// declaredLabels is docker.ImageLabelFilter.Declared: the dokdosta.* keys that the compose file declares in the
 // `labels:` of the container's service. ok is false when compose is not usable for this container (version gate, no
 // binary, labels or files unreadable, the read failed), and the filter then judges it as a container compose did not make.
 func (d *Daemon) declaredLabels(ctx context.Context, labels map[string]string) (map[string]bool, bool) {
@@ -89,7 +89,7 @@ func (d *Daemon) declaredLabels(ctx context.Context, labels map[string]string) (
 
 // warnImageLabels is docker.ImageLabelFilter.Warn.
 func (d *Daemon) warnImageLabels(container, reason string, keys []string) {
-	d.log.Warn("labels from the image do not steer whalenurse", "container", container, "labels", keys, "detail", reason)
+	d.log.Warn("labels from the image do not steer dokdosta", "container", container, "labels", keys, "detail", reason)
 }
 
 // newLabelFilter wraps the Docker reader: List and Inspect return the container's labels without those that come from its

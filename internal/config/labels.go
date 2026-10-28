@@ -9,22 +9,22 @@ import (
 
 // Label keys.
 const (
-	LabelEnable     = "whalenurse.enable"
-	LabelActions    = "whalenurse.actions"
-	LabelHealExited = "whalenurse.heal-exited"
-	LabelHealPull   = "whalenurse.heal.pull"
-	LabelCooldown   = "whalenurse.cooldown"
-	LabelFlapLimit  = "whalenurse.flap-limit"
+	LabelEnable     = "dokdosta.enable"
+	LabelActions    = "dokdosta.actions"
+	LabelHealExited = "dokdosta.heal-exited"
+	LabelHealPull   = "dokdosta.heal.pull"
+	LabelCooldown   = "dokdosta.cooldown"
+	LabelFlapLimit  = "dokdosta.flap-limit"
 )
 
-// Rung names, as used in whalenurse.actions.
+// Rung names, as used in dokdosta.actions.
 const (
 	RungRestart  = "restart"
 	RungRecreate = "recreate"
 	RungPull     = "pull"
 )
 
-// HealExited is the whalenurse.heal-exited mode.
+// HealExited is the dokdosta.heal-exited mode.
 type HealExited string
 
 const (
@@ -36,7 +36,7 @@ const (
 // Container is the effective per-container configuration.
 type Container struct {
 	OptedIn    bool
-	Disabled   bool     // whalenurse.enable=false: left alone entirely, even as a dependent of an opted-in parent
+	Disabled   bool     // dokdosta.enable=false: left alone entirely, even as a dependent of an opted-in parent
 	Actions    []string // ladder rungs, in order
 	HealExited HealExited
 	Cooldown   time.Duration // 0: use the global base
@@ -82,7 +82,7 @@ func ParseLabels(labels map[string]string, mode Mode) (Container, []string) {
 			case RungRestart, RungRecreate:
 				acts = append(acts, a)
 			case RungPull:
-				// Rung 3 is appended only by whalenurse.heal.pull=true (plan §3.2).
+				// Rung 3 is appended only by dokdosta.heal.pull=true (plan §3.2).
 				valid = false
 				warn("%s: pull is enabled with %s=true, not here; using the default", LabelActions, LabelHealPull)
 			case "":
