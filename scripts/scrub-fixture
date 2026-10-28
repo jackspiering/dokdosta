@@ -7,6 +7,10 @@
 #   scrub-fixture --check FILE      leak check: exit 1 if FILE still holds hostnames, IPs, MACs, Env or host paths
 #   scrub-fixture --self-test       run the built-in test on a synthetic sample
 #
+# SCRUB_HOSTNAME overrides the host name to scrub (default: hostname). The host name is only
+# replaced as a whole token, so a short name such as "ai" leaves "failed" alone. The self-tests
+# read it too: SCRUB_HOSTNAME=ai make scripts-test.
+#
 # Inspect mode:
 #   - removes Config.Env
 #   - replaces label values except com.docker.compose.* and dokdosta.*
@@ -24,14 +28,20 @@
 #   attributes are dropped, keys included), and
 #   rebases time/timeNano to start at 0.
 set -euo pipefail
+SCRUB_HOSTNAME=${SCRUB_HOSTNAME:-$(hostname)}
 
 # shellcheck disable=SC2016  # jq programs, not shell expansions
 JQ_COMMON='
 def lit($needle; $rep): if ($needle | length) > 1 then split($needle) | join($rep) else . end;
+# A host name is a token: "ai" must not match inside "failed" (the needle is escaped for the regex).
+def lithost($needle; $rep):
+  if ($needle | length) > 1
+  then gsub("(?<![A-Za-z0-9])" + ($needle | gsub("(?<c>[.^$*+?()\\[\\]{}|\\\\])"; "\\" + .c)) + "(?![A-Za-z0-9])"; $rep)
+  else . end;
 def hostpath: "/host-path/" + (split("/") | last);
 def scrub_str($srcs):
   reduce $srcs[] as $s (.; lit($s; ($s | hostpath)))
-  | lit($root; "/repo") | lit($home; "/home/user") | lit($host; "<hostname>")
+  | lit($root; "/repo") | lit($home; "/home/user") | lithost($host; "<hostname>")
   | gsub("(?<![0-9.])(?!192\\.0\\.2\\.|0\\.0\\.0\\.0(?![0-9.])|127\\.0\\.0\\.1(?![0-9.]))(?:[0-9]{1,3}\\.){3}[0-9]{1,3}(?![0-9.])"; "192.0.2.99")
   | gsub("(?i)(?<![0-9a-f:])(?!02:00:00:00:00:01)(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:])"; "02:00:00:00:00:01");
 def stackpath($p): "/srv/stacks/" + $p;
@@ -100,7 +110,7 @@ command -v jq >/dev/null || die "jq is required"
 
 env_args() {
   printf -- '--arg\nhost\n%s\n--arg\nhome\n%s\n--arg\nroot\n%s\n' \
-    "$(hostname)" "${HOME:-}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+    "$SCRUB_HOSTNAME" "${HOME:-}" "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 }
 
 scrub() {
@@ -127,14 +137,14 @@ scrub_journal() {
 check() {
   local f="$1" bad=0 host home root
   [[ -r "$f" ]] || die "cannot read $f"
-  host=$(hostname)
+  host=$SCRUB_HOSTNAME
   home="${HOME:-}"
   root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   hit() { printf 'LEAK (%s) in %s\n' "$1" "$f" >&2; bad=1; }
   grep -qE '"Env"[[:space:]]*:' "$f" && hit 'Config.Env key'
   grep -nP '(?<![0-9.])(?!192\.0\.2\.|0\.0\.0\.0(?![0-9.])|127\.0\.0\.1(?![0-9.]))(?:\d{1,3}\.){3}\d{1,3}(?![0-9.])' "$f" >/dev/null && hit 'IPv4 address'
   grep -niP '(?<![0-9a-f:])(?!02:00:00:00:00:01)(?:[0-9a-f]{2}:){5}[0-9a-f]{2}(?![0-9a-f:])' "$f" >/dev/null && hit 'MAC address'
-  [[ -n "$host" ]] && grep -qiF -- "$host" "$f" && hit 'hostname'
+  [[ -n "$host" ]] && grep -qiP "(?<![A-Za-z0-9])\\Q$host\\E(?![A-Za-z0-9])" "$f" && hit 'hostname'
   [[ ${#home} -gt 1 ]] && grep -qF -- "$home" "$f" && hit 'home directory'
   grep -qF -- "$root" "$f" && hit 'repository path'
   grep -qE '"/home/[^u]|"/home/u[^s]|/Users/' "$f" && hit 'other home path'
@@ -184,9 +194,10 @@ JSON
   out="$tmp/inspect.out"
   scrub <"$tmp/inspect.json" >"$out"
   jq -e . "$out" >/dev/null || fail "inspect output is not valid JSON"
-  for secret in hunter2 alice 10.20.30 172.18 02:42 "$(hostname)"; do
+  for secret in hunter2 alice 10.20.30 172.18 02:42; do
     ! grep -qF -- "$secret" "$out" || fail "inspect output still contains '$secret'"
   done
+  ! grep -qiP "(?<![A-Za-z0-9])\\Q$SCRUB_HOSTNAME\\E(?![A-Za-z0-9])" "$out" || fail "inspect output still contains '$SCRUB_HOSTNAME'"
   check "$out" || fail "check flags the scrubbed inspect output"
   ! check "$tmp/inspect.json" 2>/dev/null || fail "check passed on the raw sample"
   jq -e '.[0].Config.Env == null' "$out" >/dev/null || fail "Env not removed"
@@ -211,7 +222,7 @@ JSON
   check "$out" || fail "check flags the scrubbed events output"
 
   local self_host self_root
-  self_host=$(hostname)
+  self_host=$SCRUB_HOSTNAME
   self_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   cat >"$tmp/journal.txt" <<JOURNAL
 Oct 17 13:00:01 $self_host dockerd[847]: time="2026-10-17T13:00:01Z" level=error msg="failed to start container" container=0123456789abcdef error="failed to fulfil mount request: open /home/alice/stacks/web/src: no such file or directory (10.20.30.40, mac 02:42:ac:12:00:05, Bind for 0.0.0.0:80, 127.0.0.1)"
@@ -220,9 +231,11 @@ JOURNAL
   out="$tmp/journal.out"
   scrub_journal <"$tmp/journal.txt" >"$out"
   [[ $(wc -l <"$out") -eq 2 ]] || fail "journal mode must keep one line per line"
-  for secret in alice 10.20.30 02:42 "$(hostname)" "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; do
+  for secret in alice 10.20.30 02:42 "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"; do
     ! grep -qF -- "$secret" "$out" || fail "journal output still contains '$secret'"
   done
+  ! grep -qiP "(?<![A-Za-z0-9])\\Q$self_host\\E(?![A-Za-z0-9])" "$out" || fail "journal output still contains the host name '$self_host' as a token"
+  grep -qF '<hostname> dockerd[847]' "$out" || fail "journal host name not replaced as a token"
   grep -qF 'failed to start container' "$out" || fail "journal message lost"
   grep -qF 'container=0123456789abcdef' "$out" || fail "journal container id lost"
   grep -qF 'Bind for 0.0.0.0:80, 127.0.0.1' "$out" || fail "journal: 0.0.0.0/127.0.0.1 were replaced"

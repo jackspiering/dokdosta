@@ -1,54 +1,70 @@
 #!/usr/bin/env bash
-# Image-drift check of plan §3.6 on whatever image store the daemon uses (M0 E5's image part, made store-aware).
-# Standalone, so CI can run it on both stores:   test/m0/m0b/image-drift.sh [--out DIR]
+# Image-drift check of plan §3.6 on whatever image store the daemon uses (from M0b scenario 5; CI only).
+#   scripts/ci/image-drift.sh --out DIR
 #
 # It creates one container from a re-taggable image, then moves the tag to another image, and at each point prints
 # every candidate comparator next to the `com.docker.compose.image` label that compose recorded:
 #   a comparator is USABLE if it equals the label before the re-tag and differs from it after.
 # It also records what `compose --dry-run --progress json up` says (the oracle): no `Recreate` before, `Recreate` after.
-# Exit 0 only if at least one comparator is usable and the oracle behaves. Project: dokdosta-m0-b-imgdrift (guarded).
+# Exit 0 only if at least one comparator is usable and the oracle behaves.
+#
+# Docker safety (fails closed): it runs only in GitHub Actions, acts only on the compose project dokdosta-test-imgdrift
+# and the tag dokdosta-test/imgdrift:latest, pulls only busybox:1.37 and alpine:3.22, and only on the local socket.
 set -euo pipefail
-here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=lib.sh
-source "$here/lib.sh"
 
+die() { printf 'image-drift: REFUSED: %s\n' "$*" >&2; exit 3; }
+
+[[ "${GITHUB_ACTIONS-}" == true ]] || die "runs only in GitHub Actions (it changes images and containers)"
 out=""
 while (($#)); do
   case "$1" in
     --out) out="${2:?--out DIR}"; shift 2 ;;
-    *) m0_die "usage: image-drift.sh [--out DIR]" ;;
+    *) die "usage: image-drift.sh --out DIR" ;;
   esac
 done
-m0b_need jq docker
-m0_sanitize_env
-P=dokdosta-m0-b-imgdrift
-m0b_require_project "$P"
-[[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$P")" ]] || m0_die "project $P already exists; run test/m0/m0b/teardown.sh"
-store="$(docker info --format '{{.Driver}}')"
-[[ -n "$out" ]] || out="$M0B_DIR/imgdrift-$store-$(date -u +%Y%m%dT%H%M%SZ)"
+[[ -n "$out" ]] || die "usage: image-drift.sh --out DIR"
+for t in jq docker; do command -v "$t" >/dev/null || die "$t is required"; done
+
+# Environment that could point compose or docker at something else.
+unset COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_PROFILES COMPOSE_ENV_FILES COMPOSE_PATH_SEPARATOR DOCKER_CONTEXT DOCKER_CONFIG
+case "${DOCKER_HOST-}" in
+  "" | unix:///var/run/docker.sock | unix:///run/docker.sock) unset DOCKER_HOST ;;
+  *) die "DOCKER_HOST=$DOCKER_HOST: only the local socket is allowed" ;;
+esac
+[[ "$(docker context show 2>/dev/null)" == default ]] || die "the docker context is not 'default'"
+
+readonly P=dokdosta-test-imgdrift ref=dokdosta-test/imgdrift:latest
+[[ "$P" =~ ^dokdosta-test-[a-z0-9][a-z0-9_-]*$ ]] || die "project '$P' is not a dokdosta-test-* project"
+[[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$P")" ]] || die "project $P already exists"
+
 umask 077
-mkdir -p "$out"
 dir="$out/stack"
 mkdir -p "$dir"
-cat >"$dir/compose.yaml" <<'YAML'
+cat >"$dir/compose.yaml" <<YAML
 services:
   tagged:
-    image: dokdosta-m0/imgdrift:latest
+    image: $ref
     command: ["sh", "-c", "while true; do sleep 1; done"]
     stop_grace_period: 1s
 YAML
+dc() { docker compose -p "$P" --project-directory "$dir" -f "$dir/compose.yaml" "$@"; }
+pull() { case "$1" in busybox:1.37 | alpine:3.22) docker pull -q "$1" >/dev/null ;; *) die "pull of '$1' not allowed" ;; esac; }
+tag() { docker tag "$1" "$ref"; }
+cleanup() { docker compose -p "$P" down -v --timeout 2 --remove-orphans >/dev/null 2>&1 || true; docker rmi "$ref" >/dev/null 2>&1 || true; }
+trap cleanup EXIT
+
 sum="$out/summary.txt"
 : >"$sum"
 say() { printf '%s\n' "$*" | tee -a "$sum"; }
-cleanup() { m0_down "$P"; m0_rmi dokdosta-m0/imgdrift:latest; }
-trap cleanup EXIT
 
-for b in busybox:1.37 alpine:3.22; do docker image inspect "$b" >/dev/null 2>&1 || m0_pull "$b"; done
+for b in busybox:1.37 alpine:3.22; do docker image inspect "$b" >/dev/null 2>&1 || pull "$b"; done
+store="$(docker info --format '{{.Driver}}')"
 arch=$(docker version --format '{{.Server.Arch}}')
-m0_tag busybox:1.37 dokdosta-m0/imgdrift:latest
-ref=dokdosta-m0/imgdrift:latest
-dcs "$P" "$dir" up -d --pull never --no-build >"$out/up.txt" 2>&1 || { cat "$out/up.txt"; m0_die "compose up failed"; }
-c=$(cid "$P" tagged)
+tag busybox:1.37
+dc up -d --pull never --no-build >"$out/up.txt" 2>&1 || { cat "$out/up.txt"; die "compose up failed"; }
+c=$(docker ps -aq --no-trunc --filter "label=com.docker.compose.project=$P" \
+  --filter "label=com.docker.compose.service=tagged" --filter 'label=com.docker.compose.oneoff=False' | head -1)
+[[ -n "$c" ]] || die "no container for $P/tagged"
 
 short() { printf '%.19s' "$1"; }
 # Each comparator prints the value to compare with the label, or "ERR: <message>".
@@ -63,7 +79,7 @@ val() {
   esac | head -1 | sed 's/^Error.*/ERR: &/' | cut -c1-120
 }
 oracle() { # texts compose prints for the container, sorted unique
-  dcs "$P" "$dir" --dry-run --progress json up -d --no-deps --pull never --no-build tagged 2>&1 |
+  dc --dry-run --progress json up -d --no-deps --pull never --no-build tagged 2>&1 |
     jq -R -r 'fromjson? | select(.id | test("-tagged-1$")) | .text' | sort -u | paste -sd' ' -
 }
 
@@ -81,7 +97,7 @@ for k in "${cmp_ids[@]}"; do say "  $(printf '%-34s' "$k") $(short "${before[$k]
 say "  $(printf '%-34s' 'container.Image == ref.Id') ${before[container.Image@ref.Id]}"
 say "  oracle: $oracle_before"
 
-m0_tag alpine:3.22 "$ref"
+tag alpine:3.22
 for k in "${cmp_ids[@]}"; do after[$k]=$(val "$k" || true); done
 after[container.Image@ref.Id]=$([[ "$(docker inspect --format '{{.Image}}' "$c")" == "$(docker image inspect --format '{{.Id}}' "$ref")" ]] && echo equal || echo differs)
 oracle_after=$(oracle || true)

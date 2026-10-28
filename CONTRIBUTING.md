@@ -64,9 +64,8 @@ preflight is the protection. It refuses to start while any container outside a `
 it refuses `DOKDOSTA_MODE=all`. The guard has its own unit tests that need no Docker. If you add a new thing the tests do to Docker, it goes through
 the guard, with a test that it refuses the wrong project.
 
-The scripts follow the same rule (`scripts/ci/setup-docker.sh` and `test/demo/run.sh` refuse to run outside GitHub Actions).
-The M0 scenarios in `test/m0/` restart the daemon or reboot a machine and are run by the maintainer on a throwaway VM; do not
-run a probe outside the agreed scenarios, or anything that can exhaust CPU, memory, disk or ports.
+The scripts follow the same rule (`scripts/ci/setup-docker.sh`, `scripts/ci/image-drift.sh` and `test/demo/run.sh` refuse to
+run outside GitHub Actions). Do not run a probe outside the agreed scenarios, or anything that can exhaust CPU, memory, disk or ports.
 
 ## Fixtures
 

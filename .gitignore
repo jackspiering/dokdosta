@@ -34,7 +34,6 @@ go.work.sum
 
 # Build output
 /dokdosta
-/whalenurse
 /dist/
 
 # Local runtime state
