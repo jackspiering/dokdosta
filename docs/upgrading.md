@@ -43,7 +43,9 @@ that still carries a `whalenurse.*` label alone (it says why once in the log, an
    commands in these docs use `docker exec dokdosta /dokdosta ...`), then `docker compose up -d --remove-orphans` removes
    the old container. **Keep the volume line as it is** (for example `whalenurse-data:/data`): a new volume name would be a
    new, empty volume. At its first start dokdosta renames `whalenurse.db` (and its `-wal`/`-shm`) to `dokdosta.db` in
-   place; it refuses to if a whalenurse still holds the directory, or if both files are there.
+   place; it refuses to if a whalenurse still holds the directory, if both files are there, or if a `dokdosta.db-wal` or
+   `-shm` is there without a `dokdosta.db` (a leftover that SQLite would replay into the moved database: remove
+   `dokdosta.db*` or keep one store; dokdosta deletes nothing itself).
 4. **Overrides.** An `entrypoint:`, `command:` or `healthcheck:` that names `/whalenurse` becomes `/dokdosta`; a reference
    to the bundled compose becomes `/usr/libexec/dokdosta/docker-compose`; the default control socket is
    `/run/dokdosta.sock`.
