@@ -19,6 +19,9 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- A dependent whose parent was replaced, and whose own ladder reaches the pull rung, is now suspended once with a
+  notification instead of being refused every few minutes for ever. It is still recreated with its parent, and never
+  pulled.
 - A recreate or a pull that took minutes no longer makes dokdosta think its own `create` and `start` events came from outside: the events are attributed to the action, and the incident stays open instead of closing as "recreated" and reopening at rung 0.
 - **A relative `DOKDOSTA_COMPOSE_BIN` is refused at startup.** dokdosta now stops with "DOKDOSTA_COMPOSE_BIN must be an
   absolute path" instead of checking the path in one directory and running it from another. Set the full path, for
