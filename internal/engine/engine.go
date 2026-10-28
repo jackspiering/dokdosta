@@ -489,8 +489,11 @@ func (e *Engine) dropMarkers(drop func(*keyState) bool, why string) []string {
 // ObserveDockerEvent records a Docker event for a key. Events that fall inside
 // an action's in-flight window are attributed to the action and not
 // interpreted: they set no manual-stop marker, clear nothing and open nothing.
-// Events inside the restore window are restores: a `start` clears no SUSPENDED
-// and a `kill` sets no marker. It reports whether the event was attributed to an action.
+// The one exception is a `start`, which still clears a manual-stop marker (v3.15
+// B-011): a hand `start` that failed leaves the marker, and dokdosta's own start
+// that follows is the one that really ends the stop. Events inside the restore
+// window are restores: a `start` clears no SUSPENDED and a `kill` sets no marker.
+// It reports whether the event was attributed to an action.
 func (e *Engine) ObserveDockerEvent(t Target, ev docker.Event) (attributed bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -503,6 +506,12 @@ func (e *Engine) ObserveDockerEvent(t Target, ev docker.Event) (attributed bool)
 	for _, w := range st.windows {
 		if !at.Before(w.start) && (w.end.IsZero() || !at.After(w.end)) {
 			e.emit(t, EventAttributed, "docker event during a dokdosta action", map[string]string{"action": ev.Action})
+			if ev.Action == "start" && st.tracker.Evidence().ManualStop {
+				st.tracker.ApplyAt(ev.Action, ev.Detail, at)
+				st.dirty = true
+				e.emit(t, ManualStopCleared, "start seen: manual-stop marker cleared", nil)
+				e.flush(t.Key, st)
+			}
 			return true
 		}
 	}
