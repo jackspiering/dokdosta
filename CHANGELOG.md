@@ -10,6 +10,10 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- `dokdosta pause --for` now refuses a duration longer than 100 years (use `--for 0` for no expiry). Before, a longer pause was accepted, its expiry overflowed and it ended at the next restart.
+
 ## [0.3.0] - YYYY-MM-DD
 
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
