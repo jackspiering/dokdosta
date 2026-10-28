@@ -462,3 +462,33 @@ func TestPrintStatusListsContainersComposeIsHoldingBack(t *testing.T) {
 		}
 	}
 }
+
+// Plan v3.15 item 4: every command that reads the configuration refuses a variable from before the rename, and its
+// error names the variable without its value (`version` reads no configuration). run is left out on purpose: should the
+// refusal regress, it would start a daemon; runCmd reads the configuration before anything else, and
+// TestVariablesFromBeforeTheRenameAreRefusedByNameOnly (internal/config) covers FromEnv itself. The socket points at
+// an empty directory, so a regression here fails fast instead of reaching a daemon.
+func TestEveryConfiguredCommandRefusesVariablesFromBeforeTheRename(t *testing.T) {
+	const secret = "tok-OLDNAME-40417"
+	t.Setenv("WHALENURSE_HTTP_TOKEN", secret)
+	t.Setenv("DOKDOSTA_CONTROL_SOCKET", filepath.Join(t.TempDir(), "none.sock"))
+	t.Setenv("DOKDOSTA_NOTIFY_URLS", "")
+	cmds := map[string]func() error{
+		"healthcheck": func() error { return healthCmd(nil) },
+		"status":      func() error { return statusCmd(nil) },
+		"pause":       func() error { return scopeCmd("pause", []string{"p/s"}) },
+		"resume":      func() error { return scopeCmd("resume", []string{"p/s"}) },
+		"unsuspend":   func() error { return scopeCmd("unsuspend", []string{"p/s"}) },
+		"notify test": func() error { return notifyCmd([]string{"test"}) },
+	}
+	for name, f := range cmds {
+		err := f()
+		if err == nil || !strings.Contains(err.Error(), "WHALENURSE_HTTP_TOKEN set") {
+			t.Errorf("%s: want the refusal naming WHALENURSE_HTTP_TOKEN, got %v", name, err)
+			continue
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: the error quotes the value: %v", name, err)
+		}
+	}
+}

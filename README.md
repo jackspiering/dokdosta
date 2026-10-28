@@ -6,7 +6,8 @@
 
 **Compose-aware self-healing for Docker hosts.**
 
-*Dok dosta* is Serbo-Croatian for "until enough": it heals until it has tried enough, then stops and tells you.
+*Dok dosta* is Serbo-Croatian for "until enough": it heals until it has tried enough, then stops and tells you. It was
+called whalenurse up to 0.2.0; [upgrading.md](docs/upgrading.md#from-whalenurse-020-and-earlier) lists what to rename.
 
 [![CI](https://github.com/jackspiering/dokdosta/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jackspiering/dokdosta/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)

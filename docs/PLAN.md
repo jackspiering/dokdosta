@@ -367,6 +367,7 @@ any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)-
 
 0. **Skip entirely:**
    - dokdosta's own container;
+   - a container with any `whalenurse.*` label, the namespace from before the rename, whatever else it carries (v3.15 item 5; read like `dokdosta.*` under v3.13 item 10, the reason names the keys);
    - `com.docker.compose.oneoff=True` (`compose run` containers carry the same project and service labels);
    - swarm tasks (`com.docker.swarm.task.id` present);
    - containers that are not opted in;
@@ -593,7 +594,7 @@ Private registries (M7, v3.12 items 3 to 8). Without `DOKDOSTA_REGISTRY_AUTH_DIR
 - A socket proxy is roadmap (R3). Compose needs broad API access, so it adds little in v1.
 
 ### 3.10 Store
-- SQLite via `modernc.org/sqlite` in `DOKDOSTA_DATA_DIR` (default `/data`).
+- SQLite via `modernc.org/sqlite` in `DOKDOSTA_DATA_DIR` (default `/data`), file `dokdosta.db`. A `whalenurse.db` from before the rename is renamed to it once, with its `-wal` and `-shm`, under both locks (v3.15 item 6).
 - Tables: per-key state, incidents and flap history, events (`events`, schema 3, built in M5: the autoincrement ID doubles as the `since` cursor and is never reused), and notifications sent (`notified`, the dedupe ledger of §3.12; schema 2, built in M3).
 - Retention: `DOKDOSTA_HISTORY_RETENTION` (default 30d) for closed incidents and events, hourly; the events of an incident that is still open are kept (v3.13 item 21); events are also capped at 100,000 rows (open incidents' events deleted last).
 

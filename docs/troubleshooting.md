@@ -35,6 +35,10 @@ Work down the list; `status` and the dashboard's container page say which one it
    `on-failure` container that exited 0 or has used up its `on-failure:N` retries, because Docker does not restore it either;
    `always`, `unless-stopped` and an `on-failure` container with a non-zero exit and retries left are left to Docker's own restore. `dokdosta.heal-exited=always` starts it anyway.
 
+**`carries labels from before the rename (whalenurse....)`**: the container still has `whalenurse.*` labels, so dokdosta
+leaves it alone, whatever else it carries. Rename them to `dokdosta.*` and recreate the container
+([upgrading.md](upgrading.md#from-whalenurse-020-and-earlier)).
+
 ## Why is my container SUSPENDED?
 
 SUSPENDED means dokdosta gave up on purpose: nothing more is tried until the container recovers or you say so. The
@@ -208,3 +212,6 @@ missing bind source, a port already allocated (`port is already allocated`), a b
 | `run` exits: `DOKDOSTA_REGISTRY_AUTH_DIR: ...` | The credentials file is not valid: it must be a `config.json` with only `auths`, each entry with an inline credential ([deployment.md](deployment.md#private-registries-for-the-pull-rung)). The message names the problem and never a value. |
 | `store write failed; continuing from memory` (or `store read failed`) in the log, `STORE: N operations failed` in `status` | `/data` is full, read-only or gone bad. Healing goes on from memory, but SUSPENDED, pauses, markers and events written since are lost on a restart. Free the space (or fix the mount), then restart dokdosta so it starts from a store that works; check what you paused or unsuspended meanwhile. |
 | Unknown `DOKDOSTA_...` variable | A typo; the warning names it. |
+| `run` exits: `WHALENURSE_... set: whalenurse was renamed dokdosta` | A variable from before the rename. Rename it to `DOKDOSTA_*` ([upgrading.md](upgrading.md#from-whalenurse-020-and-earlier)); the old names are not read. |
+| `both whalenurse.db and dokdosta.db are in ...` | The data directory holds the store from before the rename and a new one. Keep one: the old one holds the history of whalenurse, the new one what dokdosta has written since. |
+| `a whalenurse is still running with this data directory` | The old daemon still holds the directory. Stop it, then start dokdosta: it moves the store once. |

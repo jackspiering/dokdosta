@@ -211,7 +211,7 @@ func ChildEnv(env []string, configDir string) []string {
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
 		switch {
-		case strings.HasPrefix(k, "COMPOSE_"), strings.HasPrefix(k, "DOKDOSTA_"), k == "DOCKER_CONTEXT", k == "DOCKER_CONFIG",
+		case strings.HasPrefix(k, "COMPOSE_"), strings.HasPrefix(k, "DOKDOSTA_"), strings.HasPrefix(k, "WHALENURSE_"), k == "DOCKER_CONTEXT", k == "DOCKER_CONFIG",
 			k == "DOCKER_AUTH_CONFIG", k == "NO_COLOR":
 			continue
 		}

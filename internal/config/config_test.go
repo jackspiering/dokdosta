@@ -323,3 +323,38 @@ func TestPlaceholderTokenOfTheExamplesIsRefused(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+// Plan v3.15 item 4: a variable from before the rename is a startup error that names it and never its value.
+func TestVariablesFromBeforeTheRenameAreRefusedByNameOnly(t *testing.T) {
+	_, _, err := FromEnv([]string{"WHALENURSE_NOTIFY_URLS=ntfy://secret-topic", "DOKDOSTA_MODE=all", "WHALENURSE_HTTP_TOKEN=s3cr3t-token-value", "WHALENURSE_EMPTY="})
+	if err == nil {
+		t.Fatal("WHALENURSE_* accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "WHALENURSE_EMPTY, WHALENURSE_HTTP_TOKEN, WHALENURSE_NOTIFY_URLS set") || !strings.Contains(msg, "renamed dokdosta") {
+		t.Errorf("error does not name the variables, sorted: %s", msg)
+	}
+	for _, v := range []string{"secret-topic", "s3cr3t-token-value", "ntfy"} {
+		if strings.Contains(msg, v) {
+			t.Errorf("error quotes a value (%q): %s", v, msg)
+		}
+	}
+	if _, _, err := FromEnv([]string{"DOKDOSTA_MODE=all", "XWHALENURSE_A=1", "whalenurse_a=1"}); err != nil {
+		t.Errorf("only the WHALENURSE_ prefix is refused: %v", err)
+	}
+}
+
+// Plan v3.15 item 5: a label from before the rename leaves the container alone, whatever else it carries, and the
+// warning names the keys, never a value.
+func TestLabelsFromBeforeTheRenameLeaveTheContainerAlone(t *testing.T) {
+	c, warns := ParseLabels(map[string]string{"whalenurse.heal.pull": "secret-value", "whalenurse.enable": "true", LabelEnable: "true"}, ModeAll)
+	if c.OptedIn || !c.Disabled || strings.Join(c.Legacy, ",") != "whalenurse.enable,whalenurse.heal.pull" {
+		t.Fatalf("%+v", c)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "(whalenurse.enable, whalenurse.heal.pull)") || strings.Contains(warns[0], "secret-value") {
+		t.Fatalf("%q", warns)
+	}
+	if c, _ := ParseLabels(map[string]string{LabelEnable: "true", "xwhalenurse.enable": "false"}, ModeLabel); !c.OptedIn || c.Legacy != nil {
+		t.Fatalf("only the whalenurse. prefix counts: %+v", c)
+	}
+}

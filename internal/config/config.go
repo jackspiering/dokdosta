@@ -106,6 +106,10 @@ func Defaults() Global {
 	}
 }
 
+// LegacyEnvPrefix is the prefix of the variables from before the rename (plan v3.15 item 4). A variable with it is a
+// startup error, so a lost token, notification URL or mode does not go unnoticed; the old names are not aliases.
+const LegacyEnvPrefix = "WHALENURSE_"
+
 // later lists variables defined in the plan that nothing acts on yet.
 var later = map[string]string{}
 
@@ -115,13 +119,24 @@ var later = map[string]string{}
 func FromEnv(environ []string) (Global, []string, error) {
 	g := Defaults()
 	env := map[string]string{}
+	var legacy []string
 	for _, kv := range environ {
-		if k, v, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "DOKDOSTA_") {
+		k, v, ok := strings.Cut(kv, "=")
+		switch {
+		case ok && strings.HasPrefix(k, "DOKDOSTA_"):
 			env[k] = v
+		case ok && strings.HasPrefix(k, LegacyEnvPrefix):
+			legacy = append(legacy, k)
 		}
 	}
 	var warns []string
 	var errs []string
+	if len(legacy) > 0 {
+		// Only the names: the values may be secrets (the token, the notification URLs, the uptime ping).
+		sort.Strings(legacy)
+		errs = append(errs, fmt.Sprintf("%s set: whalenurse was renamed dokdosta, rename them to DOKDOSTA_* (docs/upgrading.md)",
+			strings.Join(legacy, ", ")))
+	}
 	take := func(k string) (string, bool) {
 		v, ok := env[k]
 		delete(env, k)

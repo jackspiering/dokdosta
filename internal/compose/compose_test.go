@@ -358,9 +358,9 @@ func TestRollbackCommandsAreExactAndQuoted(t *testing.T) {
 
 func TestChildEnvStripsWhatCouldRedirectCompose(t *testing.T) {
 	env := ChildEnv([]string{"PATH=/bin", "HOME=/h", "DOCKER_HOST=unix:///var/run/docker.sock", "COMPOSE_PROJECT_NAME=evil", "COMPOSE_FILE=/x", "COMPOSE_PROFILES=a",
-		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "DOCKER_AUTH_CONFIG={}", "DOKDOSTA_NOTIFY_URLS=secret://", "NO_COLOR=0"}, "")
+		"DOCKER_CONTEXT=remote", "DOCKER_CONFIG=/elsewhere", "DOCKER_AUTH_CONFIG={}", "DOKDOSTA_NOTIFY_URLS=secret://", "WHALENURSE_HTTP_TOKEN=old-secret", "NO_COLOR=0"}, "")
 	got := strings.Join(env, "\n")
-	for _, bad := range []string{"COMPOSE_", "DOCKER_CONTEXT", "/elsewhere", "DOCKER_AUTH_CONFIG", "DOKDOSTA_", "NO_COLOR=0"} {
+	for _, bad := range []string{"COMPOSE_", "DOCKER_CONTEXT", "/elsewhere", "DOCKER_AUTH_CONFIG", "DOKDOSTA_", "WHALENURSE_", "old-secret", "NO_COLOR=0"} {
 		if strings.Contains(got, bad) {
 			t.Errorf("%s survived: %v", bad, env)
 		}
@@ -657,6 +657,7 @@ func TestDeclaredLabelsCommandLineAndParsing(t *testing.T) {
 		bad  bool
 	}{
 		{`{"services":{"db":{"labels":["dokdosta.enable=true","x=y"]}}}`, []string{"dokdosta.enable"}, false},
+		{`{"services":{"db":{"labels":{"whalenurse.enable":"false","dokdosta.actions":"restart"}}}}`, []string{"dokdosta.actions", "whalenurse.enable"}, false}, // plan v3.15 item 5
 		{`{"services":{"db":{}}}`, nil, false},
 		{`{"services":{"db":{"labels":null}}}`, nil, false},
 		{`{"services":{"web":{}}}`, nil, true}, // not the service asked about

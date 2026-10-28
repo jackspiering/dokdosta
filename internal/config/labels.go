@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,11 @@ const (
 	LabelCooldown   = "dokdosta.cooldown"
 	LabelFlapLimit  = "dokdosta.flap-limit"
 )
+
+// LegacyLabelPrefix is the label namespace from before the rename (plan v3.15 item 5). A container with any label in
+// it is left alone (Container.Legacy), whatever else it carries: the old labels are not aliases, and an ignored
+// whalenurse.enable=false would otherwise be healed under DOKDOSTA_MODE=all.
+const LegacyLabelPrefix = "whalenurse."
 
 // Rung names, as used in dokdosta.actions.
 const (
@@ -37,6 +43,7 @@ const (
 type Container struct {
 	OptedIn    bool
 	Disabled   bool     // dokdosta.enable=false: left alone entirely, even as a dependent of an opted-in parent
+	Legacy     []string // the whalenurse.* label keys it carries, sorted (never a value); set means Disabled too
 	Actions    []string // ladder rungs, in order
 	HealExited HealExited
 	Cooldown   time.Duration // 0: use the global base
@@ -64,6 +71,11 @@ func ParseLabels(labels map[string]string, mode Mode) (Container, []string) {
 	}
 	var warns []string
 	warn := func(format string, a ...any) { warns = append(warns, fmt.Sprintf(format, a...)) }
+	if c.Legacy = LegacyLabels(labels); len(c.Legacy) > 0 {
+		c.OptedIn, c.Disabled = false, true
+		warn("%s", LegacyReason(c.Legacy))
+		return c, warns
+	}
 
 	if v, ok := labels[LabelEnable]; ok {
 		b, err := strconv.ParseBool(strings.TrimSpace(v))
@@ -129,4 +141,22 @@ func ParseLabels(labels map[string]string, mode Mode) (Container, []string) {
 		}
 	}
 	return c, warns
+}
+
+// LegacyLabels returns the keys of the labels in the namespace from before the rename, sorted.
+func LegacyLabels(labels map[string]string) []string {
+	var keys []string
+	for k := range labels {
+		if strings.HasPrefix(k, LegacyLabelPrefix) {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+// LegacyReason says why a container with labels from before the rename is left alone. It names the keys, never a value.
+func LegacyReason(keys []string) string {
+	return fmt.Sprintf("carries labels from before the rename (%s): whalenurse was renamed dokdosta, so it is left alone "+
+		"until they are renamed to dokdosta.* and the container is recreated (docs/upgrading.md)", strings.Join(keys, ", "))
 }

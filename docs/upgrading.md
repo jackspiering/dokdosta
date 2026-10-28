@@ -23,6 +23,49 @@ changes; versions after 0.1.2 move the stored state to the new ID at startup (an
 After replacing the systemd unit, run `systemctl daemon-reload`, and `systemctl reenable dokdosta` when its `[Install]`
 section changed (it did after 0.1.2: `WantedBy=` gained `docker.service`, so dokdosta starts again with Docker).
 
+## From whalenurse (0.2.0 and earlier)
+
+dokdosta was called whalenurse up to and including 0.2.0 (plan v3.15). **Every name changed, and the old ones are not
+read**, so go through this list once, after the backup of step 3 above. dokdosta stops you where an old name would
+otherwise be ignored quietly: it refuses to start while a `WHALENURSE_*` variable is set, and it leaves every container
+that still carries a `whalenurse.*` label alone (it says why once in the log, and on the dashboard).
+
+1. **Variables.** Rename every `WHALENURSE_*` to `DOKDOSTA_*`: in an env file `sed -i 's/^WHALENURSE_/DOKDOSTA_/' <file>`,
+   and by hand in the `environment:` of dokdosta's compose file, including `${WHALENURSE_...}` interpolations and the
+   shell or `.env` that sets them. The names after the prefix are unchanged. The error names every variable still set
+   (never its value).
+2. **Labels.** Rename every `whalenurse.*` label to `dokdosta.*` in your stacks (`whalenurse.enable` becomes
+   `dokdosta.enable`, and so on; values and meaning are unchanged), then `docker compose up -d` each stack: a container's
+   labels change only when it is recreated. Until then dokdosta leaves it alone, so a `whalenurse.enable=false` under
+   `DOKDOSTA_MODE=all` is never healed by mistake. `grep -rn 'whalenurse\.' <your stacks>` finds what is left.
+3. **The image and the service.** The image is `ghcr.io/jackspiering/dokdosta` (the old `ghcr.io/jackspiering/whalenurse`
+   keeps the releases up to 0.2.0 and gets no new ones). Rename the service and container to `dokdosta` if you like (the
+   commands in these docs use `docker exec dokdosta /dokdosta ...`), then `docker compose up -d --remove-orphans` removes
+   the old container. **Keep the volume line as it is** (for example `whalenurse-data:/data`): a new volume name would be a
+   new, empty volume. At its first start dokdosta renames `whalenurse.db` (and its `-wal`/`-shm`) to `dokdosta.db` in
+   place; it refuses to if a whalenurse still holds the directory, or if both files are there.
+4. **Overrides.** An `entrypoint:`, `command:` or `healthcheck:` that names `/whalenurse` becomes `/dokdosta`; a reference
+   to the bundled compose becomes `/usr/libexec/dokdosta/docker-compose`; the default control socket is
+   `/run/dokdosta.sock`.
+5. **Metrics.** The Prometheus names are `dokdosta_*` (were `whalenurse_*`): update dashboards and alerts.
+6. **Systemd.** As root:
+
+   ```sh
+   systemctl disable --now whalenurse
+   mv /var/lib/whalenurse /var/lib/dokdosta              # the store; dokdosta renames the file inside at its first start
+   usermod -l dokdosta -d /var/lib/dokdosta whalenurse && groupmod -n dokdosta whalenurse
+   install -d -m 0750 -o root -g dokdosta /etc/dokdosta
+   sed 's/^WHALENURSE_/DOKDOSTA_/' /etc/whalenurse/whalenurse.env > /etc/dokdosta/dokdosta.env
+   chown root:dokdosta /etc/dokdosta/dokdosta.env && chmod 0640 /etc/dokdosta/dokdosta.env
+   install -m 0755 dokdosta /usr/local/bin/dokdosta
+   install -m 0644 dokdosta.service /etc/systemd/system/dokdosta.service
+   rm /etc/systemd/system/whalenurse.service && systemctl daemon-reload && systemctl enable --now dokdosta
+   ```
+
+   The socket is `/run/dokdosta/dokdosta.sock`. Remove `/usr/local/bin/whalenurse` and `/etc/whalenurse` once it runs.
+7. **Verifying the old releases** needs the old name: see
+   [Releases from before the rename](verifying-releases.md#releases-from-before-the-rename).
+
 ## Backing up and restoring the store
 
 The store is `dokdosta.db` in `/data` (the container's volume) or in `DOKDOSTA_DATA_DIR` (`/var/lib/dokdosta` with the
