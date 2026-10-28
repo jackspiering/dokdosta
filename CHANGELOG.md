@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Changed
+
+- **The store is schema 4.** Two indexes, `events (type, id)` and `incidents (closed_at)`, so the overview's per-type event
+  queries and the history list no longer read the whole table at the 100,000-row cap; the incidents list asks the store
+  for only the rows it shows. The first start adds them in place; an older dokdosta refuses the database (back it up
+  first, [docs/upgrading.md](docs/upgrading.md#the-store-sqlite-schema)).
+
 ## [0.3.0] - YYYY-MM-DD
 
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.

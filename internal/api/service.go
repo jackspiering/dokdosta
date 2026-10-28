@@ -23,6 +23,11 @@ type History interface {
 	History(key string) ([]engine.ClosedIncident, error)
 }
 
+// limitedHistory is the optional second method of a History: the store cuts the rows in SQL.
+type limitedHistory interface {
+	HistoryLimit(key string, limit int) ([]engine.ClosedIncident, error)
+}
+
 // Service builds the documents of the API. The JSON handlers encode them and the dashboard (internal/web) renders
 // them, so the pages show exactly what the API says. Everything that leaves dokdosta passes through it: that is where
 // the output rules of plan §3.9 are enforced (label allow-list, attribute allow-list, redaction, length caps).
@@ -344,8 +349,15 @@ func (s *Service) incidents(key string, limit int) []IncidentDoc {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Opened.After(out[j].Opened) })
-	if s.History != nil {
-		if closed, err := s.History.History(key); err == nil {
+	if room := limit - len(out); s.History != nil && room > 0 {
+		var closed []engine.ClosedIncident
+		var err error
+		if lh, ok := s.History.(limitedHistory); ok {
+			closed, err = lh.HistoryLimit(key, room)
+		} else {
+			closed, err = s.History.History(key)
+		}
+		if err == nil {
 			for _, c := range closed {
 				if len(out) >= limit {
 					break
