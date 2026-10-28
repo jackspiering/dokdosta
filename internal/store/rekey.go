@@ -206,15 +206,36 @@ func rekeyMetaValues(tx *sql.Tx, host string, m RekeyMeta) error {
 			if json.Unmarshal([]byte(x.v), &obj) != nil {
 				continue
 			}
+			changed := false
 			var k string
-			if json.Unmarshal(obj["key"], &k) != nil {
+			if json.Unmarshal(obj["key"], &k) == nil {
+				if to, ok := rekeyed(k, host); ok && to != k {
+					obj["key"], _ = json.Marshal(to)
+					changed = true
+				}
+			}
+			// The followers (plan v3.13 item 6) are keys too. Their other fields are kept as they are.
+			var followers []map[string]json.RawMessage
+			if raw, ok := obj["followers"]; ok && json.Unmarshal(raw, &followers) == nil {
+				followersChanged := false
+				for _, f := range followers {
+					var fk string
+					if json.Unmarshal(f["key"], &fk) != nil {
+						continue
+					}
+					if to, ok := rekeyed(fk, host); ok && to != fk {
+						f["key"], _ = json.Marshal(to)
+						followersChanged = true
+					}
+				}
+				if followersChanged {
+					obj["followers"], _ = json.Marshal(followers)
+					changed = true
+				}
+			}
+			if !changed {
 				continue
 			}
-			to, ok := rekeyed(k, host)
-			if !ok || to == k {
-				continue
-			}
-			obj["key"], _ = json.Marshal(to)
 			b, err := json.Marshal(obj)
 			if err != nil {
 				return err
