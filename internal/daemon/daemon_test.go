@@ -786,14 +786,18 @@ func TestEventStreamReconnectsWithSince(t *testing.T) {
 	h.d.o.ReconnectBackoff = 5 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	out := make(chan docker.Event, 8)
-	sig := make(chan streamSignal, 16)
-	go h.d.watchEvents(ctx, out, sig)
+	out := make(chan streamItem, 8)
+	go h.d.watchEvents(ctx, out)
 
 	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 1 })
 	evTime := time.Date(2026, 10, 17, 12, 0, 5, 0, time.UTC)
 	h.fake.Emit(docker.Event{Action: "die", ID: "x", Time: evTime})
-	<-out
+	if it := <-out; it.sig == nil || it.sig.lost { // the stream is established first: connected, then the event
+		t.Fatalf("first item must be 'connected': %+v", it)
+	}
+	if it := <-out; it.sig != nil || it.ev.ID != "x" {
+		t.Fatalf("second item must be the event: %+v", it)
+	}
 	h.fake.BreakStream(fmt.Errorf("connection reset"))
 	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 2 })
 	if got := h.fake.Subscriptions()[1]; !got.Equal(evTime) {
@@ -809,7 +813,7 @@ func TestHealthyReportsAStreamThatFailsOnEveryRetry(t *testing.T) {
 	h.fake.EventsErr = fmt.Errorf("connection refused")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go h.d.watchEvents(ctx, make(chan docker.Event, 8), make(chan streamSignal, 16))
+	go h.d.watchEvents(ctx, make(chan streamItem, 8))
 
 	waitFor(t, func() bool { return len(h.fake.Subscriptions()) >= 3 })
 	h.clk.Advance(3 * time.Minute)

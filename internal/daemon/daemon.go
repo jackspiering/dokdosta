@@ -330,11 +330,18 @@ type streamSignal struct {
 	at   time.Time
 }
 
+// streamItem is what watchEvents hands the loop: an event or a stream signal, exactly one of them. They share one
+// channel so the loop sees them in the order the stream produced them: a kill that follows a loss and a reconnect is
+// handled after them, whatever the loop was busy with.
+type streamItem struct {
+	ev  docker.Event
+	sig *streamSignal
+}
+
 // Run blocks until ctx ends: it subscribes to events (reconnecting) and ticks.
 func (d *Daemon) Run(ctx context.Context) error {
-	evCh := make(chan docker.Event, 256)
-	sigCh := make(chan streamSignal, 16)
-	go d.watchEvents(ctx, evCh, sigCh)
+	itemCh := make(chan streamItem, 256)
+	go d.watchEvents(ctx, itemCh)
 
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -347,29 +354,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			d.heartbeat(true) // the clean end: the next run quarantines markers from just before it
 			return ctx.Err()
-		case ev := <-evCh:
-			d.HandleEvent(ctx, ev)
-		case sig := <-sigCh:
-			// Events are delivered before the signal that follows them: drain what is queued.
-			d.drain(ctx, evCh)
-			if sig.lost {
-				d.StreamLost(sig.at)
-			} else {
+		case it := <-itemCh:
+			switch {
+			case it.sig == nil:
+				d.HandleEvent(ctx, it.ev)
+			case it.sig.lost:
+				d.StreamLost(it.sig.at)
+			default:
 				d.StreamConnected()
 			}
 		case <-tick.C:
 			d.Tick(ctx)
-		}
-	}
-}
-
-func (d *Daemon) drain(ctx context.Context, evCh chan docker.Event) {
-	for {
-		select {
-		case ev := <-evCh:
-			d.HandleEvent(ctx, ev)
-		default:
-			return
 		}
 	}
 }
@@ -384,12 +379,12 @@ const streamStable = 2 * time.Second
 // event time> after an error and tells the loop when the stream was lost and
 // when it is back; a stream that ends because ctx ended is not a loss, and a
 // retry that fails before the stream is established is not a reconnect.
-func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig chan<- streamSignal) {
+func (d *Daemon) watchEvents(ctx context.Context, out chan<- streamItem) {
 	var since time.Time
 	backoff := d.o.ReconnectBackoff
-	send := func(s streamSignal) bool {
+	send := func(it streamItem) bool {
 		select {
-		case sig <- s:
+		case out <- it:
 			return true
 		case <-ctx.Done():
 			return false
@@ -409,7 +404,7 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig c
 			if backoff > d.o.ReconnectBackoff {
 				d.log.Info("docker events stream reconnected")
 			}
-			return send(streamSignal{})
+			return send(streamItem{sig: &streamSignal{}})
 		}
 		stable := time.NewTimer(streamStable)
 		got := false
@@ -433,9 +428,7 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig c
 				if ev.Time.After(since) {
 					since = ev.Time
 				}
-				select {
-				case out <- ev:
-				case <-ctx.Done():
+				if !send(streamItem{ev: ev}) {
 					cancel()
 					return
 				}
@@ -456,7 +449,7 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig c
 			return
 		}
 		if established {
-			if !send(streamSignal{lost: true, at: d.clk.Now()}) {
+			if !send(streamItem{sig: &streamSignal{lost: true, at: d.clk.Now()}}) {
 				return
 			}
 		}
