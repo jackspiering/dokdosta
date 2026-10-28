@@ -34,6 +34,10 @@ import (
 	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
+// windowKeep is how long a closed action window is kept: events are matched on their own time, so a long keep cannot
+// mis-attribute; it only has to outlast the longest backlog of queued events (a 5 minute recreate, a 10 minute pull).
+const windowKeep = time.Hour
+
 // Suspension reasons.
 const (
 	ReasonLadder   = "ladder"   // every rung ran and the container is still bad
@@ -562,7 +566,7 @@ func (e *Engine) reset(t Target, st *keyState, why string) {
 }
 
 func (e *Engine) prune(st *keyState) {
-	cut := e.clk.Now().Add(-time.Minute)
+	cut := e.clk.Now().Add(-windowKeep)
 	kept := st.windows[:0]
 	for _, w := range st.windows {
 		if w.end.IsZero() || w.end.After(cut) {
