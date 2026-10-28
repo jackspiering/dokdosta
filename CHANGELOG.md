@@ -23,6 +23,10 @@ workflow refuses an undated section.
   then `/usr/libexec`. A systemd install with a compose in two of these directories now uses the one `docker compose` uses,
   which may be a different version than before ([docs/upgrading.md](docs/upgrading.md#docker-engine-and-compose),
   [docs/deployment.md](docs/deployment.md)).
+- **The store is schema 4.** Two indexes, `events (type, id)` and `incidents (closed_at)`, so the overview's per-type event
+  queries and the history list no longer read the whole table at the 100,000-row cap; the incidents list asks the store
+  for only the rows it shows. The first start adds them in place; an older dokdosta refuses the database (back it up
+  first, [docs/upgrading.md](docs/upgrading.md#the-store-sqlite-schema)).
 
 ### Fixed
 

@@ -31,7 +31,7 @@ import (
 const FileName = "dokdosta.db"
 
 // schemaVersion is stored in PRAGMA user_version. Bump it with a migration step in migrate.
-const schemaVersion = 3
+const schemaVersion = 4
 
 // Store is an open database.
 type Store struct {
@@ -230,12 +230,23 @@ func (s *Store) migrate() error {
 		// M5 (plan v3.9): the domain events, for the API's `since` cursor, the timelines and the history page.
 		// AUTOINCREMENT keeps sqlite_sequence at the highest ID ever stored, so IDs stay monotonic after retention
 		// has deleted the newest rows and the daemon restarts.
-		return s.exec([]string{
+		if err := s.exec([]string{
 			`CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, host TEXT NOT NULL, key TEXT NOT NULL,
 				container TEXT NOT NULL, type TEXT NOT NULL, message TEXT NOT NULL, attrs TEXT NOT NULL)`,
 			`CREATE INDEX events_key ON events (key, id)`,
 			`CREATE INDEX events_at ON events (at)`,
 			"PRAGMA user_version = 3",
+		}); err != nil {
+			return err
+		}
+	}
+	if v < 4 {
+		// The overview asks for events of a few types on every refresh and the history page lists closed incidents
+		// newest first; without these both read the whole table at the 100,000-row cap.
+		return s.exec([]string{
+			`CREATE INDEX events_type ON events (type, id)`,
+			`CREATE INDEX incidents_closed ON incidents (closed_at)`,
+			"PRAGMA user_version = 4",
 		})
 	}
 	return nil
@@ -749,8 +760,14 @@ func (s *Store) Query(q engine.EventQuery) ([]engine.Event, error) {
 
 // History returns the closed incidents of a key, newest first (the dashboard's
 // History page and the tests use it).
-func (s *Store) History(key string) ([]engine.ClosedIncident, error) {
-	rows, err := s.rdb.Query(`SELECT key, opened_at, class, closed_at, outcome FROM incidents WHERE closed_at IS NOT NULL AND (? = '' OR key = ?) ORDER BY closed_at DESC, opened_at DESC`, key, key)
+func (s *Store) History(key string) ([]engine.ClosedIncident, error) { return s.HistoryLimit(key, 0) }
+
+// HistoryLimit is History cut to the newest limit rows in SQL; a limit of 0 or less means all of them.
+func (s *Store) HistoryLimit(key string, limit int) ([]engine.ClosedIncident, error) {
+	if limit <= 0 {
+		limit = -1 // SQLite: a negative LIMIT is no limit
+	}
+	rows, err := s.rdb.Query(`SELECT key, opened_at, class, closed_at, outcome FROM incidents WHERE closed_at IS NOT NULL AND (? = '' OR key = ?) ORDER BY closed_at DESC, opened_at DESC LIMIT ?`, key, key, limit)
 	if err != nil {
 		return nil, err
 	}
