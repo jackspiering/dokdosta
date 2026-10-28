@@ -42,19 +42,82 @@ func TestFilterRemovesWhatTheImageGives(t *testing.T) {
 	}
 }
 
-func TestFilterTreatsAComposeIdentityOfTheImageAsNoComposeAtAll(t *testing.T) {
+// Compose writes project, service and version into every image it builds, so a container compose makes from such an image
+// carries the same three values: that is not the image's identity (plan v3.16 item 1).
+func composeBuiltImage(oneoff string) (img, own map[string]string) {
+	img = map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.version": "5.6.0"}
+	own = map[string]string{
+		LabelProject: "p", LabelService: "web", "com.docker.compose.version": "5.6.0",
+		"com.docker.compose.config-hash": "abc", LabelNumber: "1", LabelOneOff: oneoff,
+		"com.docker.compose.project.working_dir": "/srv/p", "com.docker.compose.project.config_files": "/srv/p/compose.yaml",
+		"dokdosta.enable": "true",
+	}
+	return img, own
+}
+
+func TestFilterKeepsTheComposeIdentityOfAContainerComposeCreatedFromAComposeBuiltImage(t *testing.T) {
 	f := NewFake()
-	img := map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.version": "5.6.0"}
+	img, own := composeBuiltImage("False")
 	f.SetImageLabels(flImg, img)
-	own := map[string]string{LabelProject: "p", LabelService: "web", LabelNumber: "1", "com.docker.compose.version": "5.6.0", "dokdosta.enable": "true", "other": "y"}
 	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: own})
 	flt, _ := filterFor(f)
+	flt.Declared = func(context.Context, map[string]string) (map[string]bool, bool) {
+		return map[string]bool{"dokdosta.enable": true}, true
+	}
 	c, _ := flt.Inspect(context.Background(), "c1")
-	if want := map[string]string{"dokdosta.enable": "true", "other": "y"}; !reflect.DeepEqual(c.Labels, want) {
+	if !reflect.DeepEqual(c.Labels, own) {
 		t.Fatalf("%v", c.Labels)
 	}
-	if _, _, _, ok := ComposeKeyParts(c.Labels); ok {
-		t.Fatal("still a compose container")
+	if _, _, _, ok := ComposeKeyParts(c.Labels); !ok {
+		t.Fatal("no longer a compose container")
+	}
+}
+
+func TestFilterKeepsOneOffLabel(t *testing.T) {
+	f := NewFake()
+	img, own := composeBuiltImage("True")
+	f.SetImageLabels(flImg, img)
+	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: own})
+	flt, _ := filterFor(f)
+	flt.Declared = func(context.Context, map[string]string) (map[string]bool, bool) {
+		return map[string]bool{"dokdosta.enable": true}, true
+	}
+	c, _ := flt.Inspect(context.Background(), "c1")
+	if c.Labels[LabelOneOff] != "True" {
+		t.Fatalf("the oneoff label is gone: %v", c.Labels)
+	}
+}
+
+// An identity of the image is still recognised when compose cannot have made the container, or the image holds a value
+// compose writes at create time.
+func TestFilterStillDropsAnIdentityOfTheImage(t *testing.T) {
+	for name, tc := range map[string]struct{ img, own map[string]string }{
+		"docker run of an image that plants project and service": {
+			img: map[string]string{LabelProject: "p", LabelService: "web"},
+			own: map[string]string{LabelProject: "p", LabelService: "web", "dokdosta.enable": "true", "other": "y"},
+		},
+		"config-hash equal to the image's": {
+			img: map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.config-hash": "abc"},
+			own: map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.config-hash": "abc", LabelNumber: "1", LabelOneOff: "False", "dokdosta.enable": "true", "other": "y"},
+		},
+		"project.config_files equal to the image's": {
+			img: map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.project.config_files": "/srv/p/compose.yaml"},
+			own: map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.config-hash": "abc", LabelNumber: "1", LabelOneOff: "False", "com.docker.compose.project.config_files": "/srv/p/compose.yaml", "dokdosta.enable": "true", "other": "y"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := NewFake()
+			f.SetImageLabels(flImg, tc.img)
+			f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: tc.own})
+			flt, _ := filterFor(f)
+			c, _ := flt.Inspect(context.Background(), "c1")
+			if want := map[string]string{"dokdosta.enable": "true", "other": "y"}; !reflect.DeepEqual(c.Labels, want) {
+				t.Fatalf("%v", c.Labels)
+			}
+			if _, _, _, ok := ComposeKeyParts(c.Labels); ok {
+				t.Fatal("still a compose container")
+			}
+		})
 	}
 }
 

@@ -28,8 +28,11 @@ func isSteering(k string) bool {
 // daemon/commit.go, merge), so a container's merged labels hold both the operator's and the image publisher's. The filter
 // reads the image's labels by the container's image ID and removes, from the labels List and Inspect return:
 //
-//   - every com.docker.compose.* label, when one of them has the value the image carries for that key: the compose
-//     identity is the image's, the container was not made by compose, and it falls back to its name and rung 1;
+//   - every com.docker.compose.* label, when the compose identity is the image's (plan v3.16 item 1): one of them has the
+//     value the image carries for that key, and compose cannot have made the container (a label compose writes on every
+//     container is missing) or the shared key is one compose sets only when it creates one. The container then was not
+//     made by compose, and it falls back to its name and rung 1. project, service and version alone prove nothing:
+//     compose writes them into every image it builds, so a container it makes from that image carries the same values;
 //   - the dokdosta.* rule below applies to the whalenurse.* labels from before the rename too (plan v3.15 item 5):
 //     a container that carries one is left alone, so one the image supplies must not count either;
 //   - on a compose container, every dokdosta.* label that the service's `labels:` in the compose file does not declare
@@ -87,6 +90,35 @@ func (f *ImageLabelFilter) cachedDrop(id string) ([]string, bool) {
 
 var _ Reader = (*ImageLabelFilter)(nil)
 
+// createTimeKeys are the labels compose sets when it creates a container; an image has no reason to carry their values,
+// so one that does is the source of the container's compose labels. alwaysSet are the ones compose writes on every
+// container, so a container without one was not made by compose.
+var (
+	createTimeKeys = []string{
+		composeLabelPrefix + "config-hash", LabelNumber, LabelOneOff,
+		composeLabelPrefix + "project.working_dir", composeLabelPrefix + "project.config_files",
+	}
+	alwaysSet = []string{composeLabelPrefix + "config-hash", LabelNumber, LabelOneOff}
+)
+
+// identityFromImage reports whether the compose labels shared with the image (shared, sorted or not) are the image's.
+func identityFromImage(labels map[string]string, shared []string) bool {
+	if len(shared) == 0 {
+		return false
+	}
+	for _, k := range alwaysSet {
+		if _, has := labels[k]; !has {
+			return true
+		}
+	}
+	for _, k := range shared {
+		if slices.Contains(createTimeKeys, k) {
+			return true
+		}
+	}
+	return false
+}
+
 // maxImagesCached bounds the cache of image labels; the images of a host are few, so a full cache is simply reset.
 const maxImagesCached = 512
 
@@ -136,29 +168,30 @@ func (f *ImageLabelFilter) resolve(ctx context.Context, id, name, imageID string
 		return nil, err
 	}
 	var drop []string
-	var identity, steering []string
+	var shared, steering []string
 	for k, v := range labels {
 		switch {
 		case strings.HasPrefix(k, composeLabelPrefix):
 			if iv, has := img[k]; has && iv == v {
-				identity = append(identity, k)
+				shared = append(shared, k)
 			}
 		case isSteering(k):
 			steering = append(steering, k)
 		}
 	}
-	slices.Sort(identity)
+	slices.Sort(shared)
 	slices.Sort(steering)
 	definitive, consulted := imageKnown, false
-	if len(identity) > 0 {
+	fromImage := identityFromImage(labels, shared)
+	if fromImage {
 		for k := range labels {
 			if strings.HasPrefix(k, composeLabelPrefix) {
 				drop = append(drop, k)
 			}
 		}
-		f.warn(name, "compose labels come from the image: the container is treated as not made by compose", identity)
+		f.warn(name, "compose labels come from the image: the container is treated as not made by compose", shared)
 	}
-	isCompose := len(identity) == 0 && labels[LabelProject] != "" && labels[LabelService] != ""
+	isCompose := !fromImage && labels[LabelProject] != "" && labels[LabelService] != ""
 	if len(steering) > 0 {
 		var declared map[string]bool
 		known := false
