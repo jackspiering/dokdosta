@@ -148,3 +148,52 @@ func TestRekeyMergesADedupeRowThatExistsUnderTheNewKey(t *testing.T) {
 		t.Fatalf("dedupe rows: %d", got)
 	}
 }
+
+// The followers of a tagmoved record (plan v3.13 item 6) are keys too: each moves to the current host, also when the
+// record's own key is already current, and the fields the rewrite does not know stay as they were.
+func TestRekeyMovesTheFollowersOfTagMovedRecords(t *testing.T) {
+	s := open(t, t.TempDir())
+	execAll(t, s,
+		`INSERT INTO meta (key, value) VALUES
+			('tagmoved:docker.io/library/a:1', '{"ref":"docker.io/library/a:1","key":"old/p/web/1","followers":[{"key":"old/p/side/1","note":"kept"},{"key":"old/p/side/2"}]}'),
+			('tagmoved:docker.io/library/b:1', '{"ref":"docker.io/library/b:1","key":"new/p/web/1","followers":[{"key":"old/p/side/3"}]}')`,
+	)
+	if _, err := s.Rekey("new", testMeta); err != nil {
+		t.Fatal(err)
+	}
+	type follower struct {
+		Key  string `json:"key"`
+		Note string `json:"note"`
+	}
+	type record struct {
+		Key       string     `json:"key"`
+		Followers []follower `json:"followers"`
+	}
+	for _, c := range []struct {
+		ref  string
+		want []string
+	}{
+		{"docker.io/library/a:1", []string{"new/p/side/1", "new/p/side/2"}},
+		{"docker.io/library/b:1", []string{"new/p/side/3"}},
+	} {
+		var v string
+		if err := s.db.QueryRow(`SELECT value FROM meta WHERE key = ?`, "tagmoved:"+c.ref).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		var r record
+		if err := json.Unmarshal([]byte(v), &r); err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Followers) != len(c.want) {
+			t.Fatalf("%s: followers %+v, want %v", c.ref, r.Followers, c.want)
+		}
+		for i, f := range r.Followers {
+			if f.Key != c.want[i] {
+				t.Errorf("%s: follower %d key %q, want %q", c.ref, i, f.Key, c.want[i])
+			}
+		}
+		if c.ref == "docker.io/library/a:1" && r.Followers[0].Note != "kept" {
+			t.Errorf("a follower's unknown field was dropped: %+v", r.Followers[0])
+		}
+	}
+}

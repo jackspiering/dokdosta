@@ -627,6 +627,55 @@ func TestRealEventSequencesAndTheInFlightWindow(t *testing.T) {
 	}
 }
 
+func TestAttributedStartClearsTheManualStopMarker(t *testing.T) {
+	// A hand `docker stop` sets the marker. dokdosta's own start, attributed to
+	// its action, must still clear it (v3.15 B-011): otherwise the next crash
+	// (a die with no kill before it) is read as a manual stop and never healed.
+	e, clk, rec := newEngine(t, 0)
+	e.ObserveDockerEvent(tgt, docker.Event{Action: "kill"})
+	if !e.Evidence(tgt.Key).ManualStop {
+		t.Fatal("a kill outside any action should set the marker")
+	}
+	p := Plan{Act: rules.ActionRestart, Rung: "restart"}
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	e.Begin(tgt, p, bad)
+	if attributed := e.ObserveDockerEvent(tgt, docker.Event{Action: "start"}); !attributed {
+		t.Fatal("a start inside the action's window should be attributed")
+	}
+	e.End(tgt, p, Result{}, cfg)
+	if rec.Count(ManualStopCleared) != 1 {
+		t.Fatalf("the attributed start should clear the marker: %v", rec.Types())
+	}
+	clk.Advance(time.Minute) // well past the in-flight tail
+	e.ObserveDockerEvent(tgt, docker.Event{Action: "die"})
+	if ev := e.Evidence(tgt.Key); ev.ManualStop || !ev.Crashed {
+		t.Fatalf("the die after the start is a crash, not a manual stop: %+v", ev)
+	}
+}
+
+func TestOwnEventsAfterALongBacklogAreStillAttributed(t *testing.T) {
+	// The engine handles a due key's queued events only after its action has
+	// returned, so a recreate that took minutes is still followed by its own
+	// create/start events long after End. They are matched on their own time,
+	// so the window must outlast that backlog, not one minute.
+	e, clk, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	p := Plan{Act: rules.ActionRecreate, Rung: "recreate"}
+	e.Begin(tgt, p, bad)
+	started := clk.Now()
+	e.End(tgt, p, Result{}, cfg)
+	clk.Advance(70 * time.Second)
+	attributed := e.ObserveDockerEvent(tgt, docker.Event{Action: "create", Time: started.Add(time.Second)})
+	if !attributed || rec.Count(EventAttributed) != 1 {
+		t.Fatalf("a create 1 s into the action, seen 70 s after it ended, is not attributed: %v", rec.Types())
+	}
+	if rec.Count(IncidentClosed) != 0 {
+		t.Fatalf("the action's own create closed the incident: %v", rec.Types())
+	}
+	if open, _ := e.IncidentOpen(tgt.Key); !open {
+		t.Fatalf("the incident is not open after the action's own create: %v", rec.Types())
+	}
+}
 func TestRefuseDoesNotConsumeTheRung(t *testing.T) {
 	e, _, rec := newEngine(t, 0)
 	p := e.Evaluate(tgt, bad, cfg, hcObs)

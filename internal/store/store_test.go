@@ -455,6 +455,27 @@ func userVersion(s *Store) (int, error) {
 	return v, err
 }
 
+// A pause that ends in 2200 must come back as the same instant: tn stores UnixNano, which holds only until 2262.
+func TestPauseExpiryFarInTheFutureSurvivesReopening(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	until := time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.SavePause(engine.Pause{Scope: "p/web", Until: until, Created: t0})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s = open(t, dir)
+	defer s.Close()
+	snap, err := s.Load(t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Pauses) != 1 || !snap.Pauses[0].Until.Equal(until) {
+		t.Fatalf("expiry in 2200 did not survive: %+v", snap.Pauses)
+	}
+}
+
 // A schema-3 database (v0.1.0 to v0.3.0) gets the indexes of schema 4 and keeps its rows.
 func TestSchemaThreeDatabaseIsMigratedToTheTypeIndex(t *testing.T) {
 	dir := t.TempDir()

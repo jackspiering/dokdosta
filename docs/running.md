@@ -85,7 +85,7 @@ The commands talk to the running daemon over its unix socket (`DOKDOSTA_CONTROL_
 
 ```
 docker exec dokdosta /dokdosta status [--json]
-docker exec dokdosta /dokdosta pause <project>[/<service>] [--for 2h]   # default 2h; --for 0 = until resume; 30m, 1d work
+docker exec dokdosta /dokdosta pause <project>[/<service>] [--for 2h]   # default 2h; --for 0 = until resume; 30m, 1d work; at most 100 years
 docker exec dokdosta /dokdosta resume <project>[/<service>]
 docker exec dokdosta /dokdosta unsuspend <project>[/<service>]
 docker exec dokdosta /dokdosta notify test   # one test message to every notification URL

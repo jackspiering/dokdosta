@@ -897,3 +897,20 @@ func TestLabelsFromBeforeTheRenameAreSkippedRightAfterTheOwnContainer(t *testing
 		t.Fatalf("the own container comes first: %+v", d)
 	}
 }
+
+// TestClassifyStartErrorNetworkGone: the network-gone pattern must be anchored
+// to moby's "network <name> not found", so messages that merely contain the
+// words "network" and "not found" keep their own cause.
+func TestClassifyStartErrorNetworkGone(t *testing.T) {
+	cases := map[string]rules.Cause{
+		"network mynet not found": rules.CauseNetworkGone,
+		"Error response from daemon: failed to set up container networking: network mynet not found": rules.CauseNetworkGone,
+		`exec: "network-agent": executable file not found in $PATH`:                                  rules.CauseOther,
+		"failed to set up container networking: Link not found":                                      rules.CauseOther,
+	}
+	for in, want := range cases {
+		if got := rules.ClassifyStartError(in); got != want {
+			t.Errorf("%q: got %q, want %q", in, got, want)
+		}
+	}
+}
