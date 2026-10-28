@@ -56,6 +56,20 @@ func TestEnvOverridesAndErrors(t *testing.T) {
 	}
 }
 
+// The probe Stats the path against the working directory, but compose runs from "/": a relative path would be probed and
+// run from different places, so it is refused at startup (B-024, R-018).
+func TestComposeBinMustBeAbsolute(t *testing.T) {
+	if _, _, err := FromEnv([]string{"DOKDOSTA_COMPOSE_BIN=docker-compose"}); err == nil || !strings.Contains(err.Error(), "DOKDOSTA_COMPOSE_BIN must be an absolute path") {
+		t.Errorf("relative DOKDOSTA_COMPOSE_BIN: err=%v", err)
+	}
+	if _, _, err := FromEnv([]string{"DOKDOSTA_COMPOSE_BIN=./compose"}); err == nil {
+		t.Errorf("relative DOKDOSTA_COMPOSE_BIN accepted")
+	}
+	if g, _, err := FromEnv([]string{"DOKDOSTA_COMPOSE_BIN=/usr/local/bin/docker-compose"}); err != nil || g.ComposeBin != "/usr/local/bin/docker-compose" {
+		t.Errorf("absolute DOKDOSTA_COMPOSE_BIN: g.ComposeBin=%q err=%v", g.ComposeBin, err)
+	}
+}
+
 func TestParseLabels(t *testing.T) {
 	cases := []struct {
 		name   string

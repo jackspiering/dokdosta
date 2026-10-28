@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -279,11 +280,16 @@ const (
 	streamPage      = 200
 )
 
+// streamWriteTimeout bounds each write and flush to a stream client. A client that stops reading (a zero receive window
+// that still ACKs keepalives) would otherwise block the loop in Write for ever and hold one of the MaxStreams slots; the
+// server has no WriteTimeout, because that would end every stream. A variable, so a test can shorten it.
+var streamWriteTimeout = 30 * time.Second
+
 // stream serves GET /api/v1/stream: a server-sent events stream of the domain events. The ID of each message is the
 // event's ID, so a client that reconnects with Last-Event-ID (the browser does it by itself) or ?since= continues
 // where it was, from the event log. Without either, the stream starts now. ?key= narrows it to one container.
 func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
-	fl, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok || s.Hub == nil || s.Events == nil {
 		writeError(w, http.StatusNotImplemented, "streaming is not available")
 		return
@@ -317,14 +323,35 @@ func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	key := r.URL.Query().Get("key")
 
-	fmt.Fprint(w, "retry: 3000\n: connected\n\n")
-	fl.Flush()
+	// Every batch of writes arms the deadline again (it is absolute), and a failed write or flush ends the stream.
+	rc := http.NewResponseController(w)
+	armWrite := func() error {
+		err := rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout))
+		if errors.Is(err, http.ErrNotSupported) {
+			return nil
+		}
+		return err
+	}
+	if err := armWrite(); err != nil {
+		return
+	}
+	if _, err := fmt.Fprint(w, "retry: 3000\n: connected\n\n"); err != nil {
+		return
+	}
+	if err := rc.Flush(); err != nil {
+		return
+	}
 
 	tick := time.NewTicker(streamKeepalive)
 	defer tick.Stop()
 	for {
+		if err := armWrite(); err != nil {
+			return
+		}
 		if last := s.Events.LastID(); cursor > last {
-			fmt.Fprintf(w, "event: reset\ndata: {\"last_id\":%d}\n\n", last)
+			if _, err := fmt.Fprintf(w, "event: reset\ndata: {\"last_id\":%d}\n\n", last); err != nil {
+				return
+			}
 			cursor = 0
 		}
 		for {
@@ -334,19 +361,30 @@ func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, e := range evs {
 				b, _ := json.Marshal(s.EventDoc(e))
-				fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Type, b)
+				if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Type, b); err != nil {
+					return
+				}
 				cursor = e.ID
 			}
 			if len(evs) < streamPage {
 				break
 			}
 		}
-		fl.Flush()
+		if err := rc.Flush(); err != nil {
+			return
+		}
 		select {
 		case <-wake:
 		case <-tick.C:
-			fmt.Fprint(w, ": keepalive\n\n")
-			fl.Flush()
+			if err := armWrite(); err != nil {
+				return
+			}
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				return
+			}
 		case <-r.Context().Done():
 			return
 		case <-s.Hub.Done():

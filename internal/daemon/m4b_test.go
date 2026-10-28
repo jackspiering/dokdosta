@@ -538,3 +538,30 @@ func TestFollowedMoveIsAddedToTheRecordNotReplacingIt(t *testing.T) {
 		t.Fatalf("%+v", m)
 	}
 }
+
+// B-003 (R-002): a sidecar whose parent was replaced is recreated with it, never pulled. Before the fix, the pull rung
+// planned for it was refused at every GRACE for ever (executePull's refsRefusal), with no suspension and no notice.
+func TestStaleDependentAtThePullRungIsSuspendedNotRefusedForever(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	parent := h.svc(hexID("c1"), "p", "parent")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true",
+		config.LabelEnable, "true", config.LabelActions, "restart,recreate,pull", config.LabelHealPull, "true")
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+	h.cf.OnUp = func(compose.Project) error { return errors.New("compose up failed") }
+
+	h.tick()
+	h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" }) // the parent is gone: dep is stale
+	for range 2 * time.Hour / h.cfg.Grace {
+		h.advance(h.cfg.Grace)
+	}
+
+	if n := h.count(engine.ActionRefused); n > 1 {
+		t.Fatalf("%d refusals for one stale sidecar: %v", n, h.rec.Types())
+	}
+	if n := h.count(engine.Suspended); n != 1 {
+		t.Fatalf("want exactly one SUSPENDED for the sidecar, got %d: %v", n, h.rec.Types())
+	}
+	if h.cf.Count("pull") != 0 {
+		t.Fatalf("a stale sidecar is never pulled: %s", h.verbs())
+	}
+}

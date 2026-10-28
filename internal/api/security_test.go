@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/sha256"
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -439,4 +440,42 @@ func TestARightTokenThatReservesTheTenthSlotLeavesNoBlock(t *testing.T) {
 	if rec := from(t, h, ip, "Bearer wrong"); rec.Code != 429 || rec.Header().Get("Retry-After") != "60" {
 		t.Fatalf("the tenth wrong token: %d retry %q (the strike count must not have grown)", rec.Code, rec.Header().Get("Retry-After"))
 	}
+}
+
+// A client that stops reading must not hold a stream slot for ever. The socket buffers fill, the write blocks, and only
+// the write deadline ends it (the server has no WriteTimeout: it would end every stream). The events are recorded before
+// the connection, and Last-Event-ID: 0 makes the stream send them all from the start, so the first write is the one that
+// blocks.
+func TestStreamReturnsWhenTheClientNeverReads(t *testing.T) {
+	old := streamWriteTimeout
+	streamWriteTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { streamWriteTimeout = old })
+	svc := fixtureService()
+	t.Cleanup(svc.Hub.Close)
+	ring := engine.NewRing(20000)
+	svc.Events = ring
+	big := strings.Repeat("x", 2000)
+	for i := 1; i <= 20000; i++ {
+		ring.Record(engine.Event{ID: uint64(i), Time: t0, Host: "nas", Key: "nas/web/proxy/1", Type: engine.Recovered, Message: big})
+	}
+	srv := httptest.NewServer(Handler(Options{Health: okChecker{}, Service: svc}))
+	defer srv.Close()
+	conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	fmt.Fprint(conn, "GET /api/v1/stream HTTP/1.1\r\nHost: 127.0.0.1\r\nLast-Event-ID: 0\r\n\r\n")
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for !ok() {
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: clients %d", what, svc.Hub.Clients())
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	waitFor("the stream did not start", func() bool { return svc.Hub.Clients() == 1 })
+	waitFor("the stream held its slot after the client stopped reading", func() bool { return svc.Hub.Clients() == 0 })
 }
