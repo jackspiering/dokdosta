@@ -10,6 +10,12 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A relative `DOKDOSTA_COMPOSE_BIN` is refused at startup.** dokdosta now stops with "DOKDOSTA_COMPOSE_BIN must be an
+  absolute path" instead of checking the path in one directory and running it from another. Set the full path, for
+  example `/usr/local/bin/docker-compose`.
+
 ## [0.3.0] - YYYY-MM-DD
 
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
