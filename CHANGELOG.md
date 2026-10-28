@@ -10,6 +10,8 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+## [0.3.0] - YYYY-MM-DD
+
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
 
 ### Changed
@@ -28,6 +30,14 @@ workflow refuses an undated section.
   `whalenurse.enable=false` is never healed under `DOKDOSTA_MODE=all`, and says why once; and it renames `whalenurse.db`
   (with its `-wal` and `-shm`) to `dokdosta.db` once, in place, refusing while a whalenurse still holds the directory or
   when both files are there.
+
+## [0.3.0-rc.1] - 2026-10-28
+
+The first release candidate of 0.3.0, the first release under the name dokdosta. It rehearses the release pipeline for the
+new repository name and the new image `ghcr.io/jackspiering/dokdosta`, whose signatures and provenance name
+`jackspiering/dokdosta`. It contains what 0.3.0 will contain; see the 0.3.0 section above for the full list, and
+[docs/upgrading.md](docs/upgrading.md#from-whalenurse-020-and-earlier) before upgrading from whalenurse. A pre-release: it
+never moves `latest`, `v0.3` or `v0`, and it is not meant for production.
 
 ## [0.2.0] - 2026-10-27
 
@@ -416,6 +426,8 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
 [Unreleased]: https://github.com/jackspiering/dokdosta/compare/v0.2.0...HEAD
+[0.3.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.0
+[0.3.0-rc.1]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.0-rc.1
 [0.2.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.2.0
 [0.1.3]: https://github.com/jackspiering/dokdosta/releases/tag/v0.1.3
 [0.1.2]: https://github.com/jackspiering/dokdosta/releases/tag/v0.1.2
