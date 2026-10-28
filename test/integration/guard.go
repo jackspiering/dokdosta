@@ -3,7 +3,7 @@
 // on a developer machine (the tests need -tags integration and
 // DOKDOSTA_INTEGRATION=1).
 //
-// SAFETY MODEL (fails closed), a port of test/m0/lib.sh. Everything in this
+// SAFETY MODEL (fails closed). Everything in this
 // package that changes anything goes through Guard, and each method refuses to
 // act unless the compose project of its target matches ^dokdosta-test-...$:
 //
