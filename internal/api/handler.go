@@ -156,6 +156,8 @@ type SecureOptions struct {
 	Now func() time.Time
 	// OnBlock is called when a client IP has been blocked for presenting too many wrong tokens (it logs, once per block).
 	OnBlock func(client string, d time.Duration)
+	// authorize replaces the token comparison; a test seam.
+	authorize func(r *http.Request, want [sha256.Size]byte) bool
 }
 
 // Secure wraps the handler with the headers on every response, the method filter, the Host check (without a token), the
@@ -167,6 +169,10 @@ func Secure(o SecureOptions, next http.Handler) http.Handler {
 		now = time.Now
 	}
 	lim := newAttemptLimiter(now)
+	authorize := o.authorize
+	if authorize == nil {
+		authorize = authorized
+	}
 	allowed := NormalizeHosts(o.AllowedHosts)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -197,25 +203,36 @@ func Secure(o SecureOptions, next http.Handler) http.Handler {
 			return
 		}
 		client := clientKey(r, o.TrustedProxies)
-		if d, blocked := lim.blocked(client); blocked {
+		// A request that sent no credentials at all (a browser before its prompt) is not a wrong guess, so it is not counted;
+		// while the client is blocked it is refused like any other.
+		counted := r.Header.Get("Authorization") != ""
+		var res reservation
+		if counted {
+			d, blocked, rs := lim.reserve(client)
+			if blocked {
+				tooMany(w, d)
+				return
+			}
+			res = rs
+		} else if d, blocked := lim.blocked(client); blocked {
 			tooMany(w, d)
 			return
 		}
-		if !authorized(r, want) {
-			// A request that sent no credentials at all (a browser before its prompt) is not a wrong guess.
-			if r.Header.Get("Authorization") != "" {
-				if d, blocked := lim.fail(client); blocked {
-					if o.OnBlock != nil {
-						o.OnBlock(client, d)
-					}
-					tooMany(w, d)
-					return
+		if !authorize(r, want) {
+			if res.blockFor > 0 {
+				if o.OnBlock != nil {
+					o.OnBlock(client, res.blockFor)
 				}
+				tooMany(w, res.blockFor)
+				return
 			}
 			h.Add("WWW-Authenticate", `Bearer realm="dokdosta"`)
 			h.Add("WWW-Authenticate", `Basic realm="dokdosta", charset="UTF-8"`)
 			writeError(w, http.StatusUnauthorized, "a token is required")
 			return
+		}
+		if counted {
+			lim.refund(client, res)
 		}
 		next.ServeHTTP(w, r)
 	})

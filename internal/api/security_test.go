@@ -1,10 +1,14 @@
 package api
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -251,7 +255,7 @@ func TestIPv6ClientsShareTheirSlash64AndTheTableIsBounded(t *testing.T) {
 
 	l := newAttemptLimiter(clk.now)
 	for i := 0; i < 3*maxTracked; i++ {
-		l.fail("198.51.100." + string(rune('0'+i%10)) + "/" + string(rune(i)))
+		l.reserve("198.51.100." + string(rune('0'+i%10)) + "/" + string(rune(i)))
 	}
 	if len(l.ips) > maxTracked {
 		t.Fatalf("the table grew to %d", len(l.ips))
@@ -369,5 +373,70 @@ func TestRelationDocCarriesTheOtherEndsState(t *testing.T) {
 	b, _ := jsonMarshal(c.Parent)
 	if !strings.Contains(string(b), `"healer_state":"SUSPENDED"`) || !strings.Contains(string(b), `"state":"running"`) {
 		t.Fatalf("%s", b)
+	}
+}
+
+// A synchronized burst must not get more comparisons than the limit: every request used to pass the blocked check before
+// the first ten failures had been recorded, and was then compared.
+func TestBurstOfWrongTokensGetsAtMostTenComparisons(t *testing.T) {
+	const n = 200
+	var compared atomic.Int64
+	h := Secure(SecureOptions{Token: limTok, Now: (&clockT{t: t0}).now,
+		authorize: func(*http.Request, [sha256.Size]byte) bool {
+			compared.Add(1)
+			for i := 0; i < 50; i++ { // let the other requests of the burst run: the old check-then-act let them all through
+				runtime.Gosched()
+			}
+			return false
+		}}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	var tooMany atomic.Int64
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest("GET", "/api/v1/status", nil)
+			req.RemoteAddr = "203.0.113.7:1"
+			req.Header.Set("Authorization", "Bearer wrong")
+			<-start
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code == 429 {
+				tooMany.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if c := compared.Load(); c > AttemptLimit {
+		t.Fatalf("%d of %d simultaneous wrong tokens reached the comparison, at most %d may", c, n, AttemptLimit)
+	}
+	if got := tooMany.Load(); got < n-AttemptLimit {
+		t.Fatalf("only %d of %d were refused with 429", got, n)
+	}
+}
+
+// The right token that happens to be the tenth attempt of the window sets the block when it is reserved, and the refund
+// must take that back: only wrong credentials count.
+func TestARightTokenThatReservesTheTenthSlotLeavesNoBlock(t *testing.T) {
+	clk := &clockT{t: t0}
+	var blocks []string
+	h := limited(clk, &blocks)
+	const ip = "203.0.113.7:1"
+	for i := 0; i < AttemptLimit-1; i++ {
+		from(t, h, ip, "Bearer wrong")
+	}
+	for i := 0; i < 3; i++ {
+		if rec := from(t, h, ip, "Bearer "+limTok); rec.Code != 200 {
+			t.Fatalf("right token %d: %d", i, rec.Code)
+		}
+	}
+	if len(blocks) != 0 {
+		t.Fatalf("a block was announced: %v", blocks)
+	}
+	if rec := from(t, h, ip, "Bearer wrong"); rec.Code != 429 || rec.Header().Get("Retry-After") != "60" {
+		t.Fatalf("the tenth wrong token: %d retry %q (the strike count must not have grown)", rec.Code, rec.Header().Get("Retry-After"))
 	}
 }
