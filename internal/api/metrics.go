@@ -71,6 +71,14 @@ func (s *Service) metrics(w http.ResponseWriter, _ *http.Request) {
 	m.sample("dokdosta_notifications_sent_total", float64(n.Sent))
 	m.family("dokdosta_notifications_failed_total", "counter", "Notification deliveries that failed, all URLs.")
 	m.sample("dokdosta_notifications_failed_total", float64(n.Failed))
+	m.family("dokdosta_notifications_rate_limited_total", "counter", "Notifications held back by the per-URL rate limit, all URLs (never a URL).")
+	m.sample("dokdosta_notifications_rate_limited_total", float64(n.RateLimited))
+	m.family("dokdosta_notifications_dropped_total", "counter", "Notifications dropped because the queue was full, all URLs (never a URL).")
+	m.sample("dokdosta_notifications_dropped_total", float64(n.Dropped))
+	if s.Hub != nil {
+		m.family("dokdosta_sse_refused_total", "counter", "Event streams refused with 503 because the maximum number of streams was connected.")
+		m.sample("dokdosta_sse_refused_total", float64(s.Hub.Refused()))
+	}
 }
 
 type metricWriter struct{ w io.Writer }
