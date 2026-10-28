@@ -10,6 +10,10 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **dokdosta's own start clears a manual-stop marker.** A hand `docker start` that failed left a manual-stop marker; the start dokdosta made to heal the container was attributed to its action and did not clear it, so a later crash was read as a manual stop and, with `restart: "no"`, was never healed. An attributed `start` now clears the marker (`kill` and `die` stay ignored). (B-011)
+
 ## [0.3.0] - YYYY-MM-DD
 
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
