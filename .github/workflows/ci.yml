@@ -425,9 +425,7 @@ jobs:
     # skipped as a whole, on purpose: a skipped matrix reports none of the six names, so they are not green on the layer's
     # head commit, and the layer cannot merge into main on the light set. A failed scope job leaves `full` empty, which
     # runs this job, and it fails.
-    # The name keeps "whalenurse-test-*" (the projects are dokdosta-test-* since the rename, plan v3.15): the ruleset requires
-    # these six check names, and renaming them is a ruleset change for the maintainer.
-    name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, whalenurse-test-* projects only)
+    name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, dokdosta-test-* projects only)
     runs-on: ubuntu-latest
     needs: [scope, integration-shard]
     if: ${{ always() && needs.scope.outputs.full != 'false' }}
