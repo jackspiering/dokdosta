@@ -329,7 +329,6 @@ func TestAPanickingSenderIsAFailedDeliveryAndOtherURLsStillGetTheirs(t *testing.
 
 type fakeSvc struct {
 	types.Service // never called: only the methods below are
-	withCtx       bool
 }
 
 func (fakeSvc) GetID() string                    { return "fake" }

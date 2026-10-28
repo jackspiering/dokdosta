@@ -78,6 +78,26 @@ func TestRunCapsTheOutputAndStillFindsTheCause(t *testing.T) {
 	}
 }
 
+// A write that exactly fills the buffer is not an overflow; the byte after it is, and the buffer keeps the first max bytes.
+func TestCappedOverflowIsDecidedBeforeTheWrite(t *testing.T) {
+	w := &capped{max: 10}
+	if _, err := w.Write([]byte("0123456789")); err != nil {
+		t.Fatal(err)
+	}
+	if w.over {
+		t.Fatal("a write that exactly fills the buffer is not an overflow")
+	}
+	if _, err := w.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if !w.over {
+		t.Fatal("one byte past the cap should be an overflow")
+	}
+	if got := w.buf.String(); got != "0123456789" {
+		t.Fatalf("buffer = %q, want the first 10 bytes", got)
+	}
+}
+
 // A command line in an error or a log can be pasted into a shell.
 func TestCommandStringIsQuoted(t *testing.T) {
 	c := Command{Bin: "/usr/libexec/docker/cli-plugins/docker-compose", Args: []string{"-p", "media", "-f", "/srv/my stack/compose.yaml", "up", "-d", "it's"}}
