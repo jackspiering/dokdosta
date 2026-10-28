@@ -4,6 +4,9 @@ dokdosta is configured with environment variables (`DOKDOSTA_*`, on the daemon) 
 on the containers it watches, see [labels.md](labels.md)). An unknown `DOKDOSTA_*` name logs a warning; an invalid value
 stops the start with an error that names the variable (the secrets among them are never quoted in it).
 
+dokdosta was called whalenurse up to 0.2.0. A `WHALENURSE_*` variable is not read: it stops the start with an error that
+names it, never its value ([upgrading.md](upgrading.md#from-whalenurse-020-and-earlier)).
+
 Durations take Go's `30s`, `5m`, `2h` and also `d` for days (`30d`). Booleans take `true` or `false`.
 
 Variables marked **secret** are never logged, never in `status` or `/healthz`, and are masked in everything the dashboard and

@@ -10,6 +10,25 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+**whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
+
+### Changed
+
+- **Every name changed, and the old names are not read** ([docs/upgrading.md](docs/upgrading.md#from-whalenurse-020-and-earlier)):
+  the image `ghcr.io/jackspiering/dokdosta`, the binary `dokdosta`, the variables `DOKDOSTA_*`, the labels `dokdosta.*`,
+  the metrics `dokdosta_*`, the store `dokdosta.db`, the control socket `/run/dokdosta.sock`, the bundled compose at
+  `/usr/libexec/dokdosta/docker-compose`, the systemd unit `dokdosta.service` (user, state directory, socket and
+  environment file), the repository `github.com/jackspiering/dokdosta` and the Go module path. Releases up to 0.2.0
+  verify with `make verify-release TAG=v0.2.0 REPO=jackspiering/whalenurse`.
+
+### Added
+
+- **Guards for a host upgraded from whalenurse.** dokdosta refuses to start while a `WHALENURSE_*` variable is set (the
+  error names the variables, never a value); it leaves alone every container that carries a `whalenurse.*` label, so a
+  `whalenurse.enable=false` is never healed under `DOKDOSTA_MODE=all`, and says why once; and it renames `whalenurse.db`
+  (with its `-wal` and `-shm`) to `dokdosta.db` once, in place, refusing while a whalenurse still holds the directory or
+  when both files are there.
+
 ## [0.2.0] - 2026-10-27
 
 The second batch of the review decisions of plan v3.13 (items 1 to 17): labels that come from an image no longer steer

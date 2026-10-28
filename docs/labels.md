@@ -13,6 +13,11 @@ A boolean label accepts `1`, `t`, `T`, `TRUE`, `true`, `True` and `0`, `f`, `F`,
 `strconv.ParseBool`), with surrounding spaces ignored. An invalid value falls back to the default and logs one warning for that container; it never opts a container in or out by
 accident.
 
+**Labels from before the rename.** dokdosta was called whalenurse up to 0.2.0. A container that carries any `whalenurse.*`
+label is left alone entirely, whatever other labels it has, and dokdosta says why once (in the log and on the dashboard):
+rename the labels to `dokdosta.*` and recreate it ([upgrading.md](upgrading.md#from-whalenurse-020-and-earlier)). A
+`whalenurse.*` label that comes from the image does not count, as for `dokdosta.*` ([below](#labels-from-the-image)).
+
 | Label | Values | Default | What it does |
 |---|---|---|---|
 | `dokdosta.enable` | `true`, `false` | — | `true` opts the container in (with `DOKDOSTA_MODE=label`, the default, nothing is watched without it). `false` leaves the container alone entirely, **also as the sidecar of an opted-in parent** (see below). |

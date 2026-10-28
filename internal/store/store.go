@@ -69,7 +69,8 @@ const (
 	OpReadEvents    Op = "read events"
 )
 
-// Open creates the data directory if needed and opens (and migrates) the database.
+// Open creates the data directory if needed, moves the store from before the rename (migrateLegacy), and opens (and
+// migrates) the database.
 func Open(dir string, log *slog.Logger) (*Store, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -79,6 +80,10 @@ func Open(dir string, log *slog.Logger) (*Store, error) {
 	}
 	lock, err := lockDir(dir)
 	if err != nil {
+		return nil, err
+	}
+	if err := migrateLegacy(dir, log); err != nil {
+		lock.Close()
 		return nil, err
 	}
 	s, err := openDB(dir, log)

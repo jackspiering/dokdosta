@@ -14,7 +14,14 @@ import (
 const (
 	composeLabelPrefix  = "com.docker.compose."
 	dokdostaLabelPrefix = "dokdosta."
+	// legacyLabelPrefix is the namespace from before the rename (plan v3.15 item 5): a container that carries it is
+	// left alone, so it steers too, and the image's own values of it are removed the same way.
+	legacyLabelPrefix = "whalenurse."
 )
+
+func isSteering(k string) bool {
+	return strings.HasPrefix(k, dokdostaLabelPrefix) || strings.HasPrefix(k, legacyLabelPrefix)
+}
 
 // ImageLabelFilter keeps the labels an image ships from steering dokdosta (plan v3.13 item 10). Docker copies an image's
 // own labels (its Config.Labels) onto every container created from it, for each key the create request did not set (moby
@@ -23,6 +30,8 @@ const (
 //
 //   - every com.docker.compose.* label, when one of them has the value the image carries for that key: the compose
 //     identity is the image's, the container was not made by compose, and it falls back to its name and rung 1;
+//   - the dokdosta.* rule below applies to the whalenurse.* labels from before the rename too (plan v3.15 item 5):
+//     a container that carries one is left alone, so one the image supplies must not count either;
 //   - on a compose container, every dokdosta.* label that the service's `labels:` in the compose file does not declare
 //     (Declared); when the compose file cannot be read, or on any other container, every dokdosta.* label whose value is
 //     the image's own value for that key.
@@ -83,7 +92,7 @@ const maxImagesCached = 512
 
 func hasSteering(labels map[string]string) bool {
 	for k := range labels {
-		if strings.HasPrefix(k, composeLabelPrefix) || strings.HasPrefix(k, dokdostaLabelPrefix) {
+		if strings.HasPrefix(k, composeLabelPrefix) || isSteering(k) {
 			return true
 		}
 	}
@@ -134,7 +143,7 @@ func (f *ImageLabelFilter) resolve(ctx context.Context, id, name, imageID string
 			if iv, has := img[k]; has && iv == v {
 				identity = append(identity, k)
 			}
-		case strings.HasPrefix(k, dokdostaLabelPrefix):
+		case isSteering(k):
 			steering = append(steering, k)
 		}
 	}

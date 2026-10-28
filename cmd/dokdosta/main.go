@@ -319,7 +319,7 @@ func hostIDWarning(hostID, selfID string) string {
 func openStore(cfg config.Global, log *slog.Logger, now time.Time) (*store.Store, engine.Snapshot, error) {
 	st, err := store.Open(cfg.DataDir, log)
 	if err != nil {
-		if errors.Is(err, store.ErrLocked) {
+		if errors.Is(err, store.ErrLocked) || errors.Is(err, store.ErrLegacyLocked) {
 			return nil, engine.Snapshot{}, err
 		}
 		return nil, engine.Snapshot{}, fmt.Errorf("cannot open the state store in %s (is DOKDOSTA_DATA_DIR a writable volume?): %w", cfg.DataDir, err)

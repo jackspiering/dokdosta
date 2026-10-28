@@ -47,13 +47,18 @@ dokdosta is a compose-aware self-healer for Docker hosts. For opted-in container
 - Build with `CGO_ENABLED=0`.
 - Lowercase `dokdosta` everywhere: Go module path, GHCR image (`ghcr.io/jackspiering/dokdosta`) and binary.
 
-## Plan v3.15 (written and approved 28 Oct 2026)
+## Plan v3.15 (written and approved 28 Oct 2026, built)
 
-**whalenurse is renamed dokdosta** (Serbo-Croatian *dok dosta*, "until enough"; the repository is `jackspiering/dokdosta`). It lands as a stack: the plan, the mechanical rename, then the three guards; the last two merge together. Until the stack is merged, the rest of this file still describes the code with the old names. What changes:
+**whalenurse is renamed dokdosta** (Serbo-Croatian *dok dosta*, "until enough"; the repository is `jackspiering/dokdosta`). Built as a stack: the plan, the mechanical rename, the three guards. The rest of this file uses the new names.
 
-- **Every name, no aliases** (item 1): module `github.com/jackspiering/dokdosta`, binary and `cmd/dokdosta`, image `ghcr.io/jackspiering/dokdosta`, `DOKDOSTA_*` variables, `dokdosta.*` labels, `dokdosta_*` metrics, `dokdosta.db`/`dokdosta.lock`, `/run/dokdosta.sock`, `/usr/libexec/dokdosta/docker-compose`, the systemd unit; the safety rule's projects become `dokdosta-test-*` and `dokdosta-m0-*` (the guards refuse the old ones). Next release `v0.3.0`, the maintainer's to tag; `make verify-release TAG=v0.2.0 REPO=jackspiering/whalenurse` for the releases before it (item 2).
-- **History keeps the old name** (item 3): `testdata/`, `docs/m*-notes.md`, `docs/m0*-findings.md`, the released `CHANGELOG.md` sections, this plan's *Changes in* sections up to v3.14 and its appendices, `docs/screenshots/README.md`; one rename note each, and only relative link targets change. `WN-NNN` and `wn*` identifiers stay.
-- **Guards for upgraded hosts:** a set `WHALENURSE_*` variable is a startup error naming the variables, never a value (item 4); a container with any `whalenurse.*` label is skipped with a reason naming the keys, logged once, the dependents step included (item 5); `whalenurse.db` (with `-wal`/`-shm`) is renamed to `dokdosta.db` once, in a live run, under the old lock (item 6); `docs/upgrading.md` has the checklist (item 7).
+- **Every name, no aliases** (item 1): module, binary, image, `DOKDOSTA_*`, `dokdosta.*`, `dokdosta_*` metrics, `dokdosta.db`/`dokdosta.lock`, `/run/dokdosta.sock`, the systemd unit; the safety rule's projects are `dokdosta-test-*` and `dokdosta-m0-*`, and the guards refuse the old `whalenurse-*` ones (tests in `guard_test.go` and the M0b self-test). Next release `v0.3.0`, the maintainer's to tag; `make verify-release TAG=v0.2.0 REPO=jackspiering/whalenurse` for the releases before it (item 2).
+- **History keeps the old name** (item 3): `testdata/`, `docs/m*-notes.md`, `docs/m0*-findings.md`, the released `CHANGELOG.md` sections, the plan's *Changes in* sections up to v3.14 and its appendices, each with a rename note. The wordmark is redone and the screenshots (which showed the old name) are removed until retaken (item 9). The tests that build keys from those fixtures keep `whalenurse-m0-b-boot`. `WN-NNN` and `wn*` identifiers stay. The six required `integration (...)` checks are named "... real Docker, dokdosta-test-* projects only" (renamed with the ruleset, item 8).
+- **Guards for upgraded hosts:**
+  - `config.FromEnv` fails on any `WHALENURSE_*` variable (`config.LegacyEnvPrefix`), naming the variables, never a value (item 4). Every subcommand but `version` reads it. `compose.ChildEnv` drops both prefixes.
+  - A container with any `whalenurse.*` label (`config.LegacyLabelPrefix`) gets `Container.Legacy` and `Disabled`, one label warning, and the skip `rules.SkipLegacy` right after the own container, so every path that acts (the dependents step included) leaves it alone (item 5). `docker.ImageLabelFilter` and `compose.ParseDeclaredLabels` treat `whalenurse.*` like `dokdosta.*`, so one from the image does not count.
+  - `store.Open` runs `migrateLegacy` under the new lock: it takes `whalenurse.lock` (`ErrLegacyLocked` if held), refuses when both databases exist, and renames `-wal`, `-shm` and then `whalenurse.db` (item 6). A dry run opens no store.
+  - `docs/upgrading.md` *From whalenurse (0.2.0 and earlier)* is the checklist (item 7).
+- Tests that would start a daemon if a guard regressed must not: `TestEveryConfiguredCommandRefusesVariablesFromBeforeTheRename` leaves `run` out for that reason.
 
 ## Plan v3.13 (written and approved 22 Oct 2026)
 
@@ -121,7 +126,7 @@ Cross-cutting design points that span several packages:
   - `docker.Fake.SetImageLabels(imageID, labels)` is the test hook; `docker.Container.ImageID` must be set for a Fake container to be filtered.
 - **Action-in-flight window:** events for a key that dokdosta is acting on are recorded and attributed to the action, not interpreted. They must not trigger manual-stop markers, clear SUSPENDED or open an incident.
 - **Rule precedence** (`internal/rules`, plan §3.3):
-  - Skip rules come first: own container, `compose.oneoff=True`, swarm tasks, not opted in, PAUSED/SUSPENDED.
+  - Skip rules come first: own container, any `whalenurse.*` label (v3.15 item 5, `config.Container.Legacy`, `rules.SkipLegacy`), `compose.oneoff=True`, swarm tasks, not opted in, PAUSED/SUSPENDED.
   - A non-empty `State.Error` means a failed start. It overrides everything else, and the exit code is never used for it. There are three shapes: a failed first start is `created` + exit 126/127/128; a failed restart-policy restart is `exited` + the previous run's exit code + `RestartCount` incremented; a failed boot-time restore is `exited` + exit 126/127/128 mapped from the error + `RestartCount` unchanged.
   - The cause splits three ways:
     - `No such container` (parent recreated): recreate the dependent.

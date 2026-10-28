@@ -67,6 +67,7 @@ const (
 	SkipOneOff      = "oneoff"
 	SkipSwarm       = "swarm"
 	SkipNotOptedIn  = "not-opted-in"
+	SkipLegacy      = "legacy-labels" // whalenurse.* labels from before the rename (plan v3.15 item 5)
 	SkipDockerPause = "docker-paused"
 	SkipRemoving    = "removing"
 )
@@ -154,6 +155,8 @@ func Classify(in Input) Decision {
 	switch {
 	case in.Self:
 		return skip(SkipSelf, "dokdosta's own container")
+	case len(in.Cfg.Legacy) > 0:
+		return skip(SkipLegacy, config.LegacyReason(in.Cfg.Legacy))
 	case docker.IsOneOff(c.Labels):
 		return skip(SkipOneOff, "compose run container")
 	case c.Labels[docker.LabelSwarmTaskID] != "":

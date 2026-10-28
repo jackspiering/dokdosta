@@ -882,3 +882,18 @@ func TestHostStoppedOnFailureContainerDockerWillNotRestore(t *testing.T) {
 		}
 	}
 }
+
+// Plan v3.15 item 5: the skip for labels from before the rename comes right after the own container, before every
+// other rule; an unhealthy container under DOKDOSTA_MODE=all with the old opt-out is left alone.
+func TestLabelsFromBeforeTheRenameAreSkippedRightAfterTheOwnContainer(t *testing.T) {
+	labels := map[string]string{"whalenurse.enable": "false"}
+	cfg, _ := config.ParseLabels(labels, config.ModeAll)
+	c := docker.Container{ID: "a", Name: "old", Labels: labels, Status: "running", Running: true, Health: "unhealthy"}
+	d := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg})
+	if d.Class != rules.ClassSkip || d.Skip != rules.SkipLegacy || !strings.Contains(d.Reason, "whalenurse.enable") {
+		t.Fatalf("%+v", d)
+	}
+	if d := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, Self: true}); d.Skip != rules.SkipSelf {
+		t.Fatalf("the own container comes first: %+v", d)
+	}
+}

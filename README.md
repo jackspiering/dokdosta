@@ -1,12 +1,13 @@
 <p align="center">
-  <img src="docs/assets/logo.png" alt="dokdosta logo: a whale wearing a nurse cap" width="400">
+  <img src="docs/assets/logo.png" alt="dokdosta logo: a whale wearing a nurse cap, and the word dokdosta" width="400">
 </p>
 
 # dokdosta
 
 **Compose-aware self-healing for Docker hosts.**
 
-*Dok dosta* is Serbo-Croatian for "until enough": it heals until it has tried enough, then stops and tells you.
+*Dok dosta* is Serbo-Croatian for "until enough": it heals until it has tried enough, then stops and tells you. It was
+called whalenurse up to 0.2.0; [upgrading.md](docs/upgrading.md#from-whalenurse-020-and-earlier) lists what to rename.
 
 [![CI](https://github.com/jackspiering/dokdosta/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jackspiering/dokdosta/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -20,13 +21,6 @@ running, and it never pulls unless you ask. (For a service that shares another c
 uses `volumes_from`, the compose file is checked only when it is healing itself and its parent is current; when it is repaired
 after its parent was recreated, an edit to its own definition that you have not deployed is deployed. See
 [labels.md](docs/labels.md#sidecars).)
-
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/overview-desktop-dark.png">
-    <img src="docs/screenshots/overview-desktop-light.png" alt="The dokdosta dashboard overview: healer status, compose version, what needs attention and the latest events" width="760">
-  </picture>
-</p>
 
 ## Try it in 2 minutes
 
