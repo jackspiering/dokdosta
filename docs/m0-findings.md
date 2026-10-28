@@ -1,5 +1,7 @@
 # M0 findings
 
+> whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
+
 Milestone M0 of [PLAN.md](PLAN.md): diagnose and verify, no app code. Run on 17 Oct 2026 on a throwaway Debian VM (snapshotted before the session) with the maintainer's permission to run `test/m0/run.sh` there. Raw output lives in `captures/` (gitignored); only scrubbed excerpts and fixtures are committed.
 
 **Summary.** The design holds. §3.5 is confirmed. §3.3 and §3.6 each need small corrections, listed in [Verdicts](#4-verdicts). Nothing contradicts a rule badly enough to stop work, but three items change what M1/M2 must implement:

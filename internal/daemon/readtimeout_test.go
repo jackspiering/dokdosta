@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // One Docker read that never returns must not stop the loop: it times out, the key is tried again at the next poll, and

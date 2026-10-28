@@ -15,8 +15,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
 )
 
 func get(t *testing.T, h http.Handler, path string, hdr ...string) *httptest.ResponseRecorder {
@@ -175,7 +175,7 @@ func TestDetailHasDriftUpgradeAndSuspendCause(t *testing.T) {
 
 // ---- output rules -------------------------------------------------------------------------------------
 
-func TestOnlyComposeAndWhalenurseLabelsAndKnownAttrsLeave(t *testing.T) {
+func TestOnlyComposeAndDokdostaLabelsAndKnownAttrsLeave(t *testing.T) {
 	s := fixtureService()
 	for _, c := range s.Containers(true) {
 		for k := range c.Labels {
@@ -703,11 +703,11 @@ func TestMetrics(t *testing.T) {
 	rec := get(t, Handler(Options{Health: okChecker{}, Service: svc}), "/metrics")
 	body := rec.Body.String()
 	for _, want := range []string{
-		`whalenurse_info{host="nas",version="v-test",dry_run="false"} 1`,
-		"whalenurse_healthy 1", "whalenurse_actions_last_hour 3", "whalenurse_action_rate_limit 10",
-		`whalenurse_containers{state="suspended"} 1`, `whalenurse_container_suspended{key="nas/media/vpn/1"} 1`,
-		`whalenurse_container_suspended{key="nas/media/jellyfin/1"} 0`, `whalenurse_events_total{type="Suspended"} 1`,
-		"# TYPE whalenurse_events_total counter",
+		`dokdosta_info{host="nas",version="v-test",dry_run="false"} 1`,
+		"dokdosta_healthy 1", "dokdosta_actions_last_hour 3", "dokdosta_action_rate_limit 10",
+		`dokdosta_containers{state="suspended"} 1`, `dokdosta_container_suspended{key="nas/media/vpn/1"} 1`,
+		`dokdosta_container_suspended{key="nas/media/jellyfin/1"} 0`, `dokdosta_events_total{type="Suspended"} 1`,
+		"# TYPE dokdosta_events_total counter",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in\n%s", want, body)
@@ -746,7 +746,7 @@ func TestStreamSurvivesTheServersReadTimeout(t *testing.T) {
 	}
 }
 
-// The rollback commands are pasted into a shell: they leave whalenurse exactly as they were built, or not at all. A
+// The rollback commands are pasted into a shell: they leave dokdosta exactly as they were built, or not at all. A
 // redactor fragment in one of them (an ntfy topic "docker", a receiver on the registry's host) withholds both, in the
 // container document and in every event.
 func TestRollbackIsShownExactlyOrNotAtAll(t *testing.T) {

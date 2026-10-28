@@ -16,8 +16,8 @@ func filterFor(f *Fake) (*ImageLabelFilter, *[][]string) {
 
 func TestFilterRemovesWhatTheImageGives(t *testing.T) {
 	f := NewFake()
-	f.SetImageLabels(flImg, map[string]string{"whalenurse.enable": "true", "whalenurse.cooldown": "5s", "keep": "x"})
-	own := map[string]string{"whalenurse.enable": "true", "whalenurse.cooldown": "9s", "keep": "x"}
+	f.SetImageLabels(flImg, map[string]string{"dokdosta.enable": "true", "dokdosta.cooldown": "5s", "keep": "x"})
+	own := map[string]string{"dokdosta.enable": "true", "dokdosta.cooldown": "9s", "keep": "x"}
 	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: own})
 	flt, warned := filterFor(f)
 	ctx := context.Background()
@@ -26,7 +26,7 @@ func TestFilterRemovesWhatTheImageGives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := map[string]string{"whalenurse.cooldown": "9s", "keep": "x"}; !reflect.DeepEqual(c.Labels, want) {
+	if want := map[string]string{"dokdosta.cooldown": "9s", "keep": "x"}; !reflect.DeepEqual(c.Labels, want) {
 		t.Fatalf("inspect: %v", c.Labels)
 	}
 	sums, err := flt.List(ctx)
@@ -34,10 +34,10 @@ func TestFilterRemovesWhatTheImageGives(t *testing.T) {
 		t.Fatalf("list: %v %v", sums, err)
 	}
 	// The map the Reader holds is not changed.
-	if raw, _ := f.Inspect(ctx, "c1"); raw.Labels["whalenurse.enable"] != "true" {
+	if raw, _ := f.Inspect(ctx, "c1"); raw.Labels["dokdosta.enable"] != "true" {
 		t.Fatal("the filter changed the inner reader's labels")
 	}
-	if len(*warned) != 1 || !reflect.DeepEqual((*warned)[0], []string{"whalenurse.enable"}) {
+	if len(*warned) != 1 || !reflect.DeepEqual((*warned)[0], []string{"dokdosta.enable"}) {
 		t.Fatalf("warnings: %v", *warned)
 	}
 }
@@ -46,11 +46,11 @@ func TestFilterTreatsAComposeIdentityOfTheImageAsNoComposeAtAll(t *testing.T) {
 	f := NewFake()
 	img := map[string]string{LabelProject: "p", LabelService: "web", "com.docker.compose.version": "5.6.0"}
 	f.SetImageLabels(flImg, img)
-	own := map[string]string{LabelProject: "p", LabelService: "web", LabelNumber: "1", "com.docker.compose.version": "5.6.0", "whalenurse.enable": "true", "other": "y"}
+	own := map[string]string{LabelProject: "p", LabelService: "web", LabelNumber: "1", "com.docker.compose.version": "5.6.0", "dokdosta.enable": "true", "other": "y"}
 	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: own})
 	flt, _ := filterFor(f)
 	c, _ := flt.Inspect(context.Background(), "c1")
-	if want := map[string]string{"whalenurse.enable": "true", "other": "y"}; !reflect.DeepEqual(c.Labels, want) {
+	if want := map[string]string{"dokdosta.enable": "true", "other": "y"}; !reflect.DeepEqual(c.Labels, want) {
 		t.Fatalf("%v", c.Labels)
 	}
 	if _, _, _, ok := ComposeKeyParts(c.Labels); ok {
@@ -73,24 +73,24 @@ func TestFilterKeepsARealComposeIdentity(t *testing.T) {
 
 func TestFilterDeclaredDecidesForAComposeContainer(t *testing.T) {
 	f := NewFake()
-	f.SetImageLabels(flImg, map[string]string{"whalenurse.enable": "true", "whalenurse.heal.pull": "true"})
-	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: map[string]string{LabelProject: "p", LabelService: "web", "whalenurse.enable": "true", "whalenurse.heal.pull": "true"}})
+	f.SetImageLabels(flImg, map[string]string{"dokdosta.enable": "true", "dokdosta.heal.pull": "true"})
+	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: map[string]string{LabelProject: "p", LabelService: "web", "dokdosta.enable": "true", "dokdosta.heal.pull": "true"}})
 	flt, _ := filterFor(f)
 	flt.Declared = func(context.Context, map[string]string) (map[string]bool, bool) {
-		return map[string]bool{"whalenurse.enable": true}, true
+		return map[string]bool{"dokdosta.enable": true}, true
 	}
 	c, _ := flt.Inspect(context.Background(), "c1")
-	if _, ok := c.Labels["whalenurse.enable"]; !ok {
+	if _, ok := c.Labels["dokdosta.enable"]; !ok {
 		t.Error("a declared label was removed")
 	}
-	if _, ok := c.Labels["whalenurse.heal.pull"]; ok {
+	if _, ok := c.Labels["dokdosta.heal.pull"]; ok {
 		t.Error("an undeclared label was kept")
 	}
 }
 
 func TestFilterWithoutImageInfoKeepsEverything(t *testing.T) {
 	f := NewFake()
-	own := map[string]string{"whalenurse.enable": "true"}
+	own := map[string]string{"dokdosta.enable": "true"}
 	f.Put(Container{ID: "noimage", Name: "a", Labels: own})
 	f.Put(Container{ID: "gone", Name: "b", ImageID: "sha256:gone", Labels: own})
 	flt, _ := filterFor(f)
@@ -113,14 +113,14 @@ func (f failingImages) ImageLabels(context.Context, string) (map[string]string, 
 
 func TestFilterListFailsWhenTheImageCannotBeReadForAnotherReason(t *testing.T) {
 	f := NewFake()
-	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: map[string]string{"whalenurse.enable": "true"}})
+	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: map[string]string{"dokdosta.enable": "true"}})
 	boom := errors.New("api down")
 	flt := &ImageLabelFilter{Reader: failingImages{f, boom}}
 	if _, err := flt.List(context.Background()); !errors.Is(err, boom) {
 		t.Fatalf("%v", err)
 	}
 	// An event is a trigger only: it passes as it came.
-	ev := Event{ID: "c1", Labels: map[string]string{"whalenurse.enable": "true"}}
+	ev := Event{ID: "c1", Labels: map[string]string{"dokdosta.enable": "true"}}
 	if got := flt.Event(context.Background(), ev); !reflect.DeepEqual(got.Labels, ev.Labels) {
 		t.Fatal(got.Labels)
 	}
@@ -128,17 +128,17 @@ func TestFilterListFailsWhenTheImageCannotBeReadForAnotherReason(t *testing.T) {
 
 func TestFilterEventCarriesNoImageLabel(t *testing.T) {
 	f := NewFake()
-	f.SetImageLabels(flImg, map[string]string{"whalenurse.enable": "true"})
-	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: map[string]string{"whalenurse.enable": "true"}})
+	f.SetImageLabels(flImg, map[string]string{"dokdosta.enable": "true"})
+	f.Put(Container{ID: "c1", Name: "c1", ImageID: flImg, Labels: map[string]string{"dokdosta.enable": "true"}})
 	flt, _ := filterFor(f)
 	// A container the filter has not listed yet (a create event) is looked up.
-	got := flt.Event(context.Background(), Event{Action: "create", ID: "c1", Name: "c1", Labels: map[string]string{"whalenurse.enable": "true", "image": "x", "name": "c1"}})
+	got := flt.Event(context.Background(), Event{Action: "create", ID: "c1", Name: "c1", Labels: map[string]string{"dokdosta.enable": "true", "image": "x", "name": "c1"}})
 	if want := map[string]string{"image": "x", "name": "c1"}; !reflect.DeepEqual(got.Labels, want) {
 		t.Fatalf("%v", got.Labels)
 	}
 	// One that is already gone passes as it came.
-	got = flt.Event(context.Background(), Event{Action: "destroy", ID: "gone", Labels: map[string]string{"whalenurse.enable": "true"}})
-	if got.Labels["whalenurse.enable"] != "true" {
+	got = flt.Event(context.Background(), Event{Action: "destroy", ID: "gone", Labels: map[string]string{"dokdosta.enable": "true"}})
+	if got.Labels["dokdosta.enable"] != "true" {
 		t.Fatal(got.Labels)
 	}
 }

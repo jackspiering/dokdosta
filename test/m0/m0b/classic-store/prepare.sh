@@ -10,8 +10,8 @@ source "$here/../lib.sh"
 
 m0b_need jq docker
 m0_sanitize_env
-left=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | sort -u | grep -E '^whalenurse-m0-' || true)
-[[ -z "$left" ]] || m0_die "whalenurse-m0 projects are still present ($left): run test/m0/m0b/teardown.sh and test/m0/run.sh cleanup first"
+left=$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | sort -u | grep -E '^dokdosta-m0-' || true)
+[[ -z "$left" ]] || m0_die "dokdosta-m0 projects are still present ($left): run test/m0/m0b/teardown.sh and test/m0/run.sh cleanup first"
 m0b_preflight_other
 [[ ! -e /etc/docker/daemon.json ]] || m0_die "/etc/docker/daemon.json exists; merge the two keys by hand (see the printed JSON) instead of using this step"
 [[ "$(docker info --format '{{.Driver}}')" != overlay2 ]] || m0_die "the daemon already uses overlay2; nothing to switch (is this the second run?)"
@@ -51,7 +51,7 @@ graphdriver choice, and a set "storage-driver" is honoured too. The docs only de
 (https://docs.docker.com/engine/storage/containerd/); they say the old store's images and containers stay on disk, hidden.
 
 The step above is NOT the way back: $STATE/switch-back.sh was written for that (it is not run by anything).
-After the switch, collect.sh re-pulls the four base images (network needed), re-tags whalenurse-m0/busybox:1 and runs the
+After the switch, collect.sh re-pulls the four base images (network needed), re-tags dokdosta-m0/busybox:1 and runs the
 check on overlay2. Then run  M0_RUN_ID=m0b-s5 test/m0/run.sh all  here, and tell me; I print the switch-back block again.
 
 EOF2

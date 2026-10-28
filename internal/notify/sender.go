@@ -15,7 +15,7 @@ import (
 // It locates and initialises the service through Shoutrrr's router, but sends by calling the service itself, in the
 // caller's goroutine, under a recover. The router's own Send runs each service in a goroutine of its own with no recover
 // (v0.22.0, pkg/router/router.go sendToService), so a panic inside a service (its release notes include "stop custom url
-// panic") would take the whole process down, and a dead whalenurse heals nothing. A panic here is a failed delivery.
+// panic") would take the whole process down, and a dead dokdosta heals nothing. A panic here is a failed delivery.
 type shoutrrrSender struct {
 	svc types.Service
 }

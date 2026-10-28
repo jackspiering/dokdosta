@@ -1,20 +1,20 @@
-# The smallest working whalenurse: it restarts opted-in containers that go unhealthy or stop, and nothing else. No
-# recreate: that needs two more mounts (examples/full/compose.yaml); until you add them whalenurse says why rung 2 is skipped
+# The smallest working dokdosta: it restarts opted-in containers that go unhealthy or stop, and nothing else. No
+# recreate: that needs two more mounts (examples/full/compose.yaml); until you add them dokdosta says why rung 2 is skipped
 # and SUSPENDS a container that a restart did not fix.
 #
 # Setup (the image runs as uid 65532, which cannot read the Docker socket, so it needs the socket's group):
 #   echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)" > .env
 #   docker compose up -d
-#   docker compose exec whalenurse /whalenurse status
+#   docker compose exec dokdosta /dokdosta status
 #
 # Opt a container in with a label, in ITS compose file:
 #   labels:
-#     whalenurse.enable: "true"
-# Add WHALENURSE_DRY_RUN: "true" below first if you want to watch its decisions (docker compose logs -f) before it acts.
+#     dokdosta.enable: "true"
+# Add DOKDOSTA_DRY_RUN: "true" below first if you want to watch its decisions (docker compose logs -f) before it acts.
 # Mounting the Docker socket is root-equivalent on the host: docs/security.md.
 services:
-  whalenurse:
-    image: ghcr.io/jackspiering/whalenurse:latest
+  dokdosta:
+    image: ghcr.io/jackspiering/dokdosta:latest
     restart: unless-stopped
     stop_grace_period: 60s # a stop lets a recreate in flight finish (up to 30 s) instead of killing it halfway
     read_only: true
@@ -25,10 +25,10 @@ services:
       - /run:uid=65532,gid=65532,mode=0700 # the control socket (the image's healthcheck and the CLI) lives here
     environment:
       # This Docker host's name in container keys and notifications (the default, the hostname, is this container's ID).
-      WHALENURSE_HOST_ID: ${WHALENURSE_HOST_ID:-my-docker-host}
+      DOKDOSTA_HOST_ID: ${DOKDOSTA_HOST_ID:-my-docker-host}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - whalenurse-data:/data # the state store; the image makes /data writable for the nonroot user
+      - dokdosta-data:/data # the state store; the image makes /data writable for the nonroot user
 
 volumes:
-  whalenurse-data: {}
+  dokdosta-data: {}

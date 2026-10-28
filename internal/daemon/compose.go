@@ -7,11 +7,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // composeTimeout bounds one compose recreate: it stops the old container (stop_grace_period) and starts the new one.
@@ -35,7 +35,7 @@ type composeState struct {
 	unread bool // the Engine version has never been read: the gate is no verdict yet, and each poll tries again
 }
 
-// ComposeStatus is the compose part of `whalenurse status`.
+// ComposeStatus is the compose part of `dokdosta status`.
 type ComposeStatus struct {
 	Binary     string   `json:"binary,omitempty"`
 	Source     string   `json:"source,omitempty"`
@@ -295,7 +295,7 @@ func (d *Daemon) refsCurrent(c docker.Container) bool {
 }
 
 // parentOptedIn reports whether a container: parent of c is opted in. A parent that is gone (that is why a dependent is
-// stale) is found through the service its reference resolved to when whalenurse last saw it, and only when that was never
+// stale) is found through the service its reference resolved to when dokdosta last saw it, and only when that was never
 // learned through the services named in c's depends_on label (plan v3.13 item 3).
 func (d *Daemon) parentOptedIn(c docker.Container) bool {
 	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
@@ -331,7 +331,7 @@ func (d *Daemon) parentOptedIn(c docker.Container) bool {
 }
 
 // requestDependentSweep asks for the dependents of whatever was just acted on to be looked at at the given time (plan
-// §3.5: when the action is whalenurse's own, it runs the dependents step explicitly, because the parent's own events fell
+// §3.5: when the action is dokdosta's own, it runs the dependents step explicitly, because the parent's own events fell
 // inside the action's in-flight window and were not interpreted).
 func (d *Daemon) requestDependentSweep(at time.Time) {
 	if d.sweepAt.IsZero() || at.Before(d.sweepAt) {

@@ -44,7 +44,7 @@ check "image store unchanged" "$(yes_no test "$(docker info --format '{{.Driver}
 t_step=$(m0b_step_time)
 t_daemon=$(date -d "$(systemctl show docker -p ActiveEnterTimestamp --value)" +%s.%N)
 check "daemon restarted after the step started" "$(yes_no awk -v a="$t_daemon" -v b="$t_step" 'BEGIN{exit !(a > b)}')" "daemon active since $(date -u -d "@${t_daemon%.*}" +%T)Z, step began $(date -u -d "@${t_step%.*}" +%T)Z"
-check "no whalenurse-m0 container exists" "$(yes_no test -z "$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | grep -E '^whalenurse-m0-' || true)")" "after the daemon restart"
+check "no dokdosta-m0 container exists" "$(yes_no test -z "$(docker ps -a --format '{{.Label "com.docker.compose.project"}}' | grep -E '^dokdosta-m0-' || true)")" "after the daemon restart"
 
 how=$(m0b_journal "${t_step%.*}" "$(date +%s)" "$out/journal.raw.txt")
 m0b_journal_scrub "$out/journal.raw.txt" "$out/journal.scrubbed.txt"

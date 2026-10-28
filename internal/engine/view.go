@@ -3,7 +3,7 @@ package engine
 import "time"
 
 // KeyDetail is everything the engine knows about one state key, for the read-only API and the dashboard. Unlike
-// Status, which lists only keys worth a line in `whalenurse status`, View includes every key the engine holds.
+// Status, which lists only keys worth a line in `dokdosta status`, View includes every key the engine holds.
 type KeyDetail struct {
 	Name          string
 	State         string // ok, incident, recovering, SUSPENDED, PAUSED

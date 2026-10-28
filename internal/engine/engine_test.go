@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // memStore is a Persister that keeps what the engine writes, so a test can start a second engine from it.
@@ -332,7 +332,7 @@ func TestFlapWindowExpiryAndPerContainerLimit(t *testing.T) {
 		t.Fatal("the flap count should have expired with the window")
 	}
 
-	// whalenurse.flap-limit=1: the second incident in the window is the flapping one.
+	// dokdosta.flap-limit=1: the second incident in the window is the flapping one.
 	e, clk, _ = newEngine(t, 0)
 	one := cfg
 	one.FlapLimit = 1

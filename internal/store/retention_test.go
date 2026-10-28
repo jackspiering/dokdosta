@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // The events of an incident that is still open survive the age prune, so a long SUSPENDED keeps its cause, its drift

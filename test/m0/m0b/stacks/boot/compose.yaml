@@ -14,7 +14,7 @@
 #   m  manual stops before the step: unless-stopped must stay stopped, always comes back.
 #   z  created, never started (restart policy is irrelevant; HasBeenStartedBefore is false).
 x-base: &base
-  image: whalenurse-m0/busybox:1
+  image: dokdosta-m0/busybox:1
   stop_grace_period: 2s
 x-loop: &loop
   command: ["sh", "-c", "while true; do sleep 1; done"]

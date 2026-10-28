@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# The whalenurse-restart scenario (PLAN v3.5 §3.3, mechanism d and rule 4): whalenurse in a container, built from this
+# The dokdosta-restart scenario (PLAN v3.5 §3.3, mechanism d and rule 4): dokdosta in a container, built from this
 # branch, next to a crash-looper that it SUSPENDS, and three `restart: "no"` apps that exit 1 on SIGTERM. The maintainer
-# step is `docker stop` of the looper (a real manual stop, so whalenurse sets and persists a marker) and, back to back,
-# `sudo systemctl restart docker`, which kills whalenurse together with everything else. The daemon's restore then
+# step is `docker stop` of the looper (a real manual stop, so dokdosta sets and persists a marker) and, back to back,
+# `sudo systemctl restart docker`, which kills dokdosta together with everything else. The daemon's restore then
 # restarts the looper (restart: always), which without the heartbeat would be a `start` that follows a marker and
 # clears SUSPENDED. collect.sh requires that
 #   - the new run discarded the marker at startup (MarkersQuarantined),
@@ -10,24 +10,24 @@
 #   - s1-s3 are still exited and were not started: stopped by the host, restart policy "no", exit code 1.
 # Source this file after lib.sh; do not run it. See stacks/nurse and stacks/nursestop.
 #
-# Safety: whalenurse acts on containers that carry whalenurse.enable=true, so prepare.sh refuses to continue if any
-# container outside whalenurse-m0-b-* carries it. The projects are whalenurse-m0-b-nurse and whalenurse-m0-b-nursestop
+# Safety: dokdosta acts on containers that carry dokdosta.enable=true, so prepare.sh refuses to continue if any
+# container outside dokdosta-m0-b-* carries it. The projects are dokdosta-m0-b-nurse and dokdosta-m0-b-nursestop
 # (both pass the guards of ../lib.sh and m0b_require_project). The image is assembled from the branch's binary on the
 # distroless base the Dockerfile uses, so nothing is pulled but the allowlisted base.
 # shellcheck shell=bash
 
-NURSE_PROJECT=whalenurse-m0-b-nurse
-NURSE_STOP_PROJECT=whalenurse-m0-b-nursestop
-NURSE_HOST=m0b # WHALENURSE_HOST_ID in stacks/nurse
+NURSE_PROJECT=dokdosta-m0-b-nurse
+NURSE_STOP_PROJECT=dokdosta-m0-b-nursestop
+NURSE_HOST=m0b # DOKDOSTA_HOST_ID in stacks/nurse
 NURSE_LOOPER_KEY="$NURSE_HOST/$NURSE_PROJECT/looper/1"
 NURSE_STOP_SERVICES=(s1 s2 s3)
 
 nurse_key() { printf '%s/%s/%s/1' "$NURSE_HOST" "$1" "$2"; } # nurse_key <project> <service>
 
-# ---- reading whalenurse ----------------------------------------------------------------------------------
+# ---- reading dokdosta ----------------------------------------------------------------------------------
 
-# nurse_status <container> <outfile>: `whalenurse status --json` through docker exec. Returns non-zero if it does not answer.
-nurse_status() { dk_ctr exec "$1" /whalenurse status --json >"$2" 2>/dev/null; }
+# nurse_status <container> <outfile>: `dokdosta status --json` through docker exec. Returns non-zero if it does not answer.
+nurse_status() { dk_ctr exec "$1" /dokdosta status --json >"$2" 2>/dev/null; }
 
 # nurse_state <status.json> <key>: the engine's state of a key, or "-" if it is not listed.
 nurse_state() { jq -r --arg k "$2" '(.engine.keys // []) | map(select(.key == $k)) | (.[0].state // "-")' "$1"; }
@@ -38,7 +38,7 @@ nurse_restore_open() {
   jq -e '(.engine.restore_window_until // "") as $u | ($u != "" and ($u | sub("\\.[0-9]+"; "") | fromdateiso8601) > now)' "$1" >/dev/null 2>&1
 }
 
-# nurse_logs <container> <since epoch> <outfile>: whalenurse's JSON log lines since a time, one object per line.
+# nurse_logs <container> <since epoch> <outfile>: dokdosta's JSON log lines since a time, one object per line.
 # docker logs holds every run of the container; the time field of each line says which run it belongs to.
 nurse_logs() {
   docker logs --since "$2" "$1" 2>&1 | jq -c -R 'fromjson? | select(type == "object")' >"$3" 2>/dev/null || true
@@ -68,25 +68,25 @@ $dirty"
   m0b_set commit "$sha"
   mkdir -p "$ctx/data"
   echo "== building the binary from commit $sha (CGO_ENABLED=0)"
-  (cd "$M0B_ROOT" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=m0b-$sha" -o "$ctx/whalenurse" ./cmd/whalenurse)
+  (cd "$M0B_ROOT" && CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=m0b-$sha" -o "$ctx/dokdosta" ./cmd/dokdosta)
   docker image inspect gcr.io/distroless/static:nonroot >/dev/null 2>&1 || m0_pull gcr.io/distroless/static:nonroot
-  chmod 755 "$ctx" "$ctx/data" "$ctx/whalenurse" # m0b_state_new sets umask 077; the nonroot user in the image must be able to exec it
+  chmod 755 "$ctx" "$ctx/data" "$ctx/dokdosta" # m0b_state_new sets umask 077; the nonroot user in the image must be able to exec it
   # The bundled compose (plan section 3.4) is a build-stage download in the Dockerfile; here it is the host's own plugin, copied
   # into the context. The scenarios mount the host plugin at /host/docker-compose as well, which is used first.
   compose_plugin_path >"$STATE/host-compose-path.txt"
   cp "$(cat "$STATE/host-compose-path.txt")" "$ctx/docker-compose"
   chmod 755 "$ctx/docker-compose"
   sed -n '/^FROM gcr.io\/distroless\/static:nonroot$/,$p' "$M0B_ROOT/Dockerfile" |
-    sed -e 's|^COPY --from=build /out/whalenurse /whalenurse$|COPY whalenurse /whalenurse|' \
-      -e 's|^COPY --from=build --chmod=0755 /out/docker-compose /usr/libexec/whalenurse/docker-compose$|COPY --chmod=0755 docker-compose /usr/libexec/whalenurse/docker-compose|' \
+    sed -e 's|^COPY --from=build /out/dokdosta /dokdosta$|COPY dokdosta /dokdosta|' \
+      -e 's|^COPY --from=build --chmod=0755 /out/docker-compose /usr/libexec/dokdosta/docker-compose$|COPY --chmod=0755 docker-compose /usr/libexec/dokdosta/docker-compose|' \
       -e 's|^COPY --from=build --chown=65532:65532 /out/data /data$|COPY --chown=65532:65532 data /data|' >"$ctx/Dockerfile"
-  if ! grep -q '^COPY whalenurse /whalenurse$' "$ctx/Dockerfile" || ! grep -q '^COPY --chown=65532:65532 data /data$' "$ctx/Dockerfile" ||
-    ! grep -q '^COPY --chmod=0755 docker-compose /usr/libexec/whalenurse/docker-compose$' "$ctx/Dockerfile" ||
+  if ! grep -q '^COPY dokdosta /dokdosta$' "$ctx/Dockerfile" || ! grep -q '^COPY --chown=65532:65532 data /data$' "$ctx/Dockerfile" ||
+    ! grep -q '^COPY --chmod=0755 docker-compose /usr/libexec/dokdosta/docker-compose$' "$ctx/Dockerfile" ||
     grep -q -- '--from' "$ctx/Dockerfile"; then
     m0_die "the runtime stage of the Dockerfile changed; update nurse_build_image ($ctx/Dockerfile)"
   fi
-  tag="whalenurse-m0/whalenurse:$sha-$(date +%s)"
-  [[ "$tag" == whalenurse-m0/* ]] || m0_die "image tag '$tag' is not under whalenurse-m0/"
+  tag="dokdosta-m0/dokdosta:$sha-$(date +%s)"
+  [[ "$tag" == dokdosta-m0/* ]] || m0_die "image tag '$tag' is not under dokdosta-m0/"
   docker build -q -t "$tag" "$ctx" >"$STATE/image-build.txt" 2>&1 || {
     tail -5 "$STATE/image-build.txt"
     m0_die "docker build failed (see $STATE/image-build.txt)"
@@ -96,19 +96,19 @@ $dirty"
   echo "image $tag"
 }
 
-# nurse_preflight_strangers: whalenurse would act on any opted-in container; refuse unless all of them are M0b ones.
-# whalenurse reads the value with strconv.ParseBool of the trimmed string (1, t, T, TRUE, true, True), and `docker ps
+# nurse_preflight_strangers: dokdosta would act on any opted-in container; refuse unless all of them are M0b ones.
+# dokdosta reads the value with strconv.ParseBool of the trimmed string (1, t, T, TRUE, true, True), and `docker ps
 # --filter label=k=v` matches the value exactly, so the filter is by key and the value is checked here.
 nurse_preflight_strangers() {
   local bad
-  bad=$(docker ps -a --filter 'label=whalenurse.enable' --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "whalenurse.enable"}}' |
-    awk -F'\t' 'NF != 3 || $3 ~ /^[[:space:]]*(1|t|T|TRUE|true|True)[[:space:]]*$/ && $2 !~ /^whalenurse-m0-b-/ {print}')
-  [[ -z "$bad" ]] || m0_die "these containers carry whalenurse.enable (a true value) but are not in a whalenurse-m0-b-* project, and the whalenurse under test would act on them:
+  bad=$(docker ps -a --filter 'label=dokdosta.enable' --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "dokdosta.enable"}}' |
+    awk -F'\t' 'NF != 3 || $3 ~ /^[[:space:]]*(1|t|T|TRUE|true|True)[[:space:]]*$/ && $2 !~ /^dokdosta-m0-b-/ {print}')
+  [[ -z "$bad" ]] || m0_die "these containers carry dokdosta.enable (a true value) but are not in a dokdosta-m0-b-* project, and the dokdosta under test would act on them:
 $bad"
 }
 
 nurse_prepare() {
-  local sc=whalenurse-restart P="$NURSE_PROJECT" SP="$NURSE_STOP_PROJECT" gid nc i state_json wn
+  local sc=dokdosta-restart P="$NURSE_PROJECT" SP="$NURSE_STOP_PROJECT" gid nc i state_json wn
   m0b_need jq docker awk systemctl go git
   m0_sanitize_env
   m0b_require_project "$P"
@@ -140,7 +140,7 @@ nurse_prepare() {
 
   m0b_listener_install "$sc" "$P" "$SP"
 
-  echo "== starting the three stoppable containers, then whalenurse and the crash-looper"
+  echo "== starting the three stoppable containers, then dokdosta and the crash-looper"
   dcs "$SP" "$STATE/stack-stop" up -d --pull never --no-build >"$STATE/up-stop.txt" 2>&1 || {
     tail -5 "$STATE/up-stop.txt"
     m0_die "compose up failed (see $STATE/up-stop.txt)"
@@ -149,10 +149,10 @@ nurse_prepare() {
     tail -5 "$STATE/up.txt"
     m0_die "compose up failed (see $STATE/up.txt)"
   }
-  wn=$(cid "$P" whalenurse)
-  wait_for 90 is_running "$wn" || m0_die "whalenurse is not running: docker logs $wn"
+  wn=$(cid "$P" dokdosta)
+  wait_for 90 is_running "$wn" || m0_die "dokdosta is not running: docker logs $wn"
 
-  echo "== waiting for whalenurse to SUSPEND the looper (a crash loop needs 3 restarts over 60 s, then one restart rung)"
+  echo "== waiting for dokdosta to SUSPEND the looper (a crash loop needs 3 restarts over 60 s, then one restart rung)"
   state_json="$STATE/baseline-status.json"
   for ((i = 0; i < 150; i++)); do
     if nurse_status "$wn" "$state_json" && [[ "$(nurse_state "$state_json" "$NURSE_LOOPER_KEY")" == SUSPENDED ]]; then break; fi
@@ -168,7 +168,7 @@ nurse_prepare() {
   { m0b_table "$P"; m0b_table "$SP" | tail -n +2; } >"$STATE/baseline/table.tsv"
   m0b_inspect_dir "$P" "$STATE/baseline/inspect"
   m0b_inspect_dir "$SP" "$STATE/baseline/inspect-stop"
-  nurse_logs "$wn" 0 "$STATE/baseline/whalenurse-log.ndjson"
+  nurse_logs "$wn" 0 "$STATE/baseline/dokdosta-log.ndjson"
   m0b_set nurse_container "$wn"
   m0b_set nurse_started "$(docker inspect --format '{{.State.StartedAt}}' "$wn")"
   {
@@ -181,16 +181,16 @@ nurse_prepare() {
 
   echo "== persistence check (collect.sh must work from a fresh session)"
   m0b_persistence_check "$sc" "$(m0b_listener_unit "$sc")" || m0_die "something collect.sh needs would not survive: fix it before the step"
-  m0b_write_step "stop the looper by hand, then restart the Docker daemon at once: whalenurse persists a manual-stop marker, is killed with everything else and restored; the looper must stay SUSPENDED" \
+  m0b_write_step "stop the looper by hand, then restart the Docker daemon at once: dokdosta persists a manual-stop marker, is killed with everything else and restored; the looper must stay SUSPENDED" \
     "docker stop -t 2 $(cid "$P" looper)" \
     'sudo systemctl restart docker'
   printf '%s\n' \
     'Notes:' \
     "  - Everything in $P and $SP, and the listener unit, stay in place until test/m0/m0b/teardown.sh." \
-    "  - whalenurse's state is the named volume of project $P (its SQLite store); teardown.sh removes it with the project." \
-    '  - The step stops the looper (a manual stop: whalenurse sets a marker and persists it) and restarts the daemon right after,' \
+    "  - dokdosta's state is the named volume of project $P (its SQLite store); teardown.sh removes it with the project." \
+    '  - The step stops the looper (a manual stop: dokdosta sets a marker and persists it) and restarts the daemon right after,' \
     '    so the marker is well inside the 30 s window; the restore starts the looper again (restart: always).' \
-    '  - collect.sh waits (up to --watch seconds, default 240) for whalenurse to be back and to have swept (settled), then checks' \
+    '  - collect.sh waits (up to --watch seconds, default 240) for dokdosta to be back and to have swept (settled), then checks' \
     "    MarkersQuarantined, the looper still SUSPENDED, and s1-s3 of $SP still exited and not started." \
     ''
   m0b_print_collect "$sc" "--watch 240"
@@ -202,7 +202,7 @@ nurse_prepare() {
 
 # nurse_collect [--watch SECS] [state dir]
 nurse_collect() {
-  local sc=whalenurse-restart watch=240 dir="" P SP wn out sum t_step t_done t_daemon i svc key s st exit_code
+  local sc=dokdosta-restart watch=240 dir="" P SP wn out sum t_step t_done t_daemon i svc key s st exit_code
   local fails=0 warns=0
   while (($#)); do
     case "$1" in
@@ -252,38 +252,38 @@ nurse_collect() {
   fi
   m0b_versions "$out/versions-after.txt"
 
-  wn=$(cid "$P" whalenurse)
+  wn=$(cid "$P" dokdosta)
   if [[ -z "$wn" ]]; then
-    fail "the whalenurse container is gone"
+    fail "the dokdosta container is gone"
     csay "RESULT: FAIL"
     return 1
   fi
 
-  csay "== waiting up to ${watch}s for whalenurse to be back with its restore window closed"
+  csay "== waiting up to ${watch}s for dokdosta to be back with its restore window closed"
   for ((i = 0; i < watch; i += 5)); do
     if is_running "$wn" && nurse_status "$wn" "$out/status-after.json" &&
       [[ "$(jq -r '.settled' "$out/status-after.json")" == true ]] && ! nurse_restore_open "$out/status-after.json"; then break; fi
     sleep 5
   done
   if ! nurse_status "$wn" "$out/status-after.json"; then
-    fail "whalenurse does not answer on its control socket"
+    fail "dokdosta does not answer on its control socket"
     csay "RESULT: FAIL"
     return 1
   fi
-  docker inspect "$wn" >"$out/whalenurse-inspect.json"
-  nurse_logs "$wn" 0 "$out/whalenurse-log-all.ndjson"
-  nurse_logs "$wn" "$t_step" "$out/whalenurse-log-since-step.ndjson"
+  docker inspect "$wn" >"$out/dokdosta-inspect.json"
+  nurse_logs "$wn" 0 "$out/dokdosta-log-all.ndjson"
+  nurse_logs "$wn" "$t_step" "$out/dokdosta-log-since-step.ndjson"
 
   # ---- 1. it came back, with its state
   st=$(docker inspect --format '{{.State.StartedAt}}' "$wn")
   # shellcheck disable=SC2154
   if [[ "$st" != "$nurse_started" ]] && awk -v a="$(date -d "$st" +%s)" -v b="${t_step%.*}" 'BEGIN{exit !(a >= b)}'; then
-    pass "whalenurse was restarted by the daemon's restore (StartedAt $st)"
+    pass "dokdosta was restarted by the daemon's restore (StartedAt $st)"
   else
-    fail "whalenurse's StartedAt is $st; it was not restarted after the step (did the step run?)"
+    fail "dokdosta's StartedAt is $st; it was not restarted after the step (did the step run?)"
   fi
-  if jq -e 'select(.msg == "state store opened" and .keys >= 1)' "$out/whalenurse-log-since-step.ndjson" >/dev/null 2>&1; then
-    pass "the new run opened the state store and loaded $(jq -r 'select(.msg == "state store opened") | .keys' "$out/whalenurse-log-since-step.ndjson" | head -1) keys"
+  if jq -e 'select(.msg == "state store opened" and .keys >= 1)' "$out/dokdosta-log-since-step.ndjson" >/dev/null 2>&1; then
+    pass "the new run opened the state store and loaded $(jq -r 'select(.msg == "state store opened") | .keys' "$out/dokdosta-log-since-step.ndjson" | head -1) keys"
   else
     fail "the new run did not log 'state store opened' with keys >= 1"
   fi
@@ -295,29 +295,29 @@ nurse_collect() {
   else
     fail "the crash-looper is $s after the daemon restart (expected SUSPENDED)"
   fi
-  if [[ "$(nurse_count_since "$out/whalenurse-log-since-step.ndjson" Unsuspended "$NURSE_LOOPER_KEY" "${t_step%.*}")" == 0 ]]; then
+  if [[ "$(nurse_count_since "$out/dokdosta-log-since-step.ndjson" Unsuspended "$NURSE_LOOPER_KEY" "${t_step%.*}")" == 0 ]]; then
     pass "no Unsuspended event for the looper since the step"
   else
     fail "an Unsuspended event for the looper since the step (the restore cleared SUSPENDED)"
   fi
-  if [[ "$(nurse_count_since "$out/whalenurse-log-since-step.ndjson" ActionStarted "$NURSE_LOOPER_KEY" "${t_step%.*}")" == 0 ]]; then
-    pass "whalenurse did not start another ladder pass on the looper"
+  if [[ "$(nurse_count_since "$out/dokdosta-log-since-step.ndjson" ActionStarted "$NURSE_LOOPER_KEY" "${t_step%.*}")" == 0 ]]; then
+    pass "dokdosta did not start another ladder pass on the looper"
   else
-    fail "whalenurse acted on the looper after the step (ActionStarted)"
+    fail "dokdosta acted on the looper after the step (ActionStarted)"
   fi
 
   # ---- 3. the dangerous sequence: a marker persisted by the previous run, then the restore's start
-  if [[ "$(nurse_count_since "$out/whalenurse-log-since-step.ndjson" ManualStopMarked "$NURSE_LOOPER_KEY" "${t_step%.*}")" -ge 1 ]]; then
+  if [[ "$(nurse_count_since "$out/dokdosta-log-since-step.ndjson" ManualStopMarked "$NURSE_LOOPER_KEY" "${t_step%.*}")" -ge 1 ]]; then
     pass "the previous run saw the manual stop of the looper and set a marker (so a marker was persisted)"
   else
     fail "the previous run never marked the manual stop of the looper (it died before the event, or the step did not stop it): the case is not exercised"
   fi
-  if jq -e 'select(.type == "MarkersQuarantined")' "$out/whalenurse-log-since-step.ndjson" >/dev/null 2>&1; then
-    pass "the new run discarded the marker at startup: $(jq -r 'select(.type == "MarkersQuarantined") | .msg' "$out/whalenurse-log-since-step.ndjson" | head -1)"
+  if jq -e 'select(.type == "MarkersQuarantined")' "$out/dokdosta-log-since-step.ndjson" >/dev/null 2>&1; then
+    pass "the new run discarded the marker at startup: $(jq -r 'select(.type == "MarkersQuarantined") | .msg' "$out/dokdosta-log-since-step.ndjson" | head -1)"
   else
     fail "no MarkersQuarantined in the new run: the persisted marker was kept"
   fi
-  if jq -e 'select(.msg | tostring | test("whalenurse was not running for a while"))' "$out/whalenurse-log-since-step.ndjson" >/dev/null 2>&1; then
+  if jq -e 'select(.msg | tostring | test("dokdosta was not running for a while"))' "$out/dokdosta-log-since-step.ndjson" >/dev/null 2>&1; then
     csay "info  the gap since last_seen exceeded the poll interval: a restore window was opened"
   else
     csay "info  the gap since last_seen was within the poll interval: no restore window from the heartbeat"
@@ -325,14 +325,14 @@ nurse_collect() {
   m0b_events_normalize "$STATE/events-listener.ndjson" >"$out/events.ndjson" 2>/dev/null || true
   {
     echo "# docker events around the step, by service (kill[sig] stop die(exit) start ...)"
-    m0b_events_by_service "$out/events.ndjson" '^(whalenurse|looper)$' || true
+    m0b_events_by_service "$out/events.ndjson" '^(dokdosta|looper)$' || true
   } >"$out/events-by-service.txt"
   tee -a "$sum" <"$out/events-by-service.txt" >/dev/null
   m0b_journal "$t_step" "$EPOCHREALTIME" "$out/journal-raw.txt" >"$out/journal-how.txt" 2>&1 || true
 
   # ---- 4. stopped by the host, restart policy "no", exit code 1: stay down
   if [[ "$(jq -r '.settled' "$out/status-after.json")" != true ]]; then
-    warn "whalenurse has not swept yet (still in its startup settle period); run collect.sh again in a minute"
+    warn "dokdosta has not swept yet (still in its startup settle period); run collect.sh again in a minute"
     csay "RESULT: INCOMPLETE ($fails FAIL, $warns WARN)"
     return 1
   fi
@@ -343,17 +343,17 @@ nurse_collect() {
     if [[ "$st" == exited && "$exit_code" == 1 ]]; then
       pass "$svc: still exited (exit code 1) after the restore and the sweep"
     else
-      fail "$svc: status=$st exit=$exit_code (expected exited with 1: running means whalenurse started it)"
+      fail "$svc: status=$st exit=$exit_code (expected exited with 1: running means dokdosta started it)"
     fi
-    if [[ "$(nurse_count_since "$out/whalenurse-log-since-step.ndjson" ActionStarted "$key" "${t_step%.*}")" == 0 ]]; then
-      pass "$svc: whalenurse did not start it"
+    if [[ "$(nurse_count_since "$out/dokdosta-log-since-step.ndjson" ActionStarted "$key" "${t_step%.*}")" == 0 ]]; then
+      pass "$svc: dokdosta did not start it"
     else
-      fail "$svc: whalenurse started it (ActionStarted since the step)"
+      fail "$svc: dokdosta started it (ActionStarted since the step)"
     fi
-    if [[ "$(nurse_count_since "$out/whalenurse-log-since-step.ndjson" NotifyOnly "$key" "${t_step%.*}")" == 1 ]]; then
+    if [[ "$(nurse_count_since "$out/dokdosta-log-since-step.ndjson" NotifyOnly "$key" "${t_step%.*}")" == 1 ]]; then
       pass "$svc: exactly one notification (NotifyOnly)"
     else
-      fail "$svc: expected exactly one NotifyOnly since the step, got $(nurse_count_since "$out/whalenurse-log-since-step.ndjson" NotifyOnly "$key" "${t_step%.*}")"
+      fail "$svc: expected exactly one NotifyOnly since the step, got $(nurse_count_since "$out/dokdosta-log-since-step.ndjson" NotifyOnly "$key" "${t_step%.*}")"
     fi
   done
 

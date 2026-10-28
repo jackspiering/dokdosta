@@ -2,7 +2,7 @@
 .PHONY: build test vet scripts-test snapshot verify-release
 
 build:
-	CGO_ENABLED=0 go build -trimpath -o whalenurse ./cmd/whalenurse
+	CGO_ENABLED=0 go build -trimpath -o dokdosta ./cmd/dokdosta
 
 vet:
 	go vet ./... && go vet -tags integration ./...
@@ -25,7 +25,8 @@ snapshot:
 # Verify a published release: the cosign signatures (pinned to this repository's release workflow), the checksums of every
 # archive, and the build provenance. Needs cosign; gh is optional (without it the provenance check is skipped), but if it is
 # installed it must be logged in (gh auth login, or GH_TOKEN). See docs/verifying-releases.md.
-#   make verify-release TAG=v0.1.0
+#   make verify-release TAG=v0.3.0
+#   make verify-release TAG=v0.2.0 REPO=jackspiering/whalenurse   (the releases from before the rename, plan v3.15)
 verify-release:
-	@test -n "$(TAG)" || { echo "usage: make verify-release TAG=v0.1.0" >&2; exit 2; }
-	scripts/release/verify.sh $(TAG)
+	@test -n "$(TAG)" || { echo "usage: make verify-release TAG=v0.3.0 [REPO=owner/name]" >&2; exit 2; }
+	scripts/release/verify.sh $(TAG) $(if $(REPO),--repo $(REPO))

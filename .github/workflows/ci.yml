@@ -112,9 +112,9 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: |
-          go build -trimpath -o whalenurse ./cmd/whalenurse
-          file whalenurse
-          ! ldd whalenurse
+          go build -trimpath -o dokdosta ./cmd/dokdosta
+          file dokdosta
+          ! ldd dokdosta
       - name: The integration shards are every integration test, once (and the workflow's matrix is those shards)
         run: scripts/ci/shard-integration.sh --check-ci .github/workflows/ci.yml
       # Known vulnerabilities in the Go release and the modules that the code reaches (pinned; check-workflows.sh). It
@@ -229,24 +229,24 @@ jobs:
           # The SBOMs and archives are all in the checksums the release signs.
           [ "$(grep -c 'tar.gz$' dist/checksums.txt)" -eq 2 ]
           [ "$(grep -c 'sbom.spdx.json$' dist/checksums.txt)" -eq 2 ]
-          amd64=$(find dist -type f -name whalenurse -path '*amd64*')
+          amd64=$(find dist -type f -name dokdosta -path '*amd64*')
           file "$amd64" | grep -q "statically linked"
           "$amd64" version
           "$amd64" version | grep -q SNAPSHOT
       - name: The release image (amd64) runs, carries its labels, and is not root
         run: |
-          docker image ls ghcr.io/jackspiering/whalenurse
-          img=$(docker image ls ghcr.io/jackspiering/whalenurse --format '{{.Repository}}:{{.Tag}}' | grep -- '-amd64$' | head -n 1)
+          docker image ls ghcr.io/jackspiering/dokdosta
+          img=$(docker image ls ghcr.io/jackspiering/dokdosta --format '{{.Repository}}:{{.Tag}}' | grep -- '-amd64$' | head -n 1)
           echo "image: $img"
           docker run --rm "$img" version
           docker run --rm "$img" version | grep -q SNAPSHOT
-          docker inspect -f '{{.Config.User}} {{index .Config.Labels "org.opencontainers.image.source"}} {{.Config.Healthcheck.Test}}' "$img" | tee /dev/stderr | grep -q '^65532:65532 https://github.com/jackspiering/whalenurse \[CMD /whalenurse healthcheck\]'
+          docker inspect -f '{{.Config.User}} {{index .Config.Labels "org.opencontainers.image.source"}} {{.Config.Healthcheck.Test}}' "$img" | tee /dev/stderr | grep -q '^65532:65532 https://github.com/jackspiering/dokdosta \[CMD /dokdosta healthcheck\]'
           # the bundled compose is there and is the version both Dockerfiles pin
-          docker run --rm --entrypoint /usr/libexec/whalenurse/docker-compose "$img" version | tee /dev/stderr | grep -q "$(sed -n 's/^ARG COMPOSE_VERSION=//p' Dockerfile.release | head -n 1)"
+          docker run --rm --entrypoint /usr/libexec/dokdosta/docker-compose "$img" version | tee /dev/stderr | grep -q "$(sed -n 's/^ARG COMPOSE_VERSION=//p' Dockerfile.release | head -n 1)"
       - name: The arm64 image builds too (no emulation needed; the final stage only copies)
         run: |
           mkdir -p "$RUNNER_TEMP/ctx/linux/arm64"
-          cp "$(find dist -type f -name whalenurse -path '*arm64*' | head -n 1)" "$RUNNER_TEMP/ctx/linux/arm64/whalenurse"
+          cp "$(find dist -type f -name dokdosta -path '*arm64*' | head -n 1)" "$RUNNER_TEMP/ctx/linux/arm64/dokdosta"
           cp Dockerfile.release "$RUNNER_TEMP/ctx/Dockerfile"
           docker buildx build --platform linux/arm64 --output type=cacheonly "$RUNNER_TEMP/ctx"
 
@@ -277,11 +277,11 @@ jobs:
           jq -e . examples/full/tailscale/serve.json >/dev/null
       - name: systemd-analyze verify (the unit, pointed at a real binary; any output at all is a failure)
         run: |
-          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/whalenurse" ./cmd/whalenurse
-          sed "s|/usr/local/bin/whalenurse|$RUNNER_TEMP/whalenurse|" examples/systemd/whalenurse.service > "$RUNNER_TEMP/whalenurse.service"
-          out=$(systemd-analyze verify "$RUNNER_TEMP/whalenurse.service" 2>&1) || { echo "$out"; exit 1; }
+          CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/dokdosta" ./cmd/dokdosta
+          sed "s|/usr/local/bin/dokdosta|$RUNNER_TEMP/dokdosta|" examples/systemd/dokdosta.service > "$RUNNER_TEMP/dokdosta.service"
+          out=$(systemd-analyze verify "$RUNNER_TEMP/dokdosta.service" 2>&1) || { echo "$out"; exit 1; }
           if [ -n "$out" ]; then echo "$out"; exit 1; fi
-          systemd-analyze --offline=true security "$RUNNER_TEMP/whalenurse.service" | tail -n 3 || true
+          systemd-analyze --offline=true security "$RUNNER_TEMP/dokdosta.service" | tail -n 3 || true
 
   image:
     # The image under test, built once: the integration shards and the demo load it. Each of them used to build it, 19 builds
@@ -299,23 +299,23 @@ jobs:
       - name: Build the image
         run: |
           for attempt in 1 2 3; do
-            docker build -t whalenurse-test/whalenurse:ci --build-arg VERSION=ci . && break
+            docker build -t dokdosta-test/dokdosta:ci --build-arg VERSION=ci . && break
             if [ "$attempt" -eq 3 ]; then exit 1; fi
             echo "::warning::docker build failed (attempt $attempt of 3), trying again"
             sleep 15
           done
-          docker save whalenurse-test/whalenurse:ci | gzip -1 >"$RUNNER_TEMP/whalenurse-image.tar.gz"
-          ls -l "$RUNNER_TEMP/whalenurse-image.tar.gz"
+          docker save dokdosta-test/dokdosta:ci | gzip -1 >"$RUNNER_TEMP/dokdosta-image.tar.gz"
+          ls -l "$RUNNER_TEMP/dokdosta-image.tar.gz"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: whalenurse-image
-          path: ${{ runner.temp }}/whalenurse-image.tar.gz
+          name: dokdosta-image
+          path: ${{ runner.temp }}/dokdosta-image.tar.gz
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
 
   demo:
-    # The README's "Try it in 2 minutes", end to end, with the image built from this commit. Project whalenurse-test-demo only.
+    # The README's "Try it in 2 minutes", end to end, with the image built from this commit. Project dokdosta-test-demo only.
     name: demo (examples/demo, break bop and watch the ladder)
     runs-on: ubuntu-latest
     needs: [scope, image]
@@ -327,21 +327,21 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: whalenurse-image
+          name: dokdosta-image
           path: ${{ runner.temp }}/image
       - name: Install the latest Docker Engine 29.x and Compose 5.6.0
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/ci/setup-docker.sh classic
       - name: Load the image (built by the image job)
-        run: docker load -i "$RUNNER_TEMP/image/whalenurse-image.tar.gz"
+        run: docker load -i "$RUNNER_TEMP/image/dokdosta-image.tar.gz"
       - name: Run the demo
-        run: test/demo/run.sh whalenurse-test/whalenurse:ci
+        run: test/demo/run.sh dokdosta-test/dokdosta:ci
 
   integration-shard:
     # The six legs (2 image stores x 3 compose releases) each run the whole suite, split over three runners: the tests are
     # real ladders against a real daemon and run one after another, so one runner per leg took ~14 minutes. A runner has
-    # one daemon, and a whalenurse watches every opted-in container on its daemon, so the split is across runners, never
+    # one daemon, and a dokdosta watches every opted-in container on its daemon, so the split is across runners, never
     # t.Parallel. scripts/ci/shard-integration.sh packs the tests (from `go test -list`, so none is forgotten) by their
     # recorded durations; the go job checks that this matrix is 0/n .. n-1/n of one n and covers every test once.
     # No `needs: [go]`: the unit tests and these shards start together (a red unit test cancels nothing, but costs only
@@ -380,9 +380,9 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.SKIP != 'true'
         with:
-          name: whalenurse-image
+          name: dokdosta-image
           path: ${{ runner.temp }}/image
-      # Engine 29.x and the compose release of the matrix. whalenurse runs this compose itself (rung 2, the dry-run oracle,
+      # Engine 29.x and the compose release of the matrix. dokdosta runs this compose itself (rung 2, the dry-run oracle,
       # config --hash), so the oracle's output and the hash are what the matrix pins. A latest leg installs the release the
       # scope job resolved (setup-docker.sh resolves "latest" itself if the scope job could not).
       - name: Install the latest Docker Engine 29.x and Compose ${{ matrix.compose }}, select the image store
@@ -395,19 +395,19 @@ jobs:
       # the other store.
       - name: Load the image (built by the image job)
         if: env.SKIP != 'true'
-        run: docker load -i "$RUNNER_TEMP/image/whalenurse-image.tar.gz"
+        run: docker load -i "$RUNNER_TEMP/image/dokdosta-image.tar.gz"
       - name: Docker environment
         if: env.SKIP != 'true'
         run: |
           docker version
           docker compose version
-          echo "WHALENURSE_COMPOSE_BIN=$WHALENURSE_COMPOSE_BIN ($WHALENURSE_COMPOSE_VERSION)"
+          echo "DOKDOSTA_COMPOSE_BIN=$DOKDOSTA_COMPOSE_BIN ($DOKDOSTA_COMPOSE_VERSION)"
           docker info --format 'storage driver: {{.Driver}} / {{json .DriverStatus}}'
       - name: Run shard ${{ matrix.shard }} of the integration tests
         if: env.SKIP != 'true'
         env:
-          WHALENURSE_INTEGRATION: "1"
-          WHALENURSE_TEST_IMAGE: whalenurse-test/whalenurse:ci
+          DOKDOSTA_INTEGRATION: "1"
+          DOKDOSTA_TEST_IMAGE: dokdosta-test/dokdosta:ci
           SHARD: ${{ matrix.shard }}
         run: |
           run=$(scripts/ci/shard-integration.sh "$SHARD")
@@ -415,7 +415,7 @@ jobs:
           go test -tags integration -count=1 -v -timeout 50m -run "$run" ./test/integration/
       - name: Leftover test projects (should be empty)
         if: always() && env.SKIP != 'true'
-        run: docker ps -a --filter label=com.docker.compose.project --format '{{.Names}} {{.Label "com.docker.compose.project"}}' | grep whalenurse-test- || true
+        run: docker ps -a --filter label=com.docker.compose.project --format '{{.Names}} {{.Label "com.docker.compose.project"}}' | grep dokdosta-test- || true
 
   integration:
     # The six checks the repository ruleset requires, under their old names: each is green when every shard is. (A needs
@@ -425,7 +425,7 @@ jobs:
     # skipped as a whole, on purpose: a skipped matrix reports none of the six names, so they are not green on the layer's
     # head commit, and the layer cannot merge into main on the light set. A failed scope job leaves `full` empty, which
     # runs this job, and it fails.
-    name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, whalenurse-test-* projects only)
+    name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, dokdosta-test-* projects only)
     runs-on: ubuntu-latest
     needs: [scope, integration-shard]
     if: ${{ always() && needs.scope.outputs.full != 'false' }}
@@ -471,7 +471,7 @@ jobs:
       - name: Install the latest Docker Engine 29.x and Compose 5.6.0, select the image store
         if: env.RUN == 'true'
         run: scripts/ci/setup-docker.sh "${{ matrix.store }}"
-      - name: Image drift (M0b scenario 5; whalenurse-m0-b-imgdrift project only)
+      - name: Image drift (M0b scenario 5; dokdosta-m0-b-imgdrift project only)
         if: env.RUN == 'true'
         run: test/m0/m0b/image-drift.sh --out "$RUNNER_TEMP/imgdrift-${{ matrix.store }}"
       - name: Summary

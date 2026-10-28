@@ -15,7 +15,7 @@
 # promoted into testdata/ (test/m0/promote-fixtures.sh works on <state>/fixtures-raw).
 #
 # Safety: everything that changes a container goes through the guards of ../lib.sh, and M0b
-# projects are further restricted to whalenurse-m0-b-*. The maintainer step itself is the only
+# projects are further restricted to dokdosta-m0-b-*. The maintainer step itself is the only
 # thing that can touch other containers (a daemon restart stops all of them): prepare.sh lists
 # them and refuses to continue unless M0B_ALLOW_OTHER_CONTAINERS=1.
 # shellcheck shell=bash
@@ -26,10 +26,10 @@ M0B_HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$M0B_HERE/../lib.sh"
 M0B_ROOT="$(cd "$M0B_HERE/../../.." && pwd)"
 M0B_DIR="${M0B_DIR:-$M0B_ROOT/captures/m0b}"
-M0B_PROJECT_RE='^whalenurse-m0-b-[a-z0-9][a-z0-9_-]*$'
+M0B_PROJECT_RE='^dokdosta-m0-b-[a-z0-9][a-z0-9_-]*$'
 # shellcheck disable=SC2034  # used by boot-lib.sh and the scenarios
-M0B_BOOT_PROJECT=whalenurse-m0-b-boot
-M0B_UNIT_PREFIX=whalenurse-m0b-listener
+M0B_BOOT_PROJECT=dokdosta-m0-b-boot
+M0B_UNIT_PREFIX=dokdosta-m0b-listener
 # Daemon and runtime lines worth keeping from the journal.
 M0B_JOURNAL_PATTERN='failed to start container|restartmanger wait error|failed to restart container|failed to prepare mount points|Could not find dependent container|Daemon has completed initialization|Processing signal|Daemon shutdown complete|Loading containers: done|dockerd.*level=(error|warning)'
 
@@ -147,20 +147,20 @@ RESUME
 
 # ---- host checks ----------------------------------------------------------
 
-# Containers outside whalenurse-m0-* projects that a daemon restart or a reboot would stop.
+# Containers outside dokdosta-m0-* projects that a daemon restart or a reboot would stop.
 m0b_other_containers() {
   docker ps -a --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}\t{{.Status}}' |
-    awk -F'\t' '$2 !~ /^whalenurse-m0-/ {print}'
+    awk -F'\t' '$2 !~ /^dokdosta-m0-/ {print}'
 }
 
 m0b_preflight_other() { # prints them; refuses unless M0B_ALLOW_OTHER_CONTAINERS=1
   local others
   others=$(m0b_other_containers)
   if [[ -z "$others" ]]; then
-    echo "other containers on this host (outside whalenurse-m0-*): none"
+    echo "other containers on this host (outside dokdosta-m0-*): none"
     return 0
   fi
-  echo "containers outside whalenurse-m0-* that the step will stop or restart:"
+  echo "containers outside dokdosta-m0-* that the step will stop or restart:"
   printf '    %s\n' "${others//$'\n'/$'\n'    }"
   [[ "${M0B_ALLOW_OTHER_CONTAINERS-}" == 1 ]] ||
     m0_die "those containers are not mine to bounce. If this host is the throwaway VM and you accept it, rerun with M0B_ALLOW_OTHER_CONTAINERS=1"
@@ -189,7 +189,7 @@ m0b_ensure_images() { # the base images the stacks use (pulls only allowed base 
   for b in busybox:1.37 alpine:3.22; do
     docker image inspect "$b" >/dev/null 2>&1 || m0_pull "$b"
   done
-  docker image inspect whalenurse-m0/busybox:1 >/dev/null 2>&1 || m0_tag busybox:1.37 whalenurse-m0/busybox:1
+  docker image inspect dokdosta-m0/busybox:1 >/dev/null 2>&1 || m0_tag busybox:1.37 dokdosta-m0/busybox:1
 }
 
 # ---- container tables -----------------------------------------------------
@@ -278,7 +278,7 @@ m0b_events_by_service() {
 
 # m0b_events_only_projects <project>...: stdin -> stdout, keeps the docker events (one JSON object per line) of containers
 # in one of the projects. `docker events --filter label=...` cannot do this for more than one project: repeated label
-# filters are ANDed, so two projects match nothing (the first whalenurse-restart run recorded no events for that reason).
+# filters are ANDed, so two projects match nothing (the first dokdosta-restart run recorded no events for that reason).
 m0b_events_only_projects() {
   local re p
   for p in "$@"; do m0b_require_project "$p"; done
@@ -302,7 +302,7 @@ m0b_listener_install() {
   rm -f "$STATE/listener.stop"
   cat >"$dir/$unit" <<UNIT
 [Unit]
-Description=whalenurse M0b: record docker events for $* (read-only)
+Description=dokdosta M0b: record docker events for $* (read-only)
 
 [Service]
 ExecStart=$M0B_HERE/listener.sh $STATE/events-listener.ndjson $STATE/listener.stop $*

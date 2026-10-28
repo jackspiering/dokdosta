@@ -4,7 +4,7 @@
 # shellcheck shell=bash
 exp_e1() {
   begin E1 "network_mode dependents after the parent is recreated or restarted"
-  local P=whalenurse-m0-e1 dir parent dep newparent t0 t1
+  local P=dokdosta-m0-e1 dir parent dep newparent t0 t1
   dir=$(stage net e1)
   rec up.txt dcs "$P" "$dir" up -d --pull never --no-build
   parent=$(cid "$P" parent)

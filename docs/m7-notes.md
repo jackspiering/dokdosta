@@ -1,5 +1,7 @@
 # M7 notes
 
+> whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
+
 Decisions, deviations and open questions for milestone M7 (private registries for the pull rung, R5) of [PLAN.md](PLAN.md).
 The rules are in the plan as **v3.12**, approved by the maintainer on 21 Oct 2026. **Nothing was tagged or released.** The
 integration tests were not run locally (they need a Docker host the maintainer has not confirmed); they ran in CI, see

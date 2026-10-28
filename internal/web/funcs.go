@@ -10,7 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/jackspiering/whalenurse/internal/api"
+	"github.com/jackspiering/dokdosta/internal/api"
 )
 
 var funcs = template.FuncMap{

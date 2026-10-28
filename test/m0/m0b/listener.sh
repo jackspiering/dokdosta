@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Records `docker events` for whalenurse-m0-b-* projects into a file, across daemon restarts.
+# Records `docker events` for dokdosta-m0-b-* projects into a file, across daemon restarts.
 # Read-only: it only runs `docker version` and `docker events`. Started as a user systemd unit by
 # lib.sh (m0b_listener_install), so it survives the session that ran prepare.sh.
 #

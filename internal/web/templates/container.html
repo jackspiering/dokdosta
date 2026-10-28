@@ -8,7 +8,7 @@
 <div class="banner banner-bad" role="status">
   <strong>SUSPENDED ({{.Reason}}){{if not .Since.IsZero}} since {{timeTag .Since}}{{end}}.</strong>
   {{if $.Banner}}{{$.Banner}}{{else if .Cause}}{{message .Cause}}{{end}}
-  <br>Nothing more is tried until it recovers, is recreated or started by hand, or you run <code>docker exec whalenurse /whalenurse unsuspend {{shellWord $.Scope}}</code>.
+  <br>Nothing more is tried until it recovers, is recreated or started by hand, or you run <code>docker exec dokdosta /dokdosta unsuspend {{shellWord $.Scope}}</code>.
 </div>
 {{end}}
 {{with .Healer.Paused}}
@@ -46,7 +46,7 @@
     </dl>
     {{with .Decision}}<p class="muted">Last look ({{timeTag .At}}): {{.Class}}{{if .Skip}} ({{.Skip}}){{end}}{{if .Reason}}: {{.Reason}}{{end}}</p>{{end}}
     {{else}}
-    <p class="muted">whalenurse does not watch this container.{{with .Decision}} {{.Reason}}{{end}}</p>
+    <p class="muted">dokdosta does not watch this container.{{with .Decision}} {{.Reason}}{{end}}</p>
     {{end}}
   </article>
   <article class="card">
@@ -74,7 +74,7 @@
 {{if .Sidecars}}<p>Sidecars recreated with it: {{range .Sidecars}}<code>{{.}}</code> {{end}}</p>{{end}}
 {{if .RollbackTag}}
 <p>To roll back, run these two commands on the host, one after the other:</p>
-<p class="muted">The rollback does not last while <code>whalenurse.heal.pull</code> stays on: the next heal pulls the newer image again. To keep the old image, pin it in the compose file (a version tag or an <code>@sha256:</code> digest) or remove the label before you run the second command; it reads the same compose files.</p>
+<p class="muted">The rollback does not last while <code>dokdosta.heal.pull</code> stays on: the next heal pulls the newer image again. To keep the old image, pin it in the compose file (a version tag or an <code>@sha256:</code> digest) or remove the label before you run the second command; it reads the same compose files.</p>
 <div class="cmd"><pre class="rollback"><code>{{.RollbackTag}}</code></pre><button type="button" class="copy" data-copy aria-label="Copy the first command">Copy</button></div>
 <div class="cmd"><pre class="rollback"><code>{{.RollbackUp}}</code></pre><button type="button" class="copy" data-copy aria-label="Copy the second command">Copy</button></div>
 {{else if .OldImage}}
@@ -88,12 +88,12 @@
 {{template "incidenttable" $.Incidents}}
 
 <h2>Timeline</h2>
-<p class="muted">{{if $.Debug}}Including the <code>EventAttributed</code> debug events. <a href="{{containerPath .Key}}">Hide them</a>.{{else}}The <code>EventAttributed</code> events (a Docker event during a whalenurse action) are hidden. <a href="{{containerPath .Key}}?debug=1">Show them (debug)</a>.{{end}}</p>
+<p class="muted">{{if $.Debug}}Including the <code>EventAttributed</code> debug events. <a href="{{containerPath .Key}}">Hide them</a>.{{else}}The <code>EventAttributed</code> events (a Docker event during a dokdosta action) are hidden. <a href="{{containerPath .Key}}?debug=1">Show them (debug)</a>.{{end}}</p>
 {{template "eventtable" $.Timeline}}
 
 {{if .Labels}}
 <h2>Labels</h2>
-<p class="muted">Only <code>com.docker.compose.*</code> and <code>whalenurse.*</code> labels are shown.</p>
+<p class="muted">Only <code>com.docker.compose.*</code> and <code>dokdosta.*</code> labels are shown.</p>
 <div class="tablewrap"><table class="grid labels"><tbody>{{range $k, $v := .Labels}}{{if $v}}<tr><td data-label="Label"><code>{{$k}}</code></td><td data-label="Value"><code>{{$v}}</code></td></tr>{{end}}{{end}}</tbody></table></div>
 {{end}}
 {{end}}

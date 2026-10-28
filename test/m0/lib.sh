@@ -3,21 +3,21 @@
 #
 # SAFETY MODEL (fails closed). Every Docker command that changes anything goes
 # through one of the wrappers below, and each one refuses to act unless the
-# compose project of its target matches ^whalenurse-m0-[a-z0-9][a-z0-9_-]*$:
+# compose project of its target matches ^dokdosta-m0-[a-z0-9][a-z0-9_-]*$:
 #   dc        docker compose, always with -p <project>; refuses -p/--project-name/down
 #   m0_down   the ONLY place that runs `down -v`, and only on matching projects
 #   dk_ctr    stop/start/restart/kill/rm/exec on a container whose project label matches
-#   m0_tag    image tags, only under whalenurse-m0/
-#   m0_rmi    removes tags, only under whalenurse-m0/
+#   m0_tag    image tags, only under dokdosta-m0/
+#   m0_rmi    removes tags, only under dokdosta-m0/
 #   m0_pull   pulls only the base images in M0_BASE_IMAGES
 # Reads (inspect, ps, events, logs, image inspect, info) use plain `docker`.
 # shellcheck shell=bash
 
-M0_RE='^whalenurse-m0-[a-z0-9][a-z0-9_-]*$'
+M0_RE='^dokdosta-m0-[a-z0-9][a-z0-9_-]*$'
 # M0b scenario stacks (test/m0/m0b) must survive a daemon restart or a reboot between prepare and
 # collect, so the "down every leftover m0 project" sweep below leaves them alone. They are only
 # torn down by test/m0/m0b/teardown.sh.
-M0B_PREFIX_RE='^whalenurse-m0-b-'
+M0B_PREFIX_RE='^dokdosta-m0-b-'
 M0_BASE_IMAGES=(busybox:1.37 alpine:3.22 gcr.io/distroless/static:latest gcr.io/distroless/static:nonroot)
 M0_PROJECTS=()
 
@@ -101,13 +101,13 @@ dk_ctr() {
   if [[ "$verb" == exec ]]; then docker exec "$id" "$@"; else docker "$verb" "$@" "$id"; fi
 }
 
-m0_tag() { # m0_tag <source image> <whalenurse-m0/name:tag>
-  [[ "${2-}" == whalenurse-m0/* ]] || m0_die "m0_tag: destination '${2-}' is not under whalenurse-m0/"
+m0_tag() { # m0_tag <source image> <dokdosta-m0/name:tag>
+  [[ "${2-}" == dokdosta-m0/* ]] || m0_die "m0_tag: destination '${2-}' is not under dokdosta-m0/"
   docker tag "$1" "$2"
 }
 
 m0_rmi() { # removes tags only
-  [[ "${1-}" == whalenurse-m0/* ]] || m0_die "m0_rmi: '${1-}' is not under whalenurse-m0/"
+  [[ "${1-}" == dokdosta-m0/* ]] || m0_die "m0_rmi: '${1-}' is not under dokdosta-m0/"
   docker rmi "$1" >/dev/null 2>&1 || true
 }
 

@@ -1,22 +1,22 @@
-# whalenurse with everything on: restart AND recreate from the stack's own compose files, notifications, and the dashboard
+# dokdosta with everything on: restart AND recreate from the stack's own compose files, notifications, and the dashboard
 # on your tailnet through a Tailscale container (HTTPS with Tailscale Serve). Put this directory inside your stacks root
-# (for example /opt/stacks/whalenurse/) and copy .env.example to .env.
+# (for example /opt/stacks/dokdosta/) and copy .env.example to .env.
 #
 # THE TWO READ-ONLY MOUNTS THAT MAKE RECREATE WORK (docs/deployment.md):
-#   1. the host's compose plugin at /host/docker-compose. whalenurse uses it first, because it is the compose that made
+#   1. the host's compose plugin at /host/docker-compose. dokdosta uses it first, because it is the compose that made
 #      your containers; without it the bundled copy is used, and a container made by another compose release is then
 #      reported as "can't verify drift" instead of being recreated. `docker info` shows the plugin's path.
 #   2. the stacks root at the IDENTICAL path as on the host. Compose passes host paths to the daemon for relative bind
 #      mounts, so /opt/stacks must be /opt/stacks inside the container too. Also mount anything else compose reads from
 #      outside it: env_file paths with ../, include:/extends: files, file-based secrets and configs.
 #
-# THE DASHBOARD is never published on a port here. whalenurse and the tailscale container share the bridge network
+# THE DASHBOARD is never published on a port here. dokdosta and the tailscale container share the bridge network
 # "dashboard", and `tailscale serve` (tailscale/serve.json) forwards https://<TS_HOSTNAME>.<tailnet>.ts.net to
-# http://whalenurse:8484. Never use network_mode: service:tailscale: whalenurse would become a dependent of a container it may
+# http://dokdosta:8484. Never use network_mode: service:tailscale: dokdosta would become a dependent of a container it may
 # heal. The token is required here because the listener is not loopback-only (docs/security.md).
 services:
-  whalenurse:
-    image: ghcr.io/jackspiering/whalenurse:latest
+  dokdosta:
+    image: ghcr.io/jackspiering/dokdosta:latest
     restart: unless-stopped
     stop_grace_period: 60s # a stop lets a recreate in flight finish (up to 30 s) instead of killing it halfway
     read_only: true
@@ -29,26 +29,26 @@ services:
     volumes:
       # Root-equivalent access to the host: docs/security.md.
       - /var/run/docker.sock:/var/run/docker.sock
-      - whalenurse-data:/data
+      - dokdosta-data:/data
       - ${COMPOSE_PLUGIN:-/usr/libexec/docker/cli-plugins/docker-compose}:/host/docker-compose:ro
       - ${STACKS_DIR:?set STACKS_DIR in .env}:${STACKS_DIR}:ro # identical path on both sides
-      # Only for whalenurse.heal.pull=true containers whose image needs a login (docs/security.md#private-registries):
+      # Only for dokdosta.heal.pull=true containers whose image needs a login (docs/security.md#private-registries):
       # a directory with a config.json holding nothing but "auths" with a pull-only token, mode 0440, owner 65532.
       # - ./registry-auth:/registry-auth:ro
     environment:
-      WHALENURSE_HOST_ID: ${WHALENURSE_HOST_ID:-my-docker-host} # this host's name in keys and notifications; set it in .env
-      # WHALENURSE_REGISTRY_AUTH_DIR: /registry-auth
-      WHALENURSE_DRY_RUN: ${WHALENURSE_DRY_RUN:-true} # decisions are logged and notified, nothing is changed; set false in .env when they look right
-      WHALENURSE_HTTP_ADDR: ":8484"
-      WHALENURSE_HTTP_TOKEN: ${WHALENURSE_HTTP_TOKEN:?set WHALENURSE_HTTP_TOKEN in .env (openssl rand -hex 24)}
+      DOKDOSTA_HOST_ID: ${DOKDOSTA_HOST_ID:-my-docker-host} # this host's name in keys and notifications; set it in .env
+      # DOKDOSTA_REGISTRY_AUTH_DIR: /registry-auth
+      DOKDOSTA_DRY_RUN: ${DOKDOSTA_DRY_RUN:-true} # decisions are logged and notified, nothing is changed; set false in .env when they look right
+      DOKDOSTA_HTTP_ADDR: ":8484"
+      DOKDOSTA_HTTP_TOKEN: ${DOKDOSTA_HTTP_TOKEN:?set DOKDOSTA_HTTP_TOKEN in .env (openssl rand -hex 24)}
       # tailscale serve is a reverse proxy: trust the "dashboard" network so the wrong-token limit counts per tailnet client
       # (Serve sets X-Forwarded-For to the client's tailnet address) instead of one budget for everyone (docs/security.md).
-      WHALENURSE_HTTP_TRUSTED_PROXIES: ${DASHBOARD_SUBNET:-10.84.248.0/29}
+      DOKDOSTA_HTTP_TRUSTED_PROXIES: ${DASHBOARD_SUBNET:-10.84.248.0/29}
       # Notification URLs and the uptime ping are secrets: they come from .env, which stays out of git. Check them with
-      #   docker compose exec whalenurse /whalenurse notify test
-      WHALENURSE_NOTIFY_URLS: ${WHALENURSE_NOTIFY_URLS:-}
-      WHALENURSE_HEARTBEAT_URL: ${WHALENURSE_HEARTBEAT_URL:-}
-      # WHALENURSE_DRIFT_GUARD: strict # strict (default) blocks a recreate that would deploy an edit or a moved tag; warn recreates and says so
+      #   docker compose exec dokdosta /dokdosta notify test
+      DOKDOSTA_NOTIFY_URLS: ${DOKDOSTA_NOTIFY_URLS:-}
+      DOKDOSTA_HEARTBEAT_URL: ${DOKDOSTA_HEARTBEAT_URL:-}
+      # DOKDOSTA_DRIFT_GUARD: strict # strict (default) blocks a recreate that would deploy an edit or a moved tag; warn recreates and says so
 
   tailscale:
     image: tailscale/tailscale:v1.104.2
@@ -56,7 +56,7 @@ services:
     networks: [dashboard]
     environment:
       TS_AUTHKEY: ${TS_AUTHKEY:?set TS_AUTHKEY in .env}
-      TS_HOSTNAME: whalenurse
+      TS_HOSTNAME: dokdosta
       TS_STATE_DIR: /var/lib/tailscale
       TS_SERVE_CONFIG: /config/serve.json
     volumes:
@@ -67,8 +67,8 @@ networks:
   dashboard: # a normal bridge network, shared by these two services only
     ipam:
       config:
-        - subnet: ${DASHBOARD_SUBNET:-10.84.248.0/29} # fixed, so whalenurse can trust it; outside Docker's default pools
+        - subnet: ${DASHBOARD_SUBNET:-10.84.248.0/29} # fixed, so dokdosta can trust it; outside Docker's default pools
 
 volumes:
-  whalenurse-data: {}
+  dokdosta-data: {}
   tailscale-state: {}

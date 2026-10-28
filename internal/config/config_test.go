@@ -8,7 +8,7 @@ import (
 )
 
 func TestDefaultsMatchThePlan(t *testing.T) {
-	g, warns, err := FromEnv([]string{"PATH=/bin", "WHALENURSE_HOST_ID=box"})
+	g, warns, err := FromEnv([]string{"PATH=/bin", "DOKDOSTA_HOST_ID=box"})
 	if err != nil || len(warns) != 0 {
 		t.Fatalf("err=%v warns=%v", err, warns)
 	}
@@ -23,9 +23,9 @@ func TestDefaultsMatchThePlan(t *testing.T) {
 
 func TestEnvOverridesAndErrors(t *testing.T) {
 	g, warns, err := FromEnv([]string{
-		"WHALENURSE_MODE=ALL", "WHALENURSE_DRY_RUN=true", "WHALENURSE_GRACE=5s", "WHALENURSE_RATE_LIMIT=3",
-		"WHALENURSE_LOG_LEVEL=debug", "WHALENURSE_HTTP_ADDR=:8484", "WHALENURSE_STARTUP_SETTLE=0s",
-		"WHALENURSE_FLAP_LIMIT=5", "WHALENURSE_FLAP_WINDOW=2d", "WHALENURSE_DATA_DIR=/tmp/x", "WHALENURSE_COMPOSE_BIN=/x", "WHALENURSE_DRIFT_GUARD=WARN", "WHALENURSE_NOTIFY_URLS=ntfy://x", "WHALENURSE_TYPO=1",
+		"DOKDOSTA_MODE=ALL", "DOKDOSTA_DRY_RUN=true", "DOKDOSTA_GRACE=5s", "DOKDOSTA_RATE_LIMIT=3",
+		"DOKDOSTA_LOG_LEVEL=debug", "DOKDOSTA_HTTP_ADDR=:8484", "DOKDOSTA_STARTUP_SETTLE=0s",
+		"DOKDOSTA_FLAP_LIMIT=5", "DOKDOSTA_FLAP_WINDOW=2d", "DOKDOSTA_DATA_DIR=/tmp/x", "DOKDOSTA_COMPOSE_BIN=/x", "DOKDOSTA_DRIFT_GUARD=WARN", "DOKDOSTA_NOTIFY_URLS=ntfy://x", "DOKDOSTA_TYPO=1",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestEnvOverridesAndErrors(t *testing.T) {
 	if len(g.NotifyURLs) != 1 || g.NotifyURLs[0] != "ntfy://x" {
 		t.Errorf("notify urls: %v", g.NotifyURLs)
 	}
-	for _, want := range []string{"WHALENURSE_TYPO is not a known variable"} {
+	for _, want := range []string{"DOKDOSTA_TYPO is not a known variable"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("missing warning %q in %v", want, warns)
 		}
@@ -49,7 +49,7 @@ func TestEnvOverridesAndErrors(t *testing.T) {
 		t.Errorf("a warning leaked a variable value: %v", warns)
 	}
 
-	for _, bad := range []string{"WHALENURSE_MODE=nope", "WHALENURSE_GRACE=soon", "WHALENURSE_POLL_INTERVAL=0s", "WHALENURSE_RATE_LIMIT=0", "WHALENURSE_DRY_RUN=maybe", "WHALENURSE_LOG_LEVEL=loud", "WHALENURSE_FLAP_LIMIT=0", "WHALENURSE_RECOVERY_PERIOD=0s", "WHALENURSE_DRIFT_GUARD=lenient"} {
+	for _, bad := range []string{"DOKDOSTA_MODE=nope", "DOKDOSTA_GRACE=soon", "DOKDOSTA_POLL_INTERVAL=0s", "DOKDOSTA_RATE_LIMIT=0", "DOKDOSTA_DRY_RUN=maybe", "DOKDOSTA_LOG_LEVEL=loud", "DOKDOSTA_FLAP_LIMIT=0", "DOKDOSTA_RECOVERY_PERIOD=0s", "DOKDOSTA_DRIFT_GUARD=lenient"} {
 		if _, _, err := FromEnv([]string{bad}); err == nil {
 			t.Errorf("%s should be rejected", bad)
 		}
@@ -177,8 +177,8 @@ func TestSplitURLs(t *testing.T) {
 }
 
 func TestNotifyVariables(t *testing.T) {
-	g, warns, err := FromEnv([]string{"WHALENURSE_NOTIFY_URLS=ntfy://tok-secret@h/t", "WHALENURSE_HEARTBEAT_URL=https://hc-ping.com/uuid-secret",
-		"WHALENURSE_NOTIFY_TIMEOUT=3s", "WHALENURSE_NOTIFY_RATE_LIMIT=7", "WHALENURSE_HEARTBEAT_INTERVAL=90s"})
+	g, warns, err := FromEnv([]string{"DOKDOSTA_NOTIFY_URLS=ntfy://tok-secret@h/t", "DOKDOSTA_HEARTBEAT_URL=https://hc-ping.com/uuid-secret",
+		"DOKDOSTA_NOTIFY_TIMEOUT=3s", "DOKDOSTA_NOTIFY_RATE_LIMIT=7", "DOKDOSTA_HEARTBEAT_INTERVAL=90s"})
 	if err != nil || len(warns) != 0 {
 		t.Fatalf("%v %v", err, warns)
 	}
@@ -189,8 +189,8 @@ func TestNotifyVariables(t *testing.T) {
 	if d.NotifyTimeout != 10*time.Second || d.NotifyRateLimit != 20 || d.PingInterval != 5*time.Minute || len(d.NotifyURLs) != 0 || d.PingURL != "" {
 		t.Fatalf("defaults: %+v", d)
 	}
-	for _, bad := range []string{"WHALENURSE_NOTIFY_TIMEOUT=0s", "WHALENURSE_NOTIFY_RATE_LIMIT=0", "WHALENURSE_HEARTBEAT_INTERVAL=soon"} {
-		if _, _, err := FromEnv([]string{bad, "WHALENURSE_NOTIFY_URLS=ntfy://tok-secret@h/t"}); err == nil {
+	for _, bad := range []string{"DOKDOSTA_NOTIFY_TIMEOUT=0s", "DOKDOSTA_NOTIFY_RATE_LIMIT=0", "DOKDOSTA_HEARTBEAT_INTERVAL=soon"} {
+		if _, _, err := FromEnv([]string{bad, "DOKDOSTA_NOTIFY_URLS=ntfy://tok-secret@h/t"}); err == nil {
 			t.Errorf("%s should be rejected", bad)
 		} else if strings.Contains(err.Error(), "tok-secret") {
 			t.Errorf("an error quotes a notification URL: %v", err)
@@ -198,7 +198,7 @@ func TestNotifyVariables(t *testing.T) {
 	}
 }
 
-// Rung 3 requires rung 2 (plan v3.8): heal.pull=true without recreate in whalenurse.actions gives one warning and the pull
+// Rung 3 requires rung 2 (plan v3.8): heal.pull=true without recreate in dokdosta.actions gives one warning and the pull
 // rung stays off.
 func TestHealPullNeedsRecreateInTheLadder(t *testing.T) {
 	for _, tc := range []struct {
@@ -229,7 +229,7 @@ func TestHealPullNeedsRecreateInTheLadder(t *testing.T) {
 }
 
 func TestHTTPTokenAndMetrics(t *testing.T) {
-	g, warns, err := FromEnv([]string{"WHALENURSE_HTTP_TOKEN=tok-secret-value", "WHALENURSE_METRICS=true", "WHALENURSE_HTTP_ADDR=127.0.0.1:8484"})
+	g, warns, err := FromEnv([]string{"DOKDOSTA_HTTP_TOKEN=tok-secret-value", "DOKDOSTA_METRICS=true", "DOKDOSTA_HTTP_ADDR=127.0.0.1:8484"})
 	if err != nil || g.HTTPToken != "tok-secret-value" || !g.Metrics || g.HTTPAddr != "127.0.0.1:8484" {
 		t.Fatalf("%+v %v", g, err)
 	}
@@ -241,14 +241,14 @@ func TestHTTPTokenAndMetrics(t *testing.T) {
 		t.Fatalf("off by default: %+v", g)
 	}
 	// An invalid value is an error that does not quote a token; the token itself is never in an error.
-	_, _, err = FromEnv([]string{"WHALENURSE_HTTP_TOKEN=tok-secret-value", "WHALENURSE_METRICS=maybe"})
+	_, _, err = FromEnv([]string{"DOKDOSTA_HTTP_TOKEN=tok-secret-value", "DOKDOSTA_METRICS=maybe"})
 	if err == nil || strings.Contains(err.Error(), "tok-secret-value") {
 		t.Fatalf("%v", err)
 	}
 }
 
 func TestHTTPAllowedHosts(t *testing.T) {
-	g, warns, err := FromEnv([]string{"WHALENURSE_HTTP_ALLOWED_HOSTS=nas.example.org, 192.168.1.5\tmedia.lan"})
+	g, warns, err := FromEnv([]string{"DOKDOSTA_HTTP_ALLOWED_HOSTS=nas.example.org, 192.168.1.5\tmedia.lan"})
 	if err != nil || len(warns) != 0 || strings.Join(g.HTTPAllowedHosts, "|") != "nas.example.org|192.168.1.5|media.lan" {
 		t.Fatalf("%v %v %v", g.HTTPAllowedHosts, warns, err)
 	}
@@ -258,7 +258,7 @@ func TestHTTPAllowedHosts(t *testing.T) {
 }
 
 func TestHTTPTrustedProxies(t *testing.T) {
-	g, warns, err := FromEnv([]string{"WHALENURSE_HTTP_TRUSTED_PROXIES=172.18.0.0/16, 10.0.0.5\tfd00::/8 192.168.1.77/24 ::ffff:10.1.2.0/120"})
+	g, warns, err := FromEnv([]string{"DOKDOSTA_HTTP_TRUSTED_PROXIES=172.18.0.0/16, 10.0.0.5\tfd00::/8 192.168.1.77/24 ::ffff:10.1.2.0/120"})
 	if err != nil || len(warns) != 0 {
 		t.Fatalf("%v %v", warns, err)
 	}
@@ -274,23 +274,23 @@ func TestHTTPTrustedProxies(t *testing.T) {
 		t.Fatal("empty by default")
 	}
 	for _, bad := range []string{"nginx", "10.0.0.0/33", "0.0.0.0/0", "::/0", "10.0.0.0/8 proxy.example", "::ffff:0.0.0.0/95"} {
-		if _, _, err := FromEnv([]string{"WHALENURSE_HTTP_TRUSTED_PROXIES=" + bad}); err == nil {
+		if _, _, err := FromEnv([]string{"DOKDOSTA_HTTP_TRUSTED_PROXIES=" + bad}); err == nil {
 			t.Errorf("%q was accepted", bad)
 		}
 	}
 	// Whoever sets this also sets a token; an error about the list never mentions the token.
-	_, _, err = FromEnv([]string{"WHALENURSE_HTTP_TOKEN=tok-secret-value", "WHALENURSE_HTTP_TRUSTED_PROXIES=0.0.0.0/0"})
+	_, _, err = FromEnv([]string{"DOKDOSTA_HTTP_TOKEN=tok-secret-value", "DOKDOSTA_HTTP_TRUSTED_PROXIES=0.0.0.0/0"})
 	if err == nil || strings.Contains(err.Error(), "tok-secret-value") || !strings.Contains(err.Error(), "trusts every address") {
 		t.Fatalf("%v", err)
 	}
 }
 
 func TestRegistryAuthDirIsRead(t *testing.T) {
-	g, warns, err := FromEnv([]string{"WHALENURSE_REGISTRY_AUTH_DIR=/registry-auth"})
+	g, warns, err := FromEnv([]string{"DOKDOSTA_REGISTRY_AUTH_DIR=/registry-auth"})
 	if err != nil || len(warns) != 0 || g.RegistryAuthDir != "/registry-auth" {
 		t.Fatalf("%q %v %v", g.RegistryAuthDir, warns, err)
 	}
-	g, _, err = FromEnv([]string{"WHALENURSE_REGISTRY_AUTH_DIR=  "})
+	g, _, err = FromEnv([]string{"DOKDOSTA_REGISTRY_AUTH_DIR=  "})
 	if err != nil || g.RegistryAuthDir != "" {
 		t.Fatalf("%q %v", g.RegistryAuthDir, err)
 	}
@@ -303,23 +303,58 @@ func TestParseDurationAcceptsTheLargestWholeDays(t *testing.T) {
 }
 
 func TestHostIDWithASlashIsRefused(t *testing.T) {
-	_, _, err := FromEnv([]string{"WHALENURSE_HOST_ID=eu/box"})
-	if err == nil || !strings.Contains(err.Error(), "WHALENURSE_HOST_ID") {
+	_, _, err := FromEnv([]string{"DOKDOSTA_HOST_ID=eu/box"})
+	if err == nil || !strings.Contains(err.Error(), "DOKDOSTA_HOST_ID") {
 		t.Fatalf("a slash in the host id should be an error, got %v", err)
 	}
-	if g, _, err := FromEnv([]string{"WHALENURSE_HOST_ID=eu-box.1"}); err != nil || g.HostID != "eu-box.1" {
+	if g, _, err := FromEnv([]string{"DOKDOSTA_HOST_ID=eu-box.1"}); err != nil || g.HostID != "eu-box.1" {
 		t.Fatalf("%+v %v", g, err)
 	}
 }
 
 func TestPlaceholderTokenOfTheExamplesIsRefused(t *testing.T) {
 	for _, v := range []string{"replace-with-a-long-random-token", "replace-with-openssl-rand-hex-24", "Replace-With-Mine"} {
-		_, _, err := FromEnv([]string{"WHALENURSE_HTTP_TOKEN=" + v})
-		if err == nil || !strings.Contains(err.Error(), "WHALENURSE_HTTP_TOKEN") || strings.Contains(err.Error(), v) {
+		_, _, err := FromEnv([]string{"DOKDOSTA_HTTP_TOKEN=" + v})
+		if err == nil || !strings.Contains(err.Error(), "DOKDOSTA_HTTP_TOKEN") || strings.Contains(err.Error(), v) {
 			t.Errorf("%q: want an error that names the variable and not the value, got %v", v, err)
 		}
 	}
-	if g, _, err := FromEnv([]string{"WHALENURSE_HTTP_TOKEN=0123456789abcdef0123456789abcdef"}); err != nil || g.HTTPToken == "" {
+	if g, _, err := FromEnv([]string{"DOKDOSTA_HTTP_TOKEN=0123456789abcdef0123456789abcdef"}); err != nil || g.HTTPToken == "" {
 		t.Fatalf("%v", err)
+	}
+}
+
+// Plan v3.15 item 4: a variable from before the rename is a startup error that names it and never its value.
+func TestVariablesFromBeforeTheRenameAreRefusedByNameOnly(t *testing.T) {
+	_, _, err := FromEnv([]string{"WHALENURSE_NOTIFY_URLS=ntfy://secret-topic", "DOKDOSTA_MODE=all", "WHALENURSE_HTTP_TOKEN=s3cr3t-token-value", "WHALENURSE_EMPTY="})
+	if err == nil {
+		t.Fatal("WHALENURSE_* accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "WHALENURSE_EMPTY, WHALENURSE_HTTP_TOKEN, WHALENURSE_NOTIFY_URLS set") || !strings.Contains(msg, "renamed dokdosta") {
+		t.Errorf("error does not name the variables, sorted: %s", msg)
+	}
+	for _, v := range []string{"secret-topic", "s3cr3t-token-value", "ntfy"} {
+		if strings.Contains(msg, v) {
+			t.Errorf("error quotes a value (%q): %s", v, msg)
+		}
+	}
+	if _, _, err := FromEnv([]string{"DOKDOSTA_MODE=all", "XWHALENURSE_A=1", "whalenurse_a=1"}); err != nil {
+		t.Errorf("only the WHALENURSE_ prefix is refused: %v", err)
+	}
+}
+
+// Plan v3.15 item 5: a label from before the rename leaves the container alone, whatever else it carries, and the
+// warning names the keys, never a value.
+func TestLabelsFromBeforeTheRenameLeaveTheContainerAlone(t *testing.T) {
+	c, warns := ParseLabels(map[string]string{"whalenurse.heal.pull": "secret-value", "whalenurse.enable": "true", LabelEnable: "true"}, ModeAll)
+	if c.OptedIn || !c.Disabled || strings.Join(c.Legacy, ",") != "whalenurse.enable,whalenurse.heal.pull" {
+		t.Fatalf("%+v", c)
+	}
+	if len(warns) != 1 || !strings.Contains(warns[0], "(whalenurse.enable, whalenurse.heal.pull)") || strings.Contains(warns[0], "secret-value") {
+		t.Fatalf("%q", warns)
+	}
+	if c, _ := ParseLabels(map[string]string{LabelEnable: "true", "xwhalenurse.enable": "false"}, ModeLabel); !c.OptedIn || c.Legacy != nil {
+		t.Fatalf("only the whalenurse. prefix counts: %+v", c)
 	}
 }

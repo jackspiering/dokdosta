@@ -6,7 +6,7 @@ import (
 )
 
 // Subscribers that say something once per incident (internal/notify) key on the incident attribute, because events
-// carry no incident id of their own and the engine's incident survives a restart of whalenurse.
+// carry no incident id of their own and the engine's incident survives a restart of dokdosta.
 func TestEventsOfAnIncidentCarryItsIdentity(t *testing.T) {
 	e, clk, rec := newEngine(t, 0)
 	opened := clk.Now()

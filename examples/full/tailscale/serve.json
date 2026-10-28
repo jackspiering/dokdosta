@@ -2,7 +2,7 @@
   "TCP": { "443": { "HTTPS": true } },
   "Web": {
     "${TS_CERT_DOMAIN}:443": {
-      "Handlers": { "/": { "Proxy": "http://whalenurse:8484" } }
+      "Handlers": { "/": { "Proxy": "http://dokdosta:8484" } }
     }
   },
   "AllowFunnel": { "${TS_CERT_DOMAIN}:443": false }

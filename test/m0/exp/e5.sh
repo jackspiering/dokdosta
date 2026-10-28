@@ -5,9 +5,9 @@
 # shellcheck shell=bash
 exp_e5() {
   begin E5 "compose --dry-run up as a recreate oracle"
-  local P=whalenurse-m0-e5 dir before after svc c
+  local P=dokdosta-m0-e5 dir before after svc c
   dir=$(stage e5 e5)
-  m0_tag busybox:1.37 whalenurse-m0/e5img:latest
+  m0_tag busybox:1.37 dokdosta-m0/e5img:latest
   rec up.txt dcs "$P" "$dir" up -d --pull never --no-build
   wait_for 30 is_healthy "$(cid "$P" parent)" || say "WARN parent never became healthy"
 
@@ -40,27 +40,27 @@ exp_e5() {
   dry C dep
   say "--- C2. parent itself, unchanged after its recreate"
   dry C2 parent
-  say "--- D. re-tagged image: whalenurse-m0/e5img:latest moved from busybox to alpine"
+  say "--- D. re-tagged image: dokdosta-m0/e5img:latest moved from busybox to alpine"
   c=$(cid "$P" tagged)
   local arch lbl
   arch=$(docker version --format '{{.Server.Arch}}')
   lbl=$(ins "$c" '.[0].Config.Labels["com.docker.compose.image"]')
   imgstate() { # what each candidate comparator says about the ref right now
-    say "  ref .Id (index digest on containerd) = $(docker image inspect --format '{{.Id}}' whalenurse-m0/e5img:latest | cut -c1-26)"
-    say "  ref --platform linux/$arch .Descriptor.digest = $(docker image inspect --platform "linux/$arch" --format '{{.Descriptor.digest}}' whalenurse-m0/e5img:latest | cut -c1-26)"
+    say "  ref .Id (index digest on containerd) = $(docker image inspect --format '{{.Id}}' dokdosta-m0/e5img:latest | cut -c1-26)"
+    say "  ref --platform linux/$arch .Descriptor.digest = $(docker image inspect --platform "linux/$arch" --format '{{.Descriptor.digest}}' dokdosta-m0/e5img:latest | cut -c1-26)"
   }
   say "container: label com.docker.compose.image=${lbl:0:26}  .Image=$(ins "$c" '.[0].Image' | cut -c1-26)"
   say "before retag:"
   imgstate
-  m0_tag alpine:3.22 whalenurse-m0/e5img:latest
+  m0_tag alpine:3.22 dokdosta-m0/e5img:latest
   say "after retag:"
   imgstate
-  say "naive check (label == ref .Id): $([[ "$lbl" == "$(docker image inspect --format '{{.Id}}' whalenurse-m0/e5img:latest)" ]] && echo equal || echo 'differs (also differs BEFORE the retag, so useless)')"
-  say "platform check (label == ref --platform .Descriptor.digest): $([[ "$lbl" == "$(docker image inspect --platform "linux/$arch" --format '{{.Descriptor.digest}}' whalenurse-m0/e5img:latest)" ]] && echo 'no drift' || echo 'DRIFT detected')"
+  say "naive check (label == ref .Id): $([[ "$lbl" == "$(docker image inspect --format '{{.Id}}' dokdosta-m0/e5img:latest)" ]] && echo equal || echo 'differs (also differs BEFORE the retag, so useless)')"
+  say "platform check (label == ref --platform .Descriptor.digest): $([[ "$lbl" == "$(docker image inspect --platform "linux/$arch" --format '{{.Descriptor.digest}}' dokdosta-m0/e5img:latest)" ]] && echo 'no drift' || echo 'DRIFT detected')"
   dry D tagged
   say "--- F. stopped container, unchanged config"
   rec stop-plain.txt dk_ctr stop "$(cid "$P" plain)"
   dry F plain
   m0_down "$P"
-  m0_rmi whalenurse-m0/e5img:latest
+  m0_rmi dokdosta-m0/e5img:latest
 }

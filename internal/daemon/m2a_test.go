@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/store"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/store"
 )
 
 func modeAll(c *config.Global) { c.Mode = config.ModeAll }
@@ -124,7 +124,7 @@ func openStore(t *testing.T) *store.Store {
 // withStore wires a real SQLite store and a boot id, loading whatever the store holds.
 func (h *harness) withStore(st *store.Store, bootID string) func(*Options) {
 	return func(o *Options) {
-		// As the binary does (openStore in cmd/whalenurse): re-key to the host ID, then load.
+		// As the binary does (openStore in cmd/dokdosta): re-key to the host ID, then load.
 		if _, err := st.Rekey(h.cfg.HostID, store.RekeyMeta{Keyed: MetaKeyed, WithKey: MetaWithKey}); err != nil {
 			h.t.Fatal(err)
 		}
@@ -247,7 +247,7 @@ func TestComposeStopBurstKeepsItsMarkersAndTheContainersStayStopped(t *testing.T
 	})
 }
 
-// Mechanism b: the boot id is kept with the markers. A reboot stops whalenurse in the same second as the
+// Mechanism b: the boot id is kept with the markers. A reboot stops dokdosta in the same second as the
 // containers, so a marker can exist with no matching event in the next run. With the previous run's last_seen known (plan
 // v3.13 item 16, DQ10) only the markers set in the 30 s before it can be shutdown kills: older ones are deliberate stops from
 // before the reboot and are kept.
@@ -314,6 +314,7 @@ func suspendedStack(t *testing.T, fixture string) (*harness, map[string]docker.C
 	h := newHarness(t, func(c *config.Global) { modeAll(c); settled(c) }, nil)
 	evs := loadEvents(t, fixture)
 	ctrs := h.containersFrom(evs)
+	// The fixtures were captured before the rename (plan v3.15), so their project keeps the old name.
 	key := "h/whalenurse-m0-b-boot/a-parent/1"
 	if _, ok := ctrs[key]; !ok {
 		t.Fatalf("no %s in %v", key, sortedKeys(ctrs))
@@ -382,12 +383,12 @@ func TestStartsInsideTheRestoreWindowDoNotClearSuspended(t *testing.T) {
 	}
 }
 
-// In container mode a daemon restart kills whalenurse too. Its stream ends by its own SIGTERM, so no stream loss is
+// In container mode a daemon restart kills dokdosta too. Its stream ends by its own SIGTERM, so no stream loss is
 // ever seen, and the boot id is unchanged. The shutdown-kill markers it saw before dying were persisted. The
 // heartbeat (plan §3.3 mechanism d, v3.5) treats the previous run's end as a stream loss: the markers set in the
 // 30 s before last_seen are discarded, so the restore's `start` follows no marker and SUSPENDED survives.
 // (This was the "known gap" of M2a, pinned by a test that asserted the opposite.)
-func TestWhalenurseKilledByTheDaemonShutdownItselfStaysSuspended(t *testing.T) {
+func TestDokdostaKilledByTheDaemonShutdownItselfStaysSuspended(t *testing.T) {
 	for _, tc := range []struct{ shutdown, boot string }{
 		{"m0b-daemon-restart-shutdown", "m0b-daemon-restart-boot"},
 		{"m0b-reboot-shutdown", "m0b-reboot-boot"},
@@ -404,18 +405,18 @@ func TestWhalenurseKilledByTheDaemonShutdownItselfStaysSuspended(t *testing.T) {
 			if !h.d.Engine().Suspended(key) {
 				t.Fatalf("setup: %v", h.rec.Types())
 			}
-			h.feed(evs) // the shutdown kills reach whalenurse before it is killed itself; markers are persisted
+			h.feed(evs) // the shutdown kills reach dokdosta before it is killed itself; markers are persisted
 			if h.markers(ctrs) == 0 {
 				t.Fatal("setup: the kills should have set markers")
 			}
-			// whalenurse exits (SIGTERM from the daemon): the context just ends, no StreamLost. A clean stop writes last_seen.
+			// dokdosta exits (SIGTERM from the daemon): the context just ends, no StreamLost. A clean stop writes last_seen.
 			h.d.heartbeat(true)
 			h.stopAll(ctrs, 137)
-			h.clk.Advance(30 * time.Second) // the daemon restarts; the new daemon restores whalenurse among the others
+			h.clk.Advance(30 * time.Second) // the daemon restarts; the new daemon restores dokdosta among the others
 
 			h.start(h.withStore(st, "boot-A")) // same boot id
 			if got := h.markers(ctrs); got != 0 {
-				t.Fatalf("%d shutdown-kill markers survived the restart of whalenurse", got)
+				t.Fatalf("%d shutdown-kill markers survived the restart of dokdosta", got)
 			}
 			h.startAll(ctrs)
 			h.set(ctrs[key].ID, func(c *docker.Container) { c.Health = "unhealthy" })
@@ -446,7 +447,7 @@ func TestALongGapSinceLastSeenOpensARestoreWindow(t *testing.T) {
 	}
 
 	h.d.heartbeat(true)
-	h.clk.Advance(5 * time.Minute) // whalenurse was down for a while; the daemon may have been restoring
+	h.clk.Advance(5 * time.Minute) // dokdosta was down for a while; the daemon may have been restoring
 	h.start(h.withStore(st, "boot-A"))
 	if want := h.clk.Now().Add(2 * time.Minute); !h.d.Engine().RestoreWindowUntil().Equal(want) {
 		t.Fatalf("restore window until %v, want %v", h.d.Engine().RestoreWindowUntil(), want)
@@ -575,7 +576,7 @@ func TestCrashLoopIsHealedAtTheSameTimeWhateverThePollIntervalAndGrace(t *testin
 }
 
 // A poll has to read RestartCount of containers that look healthy, or a loop whose die events were missed
-// (the events stream was down, or whalenurse was) is invisible: the container list carries no count.
+// (the events stream was down, or dokdosta was) is invisible: the container list carries no count.
 func TestPollSeesALoopThatShowedNoEvents(t *testing.T) {
 	h := newHarness(t, nil, nil)
 	a := h.running(hexID("a1"), "p", "loop")
@@ -645,7 +646,7 @@ func TestUnsuspendReevaluates(t *testing.T) {
 
 // ---- persistence --------------------------------------------------------------------------------------
 
-func TestStateSurvivesARestartOfWhalenurse(t *testing.T) {
+func TestStateSurvivesARestartOfDokdosta(t *testing.T) {
 	st := openStore(t)
 	h := newHarnessOpts(t, nil, nil, nil)
 	h.start(h.withStore(st, "boot-A"))
@@ -659,7 +660,7 @@ func TestStateSurvivesARestartOfWhalenurse(t *testing.T) {
 	}
 	h.d.Engine().Pause("p/other", 3*time.Hour)
 
-	h.start(h.withStore(st, "boot-A")) // whalenurse restarts
+	h.start(h.withStore(st, "boot-A")) // dokdosta restarts
 	if !h.d.Engine().Suspended("h/p/web/1") {
 		t.Fatal("SUSPENDED was lost")
 	}
@@ -687,10 +688,10 @@ func TestStateSurvivesARestartOfWhalenurse(t *testing.T) {
 	}
 }
 
-// In a container the default host ID is the hostname, which is the container's ID: an upgrade recreates whalenurse and
+// In a container the default host ID is the hostname, which is the container's ID: an upgrade recreates dokdosta and
 // changes it. The persisted state is re-keyed to the new host ID at startup (plan v3.13 item 12), so a SUSPENDED container
 // stays SUSPENDED and its ladder does not start over.
-func TestStateSurvivesARecreateOfWhalenurse(t *testing.T) {
+func TestStateSurvivesARecreateOfDokdosta(t *testing.T) {
 	st := openStore(t)
 	h := newHarnessOpts(t, nil, nil, nil)
 	h.start(h.withStore(st, "boot-A"))
@@ -702,7 +703,7 @@ func TestStateSurvivesARecreateOfWhalenurse(t *testing.T) {
 		t.Fatalf("setup: %v", h.rec.Types())
 	}
 
-	h.cfg.HostID = "0123456789ab" // whalenurse recreated: a new container ID, so a new hostname
+	h.cfg.HostID = "0123456789ab" // dokdosta recreated: a new container ID, so a new hostname
 	h.start(h.withStore(st, "boot-A"))
 	if !h.d.Engine().Suspended("0123456789ab/p/web/1") {
 		t.Fatalf("SUSPENDED was lost with the host ID: %v", h.d.Engine().Status().Keys)
@@ -855,13 +856,13 @@ func TestPoliciesDockerRestoresAreLeftToItAndHealExitedAlwaysStartsThem(t *testi
 	h.wantCalls("start " + hexID("d1")) // only heal-exited=always; the rest is Docker's restore
 }
 
-// The other way in: whalenurse itself was stopped by the shutdown (no stream loss, same boot id). The window
+// The other way in: dokdosta itself was stopped by the shutdown (no stream loss, same boot id). The window
 // starts 30 s before last_seen and ends at the restore; the app exited 1 inside it.
-func TestHostStoppedWindowFromLastSeenAfterWhalenurseWasKilledToo(t *testing.T) {
+func TestHostStoppedWindowFromLastSeenAfterDokdostaWasKilledToo(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		finished time.Duration // relative to last_seen
-		want     bool          // started by whalenurse?
+		want     bool          // started by dokdosta?
 	}{
 		{"exited 4 s before last_seen (the shutdown)", -4 * time.Second, false},
 		{"exited 25 s before last_seen", -25 * time.Second, false},
@@ -879,7 +880,7 @@ func TestHostStoppedWindowFromLastSeenAfterWhalenurseWasKilledToo(t *testing.T) 
 			h.set(web.ID, func(c *docker.Container) {
 				c.Status, c.Running, c.ExitCode, c.RestartPolicy, c.FinishedAt = "exited", false, 1, "no", lastSeen.Add(tc.finished)
 			})
-			h.clk.Advance(30 * time.Second) // the daemon restarts; whalenurse is restored with the rest
+			h.clk.Advance(30 * time.Second) // the daemon restarts; dokdosta is restored with the rest
 			h.start(h.withStore(st, "boot-A"))
 			h.advance(5 * time.Minute)
 			if tc.want {
@@ -900,7 +901,7 @@ func TestHostStoppedWindowIsCappedWithinOneBootAndOpenAfterAReboot(t *testing.T)
 		boot string
 		want bool
 	}{
-		{"same boot, whalenurse down for hours: the crash in the middle is not a shutdown", "boot-A", true},
+		{"same boot, dokdosta down for hours: the crash in the middle is not a shutdown", "boot-A", true},
 		{"after a reboot the whole downtime is the shutdown", "boot-B", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -986,7 +987,7 @@ func TestAnUnreadableBootIDIsNotOverwritten(t *testing.T) {
 
 // Plan v3.13 item 17: an on-failure parent the host stopped that Docker will not restore (exit 0, or its retries spent) is down
 // by policy like restart: "no": one notification naming its network_mode dependents, nothing started. With retries left it is
-// Docker's to restore, and whalenurse says nothing.
+// Docker's to restore, and dokdosta says nothing.
 func TestAnOnFailureParentDockerWillNotRestoreStaysDownWithItsDependents(t *testing.T) {
 	for _, tc := range []struct {
 		name              string
@@ -1078,7 +1079,7 @@ func suspendedSnapshot(k string) engine.Snapshot {
 		Opened: time.Unix(0, 0), Class: "unhealthy", Spent: true, SpentReason: engine.ReasonLadder, Suspended: true}}}}
 }
 
-// A key restored from the store whose container was removed while whalenurse was down is never listed again: the sweep
+// A key restored from the store whose container was removed while dokdosta was down is never listed again: the sweep
 // forgets it, and its open incident closes as gone. (An empty list is believed only the second time: see the next test.)
 func TestRestoredKeyWithoutContainerIsForgotten(t *testing.T) {
 	k := key("p", "gone")

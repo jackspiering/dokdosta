@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Split the integration tests across runners. The tests are real ladders against a real daemon and run one after another
-# (a whalenurse in one test watches every opted-in container on the daemon, so they cannot share a daemon); the way to be
+# (a dokdosta in one test watches every opted-in container on the daemon, so they cannot share a daemon); the way to be
 # faster is more daemons, one per shard.
 #
 #   scripts/ci/shard-integration.sh <index>/<shards>   print the -run regex of shard <index> (0-based) of <shards>

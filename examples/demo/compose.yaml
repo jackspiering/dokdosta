@@ -1,4 +1,4 @@
-# The two-minute demo (README.md, "Try it in 2 minutes"): whalenurse, a container that breaks on demand (bop, from
+# The two-minute demo (README.md, "Try it in 2 minutes"): dokdosta, a container that breaks on demand (bop, from
 # github.com/jackspiering/bop) and a sidecar that shares its network. Everything is in this one project, and the timings are
 # short so you can watch the whole ladder.
 #
@@ -7,17 +7,17 @@
 #   docker compose up -d
 #   open http://localhost:8484                                  # the dashboard, loopback only
 #   docker compose exec bop bop unhealthy sticky=true           # break it: unhealthy, and a restart does not fix it
-#   docker compose logs -f whalenurse                           # restart, then recreate, then healthy again
+#   docker compose logs -f dokdosta                           # restart, then recreate, then healthy again
 #   docker compose down -v                                      # clean up
 #
 # COMPOSE_PLUGIN in .env (optional) is the host's compose plugin; `docker info` shows the path. Docker Desktop has none at the
-# default path: leave the mount out and whalenurse uses its bundled compose, which only recreates containers made by the same
+# default path: leave the mount out and dokdosta uses its bundled compose, which only recreates containers made by the same
 # compose release (otherwise it says "can't verify drift").
-name: whalenurse-demo
+name: dokdosta-demo
 
 services:
-  whalenurse:
-    image: ${WHALENURSE_IMAGE:-ghcr.io/jackspiering/whalenurse:latest}
+  dokdosta:
+    image: ${DOKDOSTA_IMAGE:-ghcr.io/jackspiering/dokdosta:latest}
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
@@ -28,17 +28,17 @@ services:
       - /run:uid=65532,gid=65532,mode=0700
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - whalenurse-data:/data
+      - dokdosta-data:/data
       - ${COMPOSE_PLUGIN:-/usr/libexec/docker/cli-plugins/docker-compose}:/host/docker-compose:ro
-      - ${DEMO_DIR:?set DEMO_DIR in .env}:${DEMO_DIR}:ro # this directory, at its identical path, so whalenurse can recreate
+      - ${DEMO_DIR:?set DEMO_DIR in .env}:${DEMO_DIR}:ro # this directory, at its identical path, so dokdosta can recreate
     environment:
-      WHALENURSE_HOST_ID: demo
-      WHALENURSE_HTTP_ADDR: ":8484"
+      DOKDOSTA_HOST_ID: demo
+      DOKDOSTA_HTTP_ADDR: ":8484"
       # Short timings for the demo only; the defaults (30s grace, 30s cooldown, 60s poll, 2m settle) suit a real host.
-      WHALENURSE_GRACE: 5s
-      WHALENURSE_COOLDOWN: 10s
-      WHALENURSE_POLL_INTERVAL: 15s
-      WHALENURSE_STARTUP_SETTLE: 10s
+      DOKDOSTA_GRACE: 5s
+      DOKDOSTA_COOLDOWN: 10s
+      DOKDOSTA_POLL_INTERVAL: 15s
+      DOKDOSTA_STARTUP_SETTLE: 10s
 
   # bop: healthy until told otherwise. `bop unhealthy sticky=true` makes /healthz fail and survive a restart, so the restart
   # rung cannot fix it and the recreate rung has to.
@@ -46,9 +46,9 @@ services:
     image: ghcr.io/jackspiering/bop:0.2.0
     restart: unless-stopped
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
 
-  # A sidecar in bop's network namespace. When bop is recreated it loses that namespace; whalenurse recreates it too.
+  # A sidecar in bop's network namespace. When bop is recreated it loses that namespace; dokdosta recreates it too.
   bop-sidecar:
     image: ghcr.io/jackspiering/bop:0.2.0
     restart: unless-stopped
@@ -62,4 +62,4 @@ services:
     depends_on: [bop]
 
 volumes:
-  whalenurse-data: {}
+  dokdosta-data: {}

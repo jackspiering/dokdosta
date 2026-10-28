@@ -1,6 +1,6 @@
 # Contributing
 
-whalenurse is a small project with a written design, and the way it is built is part of what keeps it safe to run next to
+dokdosta is a small project with a written design, and the way it is built is part of what keeps it safe to run next to
 your containers. This page is how the work is organised, and how to send a change.
 
 ## The design comes first
@@ -22,7 +22,7 @@ A few rules from the plan that you will meet in review:
 - Secrets (notification URLs, the HTTP token) are never logged, shown or put in an error. Tests grep for them; extend them when
   you add output.
 - No network-exposed write endpoints.
-- Lowercase `whalenurse` everywhere: module path, image, binary. Build with `CGO_ENABLED=0`.
+- Lowercase `dokdosta` everywhere: module path, image, binary. Build with `CGO_ENABLED=0`.
 
 ## Pull requests
 
@@ -42,26 +42,26 @@ A few rules from the plan that you will meet in review:
 ```
 go vet ./... && go vet -tags integration ./...
 go test -race ./...                       # unit tests; they touch no Docker
-CGO_ENABLED=0 go build -trimpath -o whalenurse ./cmd/whalenurse
+CGO_ENABLED=0 go build -trimpath -o dokdosta ./cmd/dokdosta
 make scripts-test                          # the shell tooling's self-tests; no Docker, no network
 shellcheck -x $(grep -rIl --exclude-dir=testdata -E '^#!.*(ba)?sh' scripts test; find scripts test -name '*.sh')
 ```
 
 ## Integration tests, and the rule that protects your Docker host
 
-`test/integration/` holds tests that run against a **real Docker daemon** (`-tags integration`, `WHALENURSE_INTEGRATION=1`).
+`test/integration/` holds tests that run against a **real Docker daemon** (`-tags integration`, `DOKDOSTA_INTEGRATION=1`).
 They run in CI on GitHub-hosted runners, in a matrix of two image stores (classic and containerd) times three compose releases
 (5.2.0, 5.6.0, latest). **Do not run them on a machine you care about** unless you have read `test/integration/guard.go`.
 
-The rule, enforced in code and not by convention: **they act only on compose projects named `whalenurse-test-*`** (the M0 scripts
-on `whalenurse-m0-*`). Every method of the test `Guard` that changes anything checks the project name of its target against
-`^whalenurse-test-[a-z0-9][a-z0-9_-]*$` and **fails closed**: no match, no action. The guard cannot express `down` for another
-project, pulls only the base images it lists, tags and pushes only under `whalenurse-test/` or the local test registry on
-`127.0.0.1`, and wraps whalenurse's own Docker and compose actors so that the in-process healer under test cannot touch
+The rule, enforced in code and not by convention: **they act only on compose projects named `dokdosta-test-*`** (the M0 scripts
+on `dokdosta-m0-*`). Every method of the test `Guard` that changes anything checks the project name of its target against
+`^dokdosta-test-[a-z0-9][a-z0-9_-]*$` and **fails closed**: no match, no action. The guard cannot express `down` for another
+project, pulls only the base images it lists, tags and pushes only under `dokdosta-test/` or the local test registry on
+`127.0.0.1`, and wraps dokdosta's own Docker and compose actors so that the in-process healer under test cannot touch
 anything else either. The tests that run the built binary or the published image cannot be wrapped: for those, the guard's
-preflight is the protection. It refuses to start while any container outside a `whalenurse-test-*` project carries a
-`whalenurse.enable` value that whalenurse reads as an opt-in (`true`, `1`, `t`, `T`, `TRUE`, `True`, with or without spaces), and
-it refuses `WHALENURSE_MODE=all`. The guard has its own unit tests that need no Docker. If you add a new thing the tests do to Docker, it goes through
+preflight is the protection. It refuses to start while any container outside a `dokdosta-test-*` project carries a
+`dokdosta.enable` value that dokdosta reads as an opt-in (`true`, `1`, `t`, `T`, `TRUE`, `True`, with or without spaces), and
+it refuses `DOKDOSTA_MODE=all`. The guard has its own unit tests that need no Docker. If you add a new thing the tests do to Docker, it goes through
 the guard, with a test that it refuses the wrong project.
 
 The scripts follow the same rule (`scripts/ci/setup-docker.sh` and `test/demo/run.sh` refuse to run outside GitHub Actions).
@@ -72,7 +72,7 @@ run a probe outside the agreed scenarios, or anything that can exhaust CPU, memo
 
 Never commit raw `docker inspect`, `docker events` or `journalctl` output. Raw captures go in `/captures/` (gitignored); only
 files scrubbed with `scripts/scrub-fixture` go in `testdata/`. The scrubber removes environment variables, command lines,
-label values outside `com.docker.compose.*` and `whalenurse.*`, host paths, hostnames and IPs.
+label values outside `com.docker.compose.*` and `dokdosta.*`, host paths, hostnames and IPs.
 
 ## Releases
 

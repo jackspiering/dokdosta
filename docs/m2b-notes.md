@@ -1,5 +1,7 @@
 # M2b notes
 
+> whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
+
 Decisions, deviations and open questions for milestone M2b (compose recreate, the drift guard, dependents) of [PLAN.md](PLAN.md). Where the plan is ambiguous this file says what was chosen and why, so the maintainer can overrule it. Rules that changed are in the plan as v3.6.
 
 ## Upstream check (17 Oct 2026)

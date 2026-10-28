@@ -30,11 +30,11 @@ refuse() { # refuse <description> <command...>   (command must exit non-zero and
 }
 
 # ---- project guard: M0b is stricter than M0
-for p in whalenurse-m0-b-boot whalenurse-m0-b-imgdrift; do expect "project $p accepted" m0b_require_project "$p"; done
-for p in whalenurse-m0-e1 whalenurse-m0-bx whalenurse-m0-b- whalenurse-test-b-x immich "" 'whalenurse-m0-b-a b' 'whalenurse-m0-b-$(id)'; do
+for p in dokdosta-m0-b-boot dokdosta-m0-b-imgdrift; do expect "project $p accepted" m0b_require_project "$p"; done
+for p in dokdosta-m0-e1 whalenurse-m0-b-boot dokdosta-m0-bx dokdosta-m0-b- dokdosta-test-b-x immich "" 'dokdosta-m0-b-a b' 'dokdosta-m0-b-$(id)'; do
   refuse "project '$p' refused" m0b_require_project "$p"
 done
-refuse "listener refuses an M0 (not M0b) project" "$here/listener.sh" "$tmp/out" "$tmp/stop" whalenurse-m0-e1
+refuse "listener refuses an M0 (not M0b) project" "$here/listener.sh" "$tmp/out" "$tmp/stop" dokdosta-m0-e1
 refuse "listener refuses a real project" "$here/listener.sh" "$tmp/out" "$tmp/stop" immich
 refuse "listener needs a project" "$here/listener.sh" "$tmp/out" "$tmp/stop"
 
@@ -89,13 +89,13 @@ rel=$(m0b_events_rel "$tmp/norm.ndjson" 100 | paste -sd'|' -)
 
 # ---- the listener's project filter keeps two projects (docker events label filters would AND them)
 cat >"$tmp/proj-ev.ndjson" <<'JSON'
-{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"whalenurse-m0-b-nurse"}}}
-{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"whalenurse-m0-b-nursestop"}}}
-{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"whalenurse-m0-b-nurse2"}}}
+{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"dokdosta-m0-b-nurse"}}}
+{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"dokdosta-m0-b-nursestop"}}}
+{"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"dokdosta-m0-b-nurse2"}}}
 {"Type":"container","Action":"kill","Actor":{"Attributes":{"com.docker.compose.project":"immich"}}}
 {"Type":"container","Action":"kill","Actor":{"Attributes":{}}}
 JSON
-n=$(m0b_events_only_projects whalenurse-m0-b-nurse whalenurse-m0-b-nursestop <"$tmp/proj-ev.ndjson" | grep -c .)
+n=$(m0b_events_only_projects dokdosta-m0-b-nurse dokdosta-m0-b-nursestop <"$tmp/proj-ev.ndjson" | grep -c .)
 [[ "$n" == 2 ]] && ok "events filter: two projects kept, a similarly named and a foreign one dropped" || bad "events filter kept $n lines"
 refuse "events filter refuses a non-M0b project" m0b_events_only_projects immich
 
@@ -116,12 +116,12 @@ docker() {
     *) return 0 ;;
   esac
 }
-STUB_PS='boot-a-parent-1\twhalenurse-m0-b-boot\tUp 2 minutes\nimmich\timmich\tUp 3 days\nstray\t\tExited (0) 1 hour ago\n'
+STUB_PS='boot-a-parent-1\tdokdosta-m0-b-boot\tUp 2 minutes\nimmich\timmich\tUp 3 days\nstray\t\tExited (0) 1 hour ago\n'
 others=$(m0b_other_containers)
-[[ "$others" == *immich* && "$others" == *stray* && "$others" != *boot-a-parent* ]] && ok "preflight: lists containers outside whalenurse-m0-*" || bad "other containers: '$others'"
+[[ "$others" == *immich* && "$others" == *stray* && "$others" != *boot-a-parent* ]] && ok "preflight: lists containers outside dokdosta-m0-*" || bad "other containers: '$others'"
 refuse "preflight refuses without M0B_ALLOW_OTHER_CONTAINERS" m0b_preflight_other
 (M0B_ALLOW_OTHER_CONTAINERS=1 m0b_preflight_other) >/dev/null 2>&1 && ok "preflight: allowed with M0B_ALLOW_OTHER_CONTAINERS=1" || bad "preflight override"
-STUB_PS='boot-a-parent-1\twhalenurse-m0-b-boot\tUp 2 minutes\n'
+STUB_PS='boot-a-parent-1\tdokdosta-m0-b-boot\tUp 2 minutes\n'
 m0b_preflight_other >/dev/null 2>&1 && ok "preflight: nothing else on the host" || bad "preflight on a clean host"
 unset -f docker
 
@@ -145,33 +145,33 @@ else
   echo "skip boot stack config check (no docker compose)"
 fi
 
-# ---- the whalenurse-recreate scenario (M2b)
+# ---- the dokdosta-recreate scenario (M2b)
 # shellcheck source=recreate-lib.sh
 source "$here/recreate-lib.sh"
 expect "project $RECREATE_PROJECT accepted" m0b_require_project "$RECREATE_PROJECT"
 cat >"$tmp/recreate-log.ndjson" <<'JSON'
-{"type":"ActionStarted","key":"m0b/whalenurse-m0-b-recreate/parent/1","attr.action":"restart"}
-{"type":"ActionStarted","key":"m0b/whalenurse-m0-b-recreate/sidecar/1","attr.action":"recreate-stale"}
-{"type":"ActionStarted","key":"m0b/whalenurse-m0-b-recreate/parent/1","attr.action":"recreate"}
+{"type":"ActionStarted","key":"m0b/dokdosta-m0-b-recreate/parent/1","attr.action":"restart"}
+{"type":"ActionStarted","key":"m0b/dokdosta-m0-b-recreate/sidecar/1","attr.action":"recreate-stale"}
+{"type":"ActionStarted","key":"m0b/dokdosta-m0-b-recreate/parent/1","attr.action":"recreate"}
 JSON
 [[ "$(recreate_actions "$tmp/recreate-log.ndjson" "$(recreate_key parent)")" == restart,recreate && "$(recreate_actions "$tmp/recreate-log.ndjson" "$(recreate_key sidecar)")" == recreate-stale &&
   -z "$(recreate_actions "$tmp/recreate-log.ndjson" "$(recreate_key nope)")" ]] && ok "recreate: the actions of a key, in order" || bad "recreate_actions"
 if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
   rs=$(cd "$tmp" && rm -rf stack-recreate && mkdir -p stack-recreate && cp "$here/stacks/recreate/compose.yaml" stack-recreate/ &&
-    printf 'NURSE_IMAGE=whalenurse-m0/whalenurse:x\nDOCKER_GID=999\nCOMPOSE_PLUGIN=/x/docker-compose\nSTACK_DIR=%s\n' "$tmp/stack-recreate" >stack-recreate/vars.env &&
+    printf 'NURSE_IMAGE=dokdosta-m0/dokdosta:x\nDOCKER_GID=999\nCOMPOSE_PLUGIN=/x/docker-compose\nSTACK_DIR=%s\n' "$tmp/stack-recreate" >stack-recreate/vars.env &&
     docker compose --project-directory stack-recreate -f stack-recreate/compose.yaml --env-file stack-recreate/vars.env config --services 2>&1 | sort | paste -sd' ')
-  [[ "$rs" == "parent sidecar whalenurse" ]] && ok "stack recreate: compose config lists parent sidecar whalenurse" || bad "stack recreate services: '$rs'"
-  [[ "$(grep -c 'whalenurse.enable: "true"' "$here/stacks/recreate/compose.yaml")" == 2 ]] && ok "stack recreate: exactly the parent and the sidecar are opted in" || bad "recreate opt-in labels"
+  [[ "$rs" == "dokdosta parent sidecar" ]] && ok "stack recreate: compose config lists dokdosta parent sidecar" || bad "stack recreate services: '$rs'"
+  [[ "$(grep -c 'dokdosta.enable: "true"' "$here/stacks/recreate/compose.yaml")" == 2 ]] && ok "stack recreate: exactly the parent and the sidecar are opted in" || bad "recreate opt-in labels"
   grep -q '^      - ${STACK_DIR}:${STACK_DIR}:ro$' "$here/stacks/recreate/compose.yaml" && grep -q ':/host/docker-compose:ro$' "$here/stacks/recreate/compose.yaml" &&
     ok "stack recreate: the stack and the host plugin are mounted read-only, the stack at the identical path" || bad "recreate mounts"
 fi
 
-# ---- the whalenurse-restart scenario: projects, status and log readers
+# ---- the dokdosta-restart scenario: projects, status and log readers
 for p in "$NURSE_PROJECT" "$NURSE_STOP_PROJECT"; do expect "project $p accepted" m0b_require_project "$p"; done
 cat >"$tmp/status.json" <<'JSON'
 {"host":"m0b","settled":true,"engine":{"restore_window_until":"2020-01-01T00:00:00Z","keys":[
- {"key":"m0b/whalenurse-m0-b-nurse/looper/1","state":"SUSPENDED","suspend_reason":"ladder","flaps":1},
- {"key":"m0b/whalenurse-m0-b-nursestop/s1/1","state":"ok","manual_stop":true,"flaps":0}]}}
+ {"key":"m0b/dokdosta-m0-b-nurse/looper/1","state":"SUSPENDED","suspend_reason":"ladder","flaps":1},
+ {"key":"m0b/dokdosta-m0-b-nursestop/s1/1","state":"ok","manual_stop":true,"flaps":0}]}}
 JSON
 [[ "$(nurse_state "$tmp/status.json" "$NURSE_LOOPER_KEY")" == SUSPENDED && "$(nurse_state "$tmp/status.json" nope)" == "-" ]] && ok "nurse: state of a key" || bad "nurse_state"
 [[ "$(nurse_field "$tmp/status.json" "$(nurse_key "$NURSE_STOP_PROJECT" s1)" manual_stop)" == true ]] && ok "nurse: field of a key" || bad "nurse_field"
@@ -179,9 +179,9 @@ nurse_restore_open "$tmp/status.json" && bad "a restore window in the past repor
 sed 's/2020-01-01T00:00:00Z/2099-01-01T00:00:00.123456789Z/' "$tmp/status.json" >"$tmp/status-open.json"
 nurse_restore_open "$tmp/status-open.json" && ok "nurse: a future restore window is open" || bad "future restore window"
 cat >"$tmp/nurse.ndjson" <<'JSON'
-{"time":"2026-10-17T12:00:00.5Z","type":"ManualStopMarked","key":"m0b/whalenurse-m0-b-nursestop/s1/1"}
-{"time":"2026-10-17T12:00:10Z","type":"ManualStopMarked","key":"m0b/whalenurse-m0-b-nursestop/s1/1"}
-{"time":"2026-10-17T12:00:10Z","type":"ActionStarted","key":"m0b/whalenurse-m0-b-nursestop/s2/1"}
+{"time":"2026-10-17T12:00:00.5Z","type":"ManualStopMarked","key":"m0b/dokdosta-m0-b-nursestop/s1/1"}
+{"time":"2026-10-17T12:00:10Z","type":"ManualStopMarked","key":"m0b/dokdosta-m0-b-nursestop/s1/1"}
+{"time":"2026-10-17T12:00:10Z","type":"ActionStarted","key":"m0b/dokdosta-m0-b-nursestop/s2/1"}
 JSON
 k1=$(nurse_key "$NURSE_STOP_PROJECT" s1)
 since=$(date -u -d 2026-10-17T12:00:05Z +%s)
@@ -190,13 +190,13 @@ since=$(date -u -d 2026-10-17T12:00:05Z +%s)
 if command -v docker >/dev/null && docker compose version >/dev/null 2>&1; then
   for st in nurse nursestop; do
     svcs=$(cd "$tmp" && rm -rf "stack-$st" && mkdir -p "stack-$st" && cp "$here/stacks/$st/compose.yaml" "stack-$st/" &&
-      printf 'NURSE_IMAGE=whalenurse-m0/whalenurse:x\nDOCKER_GID=999\n' >"stack-$st/vars.env" &&
+      printf 'NURSE_IMAGE=dokdosta-m0/dokdosta:x\nDOCKER_GID=999\n' >"stack-$st/vars.env" &&
       docker compose --project-directory "stack-$st" -f "stack-$st/compose.yaml" --env-file "stack-$st/vars.env" config --services 2>&1 | sort | paste -sd' ')
-    case "$st" in nurse) want="looper whalenurse" ;; *) want="s1 s2 s3" ;; esac
+    case "$st" in nurse) want="dokdosta looper" ;; *) want="s1 s2 s3" ;; esac
     [[ "$svcs" == "$want" ]] && ok "stack $st: compose config lists $want" || bad "stack $st services: '$svcs'"
   done
   # Only opted-in M0b containers: the nurse stack opts in the looper and nothing else, the stop stack its three.
-  [[ "$(grep -c 'whalenurse.enable: "true"' "$here/stacks/nurse/compose.yaml")" == 1 && "$(grep -c 'whalenurse.enable: "true"' "$here/stacks/nursestop/compose.yaml")" == 1 ]] &&
+  [[ "$(grep -c 'dokdosta.enable: "true"' "$here/stacks/nurse/compose.yaml")" == 1 && "$(grep -c 'dokdosta.enable: "true"' "$here/stacks/nursestop/compose.yaml")" == 1 ]] &&
     ok "stacks: the opt-in labels are where they should be" || bad "opt-in labels"
 fi
 

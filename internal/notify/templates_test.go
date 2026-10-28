@@ -5,7 +5,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 func renderOne(t *testing.T, e engine.Event, c rctx) Message {
@@ -36,13 +36,13 @@ func TestTemplates(t *testing.T) {
 		{"recovered", ev(engine.Recovered, webKey, "container has been healthy for 10m0s", nil),
 			rctx{}, []string{"nas: stack-web-1 recovered"}, []string{webKey, "healthy for 10m0s"}, false},
 		{"giving up", ev(engine.Suspended, webKey, "every rung ran or was unavailable: container is unhealthy", map[string]string{"reason": "ladder"}),
-			rctx{}, []string{"giving up, SUSPENDED"}, []string{webKey, "cause: container is unhealthy", "whalenurse unsuspend stack/web"}, true},
+			rctx{}, []string{"giving up, SUSPENDED"}, []string{webKey, "cause: container is unhealthy", "dokdosta unsuspend stack/web"}, true},
 		{"flapping", ev(engine.Suspended, webKey, "flapping: 4 incidents within 24h0m0s (limit 3): container is unhealthy", map[string]string{"reason": "flapping"}),
-			rctx{}, []string{"flapping, SUSPENDED"}, []string{webKey, "4 incidents within 24h0m0s", "whalenurse unsuspend stack/web"}, true},
+			rctx{}, []string{"flapping, SUSPENDED"}, []string{webKey, "4 incidents within 24h0m0s", "dokdosta unsuspend stack/web"}, true},
 		{"drift blocked with the compose-upgrade hint", ev(engine.DriftBlocked, webKey, "recreate skipped by the drift guard: x",
 			map[string]string{"findings": "compose would recreate this container (its dry-run says: Recreate): the compose file, an env file or the image changed since it was created (compose upgraded from 5.2.0 to 5.6.0 since this container was created, so this may be a changed hash layout rather than an edit)"}),
-			rctx{}, []string{"recreate blocked by the drift guard"}, []string{webKey, "compose upgraded 5.2.0 to 5.6.0", "hint:", "docker compose up -d web", "whalenurse unsuspend stack/web"}, true},
-		{"drift blocked, bundled compose", ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "can't verify drift (compose 5.2.0 on host vs 5.6.0 in whalenurse): the container was made by another compose release"}),
+			rctx{}, []string{"recreate blocked by the drift guard"}, []string{webKey, "compose upgraded 5.2.0 to 5.6.0", "hint:", "docker compose up -d web", "dokdosta unsuspend stack/web"}, true},
+		{"drift blocked, bundled compose", ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "can't verify drift (compose 5.2.0 on host vs 5.6.0 in dokdosta): the container was made by another compose release"}),
 			rctx{}, []string{"blocked"}, []string{"can't verify drift", "/host/docker-compose"}, true},
 		{"drift blocked, moved tag", ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "image busybox:1.37 now resolves to aaa, but this container was created from bbb: the tag moved"}),
 			rctx{}, []string{"blocked"}, []string{"the tag moved", "docker compose up -d web"}, true},
@@ -60,12 +60,12 @@ func TestTemplates(t *testing.T) {
 			rctx{}, []string{"nas: resumed stack/web"}, []string{"nas/stack/web", "expired"}, false},
 		{"unsuspended by recovery", ev(engine.Unsuspended, webKey, "container returned to healthy", map[string]string{"reason": "healthy"}),
 			rctx{}, []string{"nas: stack-web-1 unsuspended"}, []string{webKey, "returned to healthy"}, false},
-		{"unsuspended by command", ev(engine.Unsuspended, webKey, "unsuspended by whalenurse unsuspend", map[string]string{"reason": "command"}),
-			rctx{}, []string{"unsuspended"}, []string{webKey, "by whalenurse unsuspend"}, false},
+		{"unsuspended by command", ev(engine.Unsuspended, webKey, "unsuspended by dokdosta unsuspend", map[string]string{"reason": "command"}),
+			rctx{}, []string{"unsuspended"}, []string{webKey, "by dokdosta unsuspend"}, false},
 		{"action rate limit", ev(engine.RateLimited, webKey, "rate limit of 10 actions/hour reached; will retry", nil),
-			rctx{}, []string{"nas: action rate limit reached"}, []string{webKey, "10 actions/hour", "WHALENURSE_RATE_LIMIT", "once an hour"}, true},
+			rctx{}, []string{"nas: action rate limit reached"}, []string{webKey, "10 actions/hour", "DOKDOSTA_RATE_LIMIT", "once an hour"}, true},
 		{"non-compose container", ev(engine.Suspended, "nas/plainbox", "every rung ran or was unavailable: container is unhealthy", map[string]string{"reason": "ladder"}),
-			rctx{}, []string{"giving up"}, []string{"nas/plainbox", "whalenurse unsuspend plainbox"}, true},
+			rctx{}, []string{"giving up"}, []string{"nas/plainbox", "dokdosta unsuspend plainbox"}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -135,7 +135,7 @@ func TestEventsThatAreNotListedAreNotNotified(t *testing.T) {
 func TestADriftSuspensionAgainIsAGivingUpMessage(t *testing.T) {
 	m := renderOne(t, ev(engine.Suspended, webKey, "failed again before the incident closed (drift): unhealthy", map[string]string{"reason": "drift"}), rctx{dryRun: true})
 	if !strings.HasSuffix(m.Title, "giving up, SUSPENDED") || !m.Critical || !strings.Contains(m.Body, "cause: unhealthy again; the drift guard blocked the recreate") ||
-		!strings.Contains(m.Body, "whalenurse unsuspend stack/web") || utf8.RuneCountInString(m.Body) > MaxBody || utf8.RuneCountInString(m.Title) > MaxTitle {
+		!strings.Contains(m.Body, "dokdosta unsuspend stack/web") || utf8.RuneCountInString(m.Body) > MaxBody || utf8.RuneCountInString(m.Title) > MaxTitle {
 		t.Fatalf("%v", m)
 	}
 }
@@ -157,7 +157,7 @@ func TestTheHeadlineSurvivesALongHost(t *testing.T) {
 		headline string
 	}{
 		{ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "the tag moved"}), "recreate blocked by the drift guard, SUSPENDED"},
-		{ev(engine.DriftWarned, webKey, "x", map[string]string{"findings": "the tag moved"}), "recreating despite drift (WHALENURSE_DRIFT_GUARD=warn)"},
+		{ev(engine.DriftWarned, webKey, "x", map[string]string{"findings": "the tag moved"}), "recreating despite drift (DOKDOSTA_DRIFT_GUARD=warn)"},
 		{ev(engine.Suspended, webKey, "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder"}), "giving up, SUSPENDED"},
 		{ev(engine.NeedsRecreate, webKey, "x", nil), "needs a recreate that is not available"},
 		{ev(engine.TagMoved, webKey, "x", map[string]string{"ref": "web:1", "new": newID, "ok": "false"}), "pulled a newer image, but the recreate failed"},
@@ -193,15 +193,15 @@ func TestTheHeadlineSurvivesALongHost(t *testing.T) {
 // and an image can ship one. An ordinary scope renders unchanged.
 func TestUnsuspendCommandIsShellQuoted(t *testing.T) {
 	m := renderOne(t, ev(engine.Suspended, "nas/p$(id)/web/1", "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder"}), rctx{})
-	if !strings.Contains(m.Body, "whalenurse unsuspend 'p$(id)/web'") {
+	if !strings.Contains(m.Body, "dokdosta unsuspend 'p$(id)/web'") {
 		t.Errorf("%s", m.Body)
 	}
 	d := renderOne(t, ev(engine.DriftBlocked, "nas/p/w;id/1", "x", map[string]string{"findings": "the tag moved"}), rctx{})
-	if !strings.Contains(d.Body, "whalenurse unsuspend 'p/w;id'") || !strings.Contains(d.Body, "docker compose up -d 'w;id'") {
+	if !strings.Contains(d.Body, "dokdosta unsuspend 'p/w;id'") || !strings.Contains(d.Body, "docker compose up -d 'w;id'") {
 		t.Errorf("%s", d.Body)
 	}
 	ok := renderOne(t, ev(engine.Suspended, webKey, "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder"}), rctx{})
-	if !strings.Contains(ok.Body, "whalenurse unsuspend stack/web") {
+	if !strings.Contains(ok.Body, "dokdosta unsuspend stack/web") {
 		t.Errorf("an ordinary scope is not quoted: %s", ok.Body)
 	}
 }

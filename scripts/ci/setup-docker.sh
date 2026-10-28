@@ -9,7 +9,7 @@
 # The image-drift job and the integration job both call this script.
 #
 # usage: scripts/ci/setup-docker.sh classic|containerd [compose-version|latest]     (default compose: 5.6.0)
-# It exports WHALENURSE_COMPOSE_BIN and WHALENURSE_COMPOSE_VERSION to later steps through $GITHUB_ENV.
+# It exports DOKDOSTA_COMPOSE_BIN and DOKDOSTA_COMPOSE_VERSION to later steps through $GITHUB_ENV.
 set -euo pipefail
 
 store=${1:-}
@@ -64,7 +64,7 @@ fi
 echo "compose ${got} at ${plugin} (asked for ${want}, release ${tag})"
 docker compose version
 if [ -n "${GITHUB_ENV:-}" ]; then
-  { echo "WHALENURSE_COMPOSE_BIN=${plugin}"; echo "WHALENURSE_COMPOSE_VERSION=${got#v}"; } >>"$GITHUB_ENV"
+  { echo "DOKDOSTA_COMPOSE_BIN=${plugin}"; echo "DOKDOSTA_COMPOSE_VERSION=${got#v}"; } >>"$GITHUB_ENV"
 fi
 
 if [ "$store" = containerd ]; then

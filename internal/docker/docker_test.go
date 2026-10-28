@@ -139,7 +139,7 @@ func TestContainerRef(t *testing.T) {
 }
 
 // The boundary of the dashboard's secrecy: an inspect response carries the environment, the command, the mounts and the
-// network settings, and none of it enters the snapshot the rest of whalenurse (and the API) can see.
+// network settings, and none of it enters the snapshot the rest of dokdosta (and the API) can see.
 func TestInspectNeverCarriesTheEnvironmentTheCommandOrTheMounts(t *testing.T) {
 	raw := []byte(`[{"Id":"abc","Name":"/web","Image":"sha256:img","RestartCount":1,
 	  "Config":{"Image":"nginx:1","Env":["DB_PASSWORD=env-SECRET-1","API_TOKEN=env-SECRET-2"],"Cmd":["serve","--key=cmd-SECRET-3"],
@@ -157,9 +157,9 @@ func TestInspectNeverCarriesTheEnvironmentTheCommandOrTheMounts(t *testing.T) {
 	}
 }
 
-// Under systemd whalenurse sees the host's mount table, which lists the mounts dockerd makes for other containers: a
+// Under systemd dokdosta sees the host's mount table, which lists the mounts dockerd makes for other containers: a
 // shareable IPC donor's /dev/shm tmpfs is mounted at <data-root>/containers/<id>/mounts/shm (moby ShmResourcePath). That
-// is not whalenurse's container, and taking it for its own made whalenurse skip it as "self" for ever.
+// is not dokdosta's container, and taking it for its own made dokdosta skip it as "self" for ever.
 func TestSelfIDIgnoresOtherContainersMountsOnTheHost(t *testing.T) {
 	other := strings.Repeat("ab", 32)
 	host := "22 1 254:1 / / rw,relatime shared:1 - ext4 /dev/vda1 rw\n" +

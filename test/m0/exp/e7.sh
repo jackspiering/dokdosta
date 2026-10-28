@@ -3,7 +3,7 @@
 # shellcheck shell=bash
 exp_e7() {
   begin E7 "host compose plugin inside candidate base images"
-  local P=whalenurse-m0-e7 dir bin svc gid
+  local P=dokdosta-m0-e7 dir bin svc gid
   dir="$SCRATCH/e7"
   mkdir -p "$dir"
   bin=$(compose_plugin_path)

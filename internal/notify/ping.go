@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// Pinger is the uptime ping (WHALENURSE_HEARTBEAT_URL): a plain GET to a dead-man's-switch service such as
-// healthchecks.io or an Uptime Kuma push monitor, every Interval, for as long as whalenurse is healthy. When it is not
+// Pinger is the uptime ping (DOKDOSTA_HEARTBEAT_URL): a plain GET to a dead-man's-switch service such as
+// healthchecks.io or an Uptime Kuma push monitor, every Interval, for as long as dokdosta is healthy. When it is not
 // (the events stream has been down too long) it stays quiet, so the monitor raises the alarm by the missing ping.
 //
 // It is called the uptime ping in code and logs: "heartbeat" already names the persisted last_seen of the shutdown
@@ -84,14 +84,14 @@ func (p *Pinger) Run(ctx context.Context) {
 	}
 }
 
-// Tick makes one ping, unless whalenurse is unhealthy.
+// Tick makes one ping, unless dokdosta is unhealthy.
 func (p *Pinger) Tick(ctx context.Context) {
 	p.defaults()
 	if p.Healthy != nil && !p.Healthy() {
 		p.mu.Lock()
 		p.st.Skipped++
 		p.mu.Unlock()
-		p.Log.Warn("uptime ping skipped: whalenurse is not healthy")
+		p.Log.Warn("uptime ping skipped: dokdosta is not healthy")
 		return
 	}
 	err := p.ping(ctx)
@@ -119,7 +119,7 @@ func (p *Pinger) ping(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("uptime ping URL: %w", err)
 	}
-	req.Header.Set("User-Agent", "whalenurse")
+	req.Header.Set("User-Agent", "dokdosta")
 	resp, err := p.Client.Do(req)
 	if err != nil {
 		return err

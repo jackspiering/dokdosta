@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
 )
 
 // Action is what the rules want done.
@@ -67,6 +67,7 @@ const (
 	SkipOneOff      = "oneoff"
 	SkipSwarm       = "swarm"
 	SkipNotOptedIn  = "not-opted-in"
+	SkipLegacy      = "legacy-labels" // whalenurse.* labels from before the rename (plan v3.15 item 5)
 	SkipDockerPause = "docker-paused"
 	SkipRemoving    = "removing"
 )
@@ -101,7 +102,7 @@ type Input struct {
 	Loop     Loop // the crash-loop state the engine derived from RestartCount (rule 3)
 	// DependentOfOptedIn: a container: parent of this container (found, or named by its depends_on label when its ID is
 	// gone) is opted in. Such a container is repaired by the dependents step even when it is not opted in itself, unless
-	// it is labelled whalenurse.enable=false; its own failures are still its own business (plan v3.6).
+	// it is labelled dokdosta.enable=false; its own failures are still its own business (plan v3.6).
 	DependentOfOptedIn bool
 	// IncidentOpen: the engine has an open incident for this key. A dependent that is not opted in is skipped unless the
 	// dependents step has work for it; with an incident open, a decision that needs no action still reaches the engine,
@@ -153,13 +154,15 @@ func Classify(in Input) Decision {
 	// Rule 0: skip entirely.
 	switch {
 	case in.Self:
-		return skip(SkipSelf, "whalenurse's own container")
+		return skip(SkipSelf, "dokdosta's own container")
+	case len(in.Cfg.Legacy) > 0:
+		return skip(SkipLegacy, config.LegacyReason(in.Cfg.Legacy))
 	case docker.IsOneOff(c.Labels):
 		return skip(SkipOneOff, "compose run container")
 	case c.Labels[docker.LabelSwarmTaskID] != "":
 		return skip(SkipSwarm, "swarm task")
 	case in.Cfg.Disabled:
-		return skip(SkipNotOptedIn, "whalenurse.enable=false")
+		return skip(SkipNotOptedIn, "dokdosta.enable=false")
 	case !in.Cfg.OptedIn && !in.DependentOfOptedIn:
 		return skip(SkipNotOptedIn, "not opted in")
 	case c.Status == "removing":
@@ -330,7 +333,7 @@ func classifyExited(in Input) Decision {
 	case ev.Crashed:
 		return Decision{Class: ClassExitedCrashed, Action: ActionStart, Reason: fmt.Sprintf("died with exit %d, no preceding kill", c.ExitCode)}
 	}
-	// No events seen (whalenurse was down): fall back to the exit code.
+	// No events seen (dokdosta was down): fall back to the exit code.
 	switch {
 	case c.ExitCode == 0:
 		return Decision{Class: ClassExitedClean, Action: ActionNone, Reason: "exited 0 under restart policy " + policyName(c)}

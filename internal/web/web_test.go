@@ -1,7 +1,7 @@
 package web
 
 import (
-	"github.com/jackspiering/whalenurse/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/compose"
 	"go/build"
 	"net/http"
 	"net/http/httptest"
@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
+	"github.com/jackspiering/dokdosta/internal/api"
 )
 
 // "The dashboard uses only this API": the package may render the documents of internal/api and nothing from the
@@ -21,7 +21,7 @@ func TestWebImportsOnlyTheAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, imp := range pkg.Imports {
-		if strings.HasPrefix(imp, "github.com/jackspiering/whalenurse/") && imp != "github.com/jackspiering/whalenurse/internal/api" {
+		if strings.HasPrefix(imp, "github.com/jackspiering/dokdosta/") && imp != "github.com/jackspiering/dokdosta/internal/api" {
 			t.Errorf("internal/web imports %s: it may import internal/api only", imp)
 		}
 	}
@@ -180,13 +180,13 @@ func TestSuspendedTextInPlainWords(t *testing.T) {
 
 func TestPauseMessageIsFriendly(t *testing.T) {
 	until := time.Now().UTC().Add(2 * time.Hour)
-	msg := "paused whalenurse-test-demo/cache for 2h0m0s (until " + until.Format(time.RFC3339) + ")"
+	msg := "paused dokdosta-test-demo/cache for 2h0m0s (until " + until.Format(time.RFC3339) + ")"
 	got := string(message(msg))
 	clock := until.Format("15:04")
 	if until.YearDay() != time.Now().UTC().YearDay() {
 		clock = until.Format("2 Jan 15:04")
 	}
-	if want := "paused whalenurse-test-demo/cache for 2h, until " + clock; got != want {
+	if want := "paused dokdosta-test-demo/cache for 2h, until " + clock; got != want {
 		t.Errorf("got %q want %q", got, want)
 	}
 	if strings.Contains(got, "details") {

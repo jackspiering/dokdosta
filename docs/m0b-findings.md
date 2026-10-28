@@ -1,5 +1,7 @@
 # M0b findings
 
+> whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
+
 Milestone M0b of [PLAN.md](PLAN.md) §7: the scenarios M0 could not run ([m0-findings.md](m0-findings.md) §6). No app code. Run on 17 Oct 2026 on the same throwaway Debian VM as M0 (Debian 13, kernel 6.12, cgroup v2), with the maintainer running every root or disruptive step. Raw output lives in `captures/` (gitignored); only scrubbed excerpts and fixtures are committed. This file is separate from `m0-findings.md`; plan §7 says "a new section" there, and §7 now points here instead.
 
 **Approved 17 Oct 2026 and applied as PLAN v3.3** ("Changes in v3.3"), with these decisions on the proposals below: the shutdown-kill mechanisms 1 (quarantine on stream loss), 3 (persist the boot id) and 4 (restore window) are adopted; **mechanism 2 (the kill burst) is rejected**, because `docker compose stop` and `down` send the same burst and deliberate stops would be healed; a `restart: "no"` parent stopped by a shutdown respects its policy (it and its dependents stay down, one notification; only `heal-exited=always` starts them); the CI job and the self-test are in `ci.yml`. The text below is the evidence and the original proposals; where it says "proposed", the plan is authoritative.

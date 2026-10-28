@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // M4 review decisions (plan v3.8): rung 3 requires rung 2, rung 2 lets an image-only move through for a pull-enabled
@@ -166,7 +166,7 @@ func TestRung2TakesAnImageOnlyMoveForAPullEnabledContainerAndSaysSo(t *testing.T
 		t.Fatalf("%+v", a)
 	}
 	if h.count(engine.TagMoved) != 0 {
-		t.Fatal("whalenurse did not move this tag: no TagMoved")
+		t.Fatal("dokdosta did not move this tag: no TagMoved")
 	}
 	if h.cf.Count("pull") != 0 {
 		t.Fatal("rung 2 never pulls")
@@ -496,7 +496,7 @@ func TestFollowedMoveIsNotNamedAsAnotherStacksMoverAndOnlyServesTheParentsSideca
 		t.Fatalf("a followed move is recorded for the parent: %+v %v", m, ok)
 	}
 	// Another stack's container on the same reference is image-drifted by this move; the drift block must not say that
-	// whalenurse pulled it.
+	// dokdosta pulled it.
 	other := h.svc(hexID("f1"), "q", "app")
 	other = h.set(other.ID, func(c *docker.Container) {
 		c.Image, c.ImageID = "web:1", imgOldID
@@ -506,7 +506,7 @@ func TestFollowedMoveIsNotNamedAsAnotherStacksMoverAndOnlyServesTheParentsSideca
 	h.advance(10 * time.Minute)
 	for _, e := range h.events(engine.DriftBlocked) {
 		if e.Key == key("q", "app") {
-			if e.Attrs["moved_by"] != "" || strings.Contains(e.Message, "whalenurse moved this tag") {
+			if e.Attrs["moved_by"] != "" || strings.Contains(e.Message, "dokdosta moved this tag") {
 				t.Fatalf("someone else moved that tag: %+v", e)
 			}
 			return

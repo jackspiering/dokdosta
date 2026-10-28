@@ -1,5 +1,7 @@
 # M2a notes
 
+> whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
+
 Decisions, deviations and open questions for milestone M2a (state, the full ladder, the CLI and shutdown handling; no compose) of [PLAN.md](PLAN.md) v3.4. Where the plan is ambiguous this file says what was chosen and why, so the maintainer can overrule it. Nothing here changes a rule of §3; the open questions at the end are the ones that might.
 
 ## Open questions for the maintainer

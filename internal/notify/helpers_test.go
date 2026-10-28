@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // recSender records what it is asked to send, and can fail, block or take time.

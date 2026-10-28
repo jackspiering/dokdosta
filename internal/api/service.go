@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // Source is what the daemon provides: its own view of the host, already in the shape of the documents. The Service
@@ -24,7 +24,7 @@ type History interface {
 }
 
 // Service builds the documents of the API. The JSON handlers encode them and the dashboard (internal/web) renders
-// them, so the pages show exactly what the API says. Everything that leaves whalenurse passes through it: that is where
+// them, so the pages show exactly what the API says. Everything that leaves dokdosta passes through it: that is where
 // the output rules of plan §3.9 are enforced (label allow-list, attribute allow-list, redaction, length caps).
 type Service struct {
 	Host    string
@@ -52,13 +52,13 @@ var allowedAttrs = map[string]bool{
 	"rollback_up": true, "rung": true, "rungs": true, "scope": true, "sidecars": true, "signal": true, "until": true, "why": true,
 }
 
-// AttrAllowed reports whether an event attribute key may leave whalenurse. The daemon's tests subscribe a checker that
+// AttrAllowed reports whether an event attribute key may leave dokdosta. The daemon's tests subscribe a checker that
 // fails on any key the healer emits outside this list, so every scenario of those tests proves the list is complete.
 func AttrAllowed(key string) bool { return allowedAttrs[key] }
 
-// labelAllowed is the rule for labels: com.docker.compose.* and whalenurse.*, nothing else (plan §3.9).
+// labelAllowed is the rule for labels: com.docker.compose.* and dokdosta.*, nothing else (plan §3.9).
 func labelAllowed(k string) bool {
-	return strings.HasPrefix(k, "com.docker.compose.") || strings.HasPrefix(k, "whalenurse.")
+	return strings.HasPrefix(k, "com.docker.compose.") || strings.HasPrefix(k, "dokdosta.")
 }
 
 func (s *Service) redact(v string) string {
@@ -78,7 +78,7 @@ func (s *Service) text(v string, max int) string {
 }
 
 // rollbackAttrs are the commands of an "upgraded during heal" event: a person pastes them into a shell, so they leave
-// whalenurse exactly as they were built or not at all. When the redactor would change either (a notification topic that is
+// dokdosta exactly as they were built or not at all. When the redactor would change either (a notification topic that is
 // also a word of the command) or one is too long to show whole, both are withheld; the page then says so.
 var rollbackAttrs = map[string]bool{"rollback_tag": true, "rollback_up": true}
 
@@ -99,7 +99,7 @@ func finalName(n string) string {
 }
 
 // NoiseTypes are the events the dashboard hides unless asked for them: one per Docker event that falls inside a
-// whalenurse action, and one per kill with a reload signal (docker-gen sends them often),
+// dokdosta action, and one per kill with a reload signal (docker-gen sends them often),
 // which say nothing a person needs. The JSON API still returns them.
 var NoiseTypes = []engine.EventType{engine.EventAttributed, engine.SignalIgnored}
 

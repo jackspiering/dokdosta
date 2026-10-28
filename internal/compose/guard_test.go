@@ -158,7 +158,7 @@ func TestGuardVersionSkewOnlyForTheBundledCompose(t *testing.T) {
 	bundled.OracleFn = drift
 	g := Guard{Compose: bundled, Images: fakeImages{"web:1|amd64": imgOld}}
 	got := g.Check(context.Background(), in)
-	if causes(got) != CheckSkew || !strings.Contains(got[0].Cause, "can't verify drift (compose 5.2.0 on host vs 5.6.0 in whalenurse)") {
+	if causes(got) != CheckSkew || !strings.Contains(got[0].Cause, "can't verify drift (compose 5.2.0 on host vs 5.6.0 in dokdosta)") {
 		t.Fatalf("%v", got)
 	}
 	// The same release: it is drift.

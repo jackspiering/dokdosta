@@ -20,14 +20,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/daemon"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/api"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/daemon"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
 )
 
 type fakeDaemon struct{ calls []string }
@@ -157,8 +157,8 @@ func TestNoTokenReachesTheLogsStatusHealthzOrTheTestOutput(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(regDir, "config.json"), []byte(regFile), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"WHALENURSE_REGISTRY_AUTH_DIR=" + regDir, "WHALENURSE_NOTIFY_URLS=" + strings.Join(urls, " "), "WHALENURSE_HEARTBEAT_URL=" + ping,
-		"WHALENURSE_NOTIFY_TIMEOUT=2s", "WHALENURSE_HOST_ID=nas", "WHALENURSE_HTTP_TOKEN=tok-HTTPTOKEN-66666", "WHALENURSE_HTTP_ADDR=0.0.0.0:8484"}
+	env := []string{"DOKDOSTA_REGISTRY_AUTH_DIR=" + regDir, "DOKDOSTA_NOTIFY_URLS=" + strings.Join(urls, " "), "DOKDOSTA_HEARTBEAT_URL=" + ping,
+		"DOKDOSTA_NOTIFY_TIMEOUT=2s", "DOKDOSTA_HOST_ID=nas", "DOKDOSTA_HTTP_TOKEN=tok-HTTPTOKEN-66666", "DOKDOSTA_HTTP_ADDR=0.0.0.0:8484"}
 	cfg, warns, err := config.FromEnv(env)
 	if err != nil {
 		t.Fatal(err)
@@ -352,7 +352,7 @@ func TestDryRunWiresOnlyNoOpActors(t *testing.T) {
 	for _, dry := range []bool{true, false} {
 		cfg := config.Defaults()
 		cfg.DryRun = dry
-		cfg.ControlSocket = filepath.Join(t.TempDir(), "whalenurse.sock")
+		cfg.ControlSocket = filepath.Join(t.TempDir(), "dokdosta.sock")
 
 		rd, act, note, remove := composeFor(context.Background(), cfg, lookup, log)
 		remove()
@@ -441,7 +441,7 @@ func TestOpenStoreRekeysToTheHostID(t *testing.T) {
 	st.SaveKey(engine.KeyRecord{Key: "0123456789ab/p/web/1", Name: "p-web-1", MarkerAt: time.Now()})
 	st.Close()
 
-	cfg.HostID = "ba9876543210" // whalenurse recreated
+	cfg.HostID = "ba9876543210" // dokdosta recreated
 	st, snap, err := openStore(cfg, log, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -459,6 +459,36 @@ func TestPrintStatusListsContainersComposeIsHoldingBack(t *testing.T) {
 	for _, want := range []string{"HELD BACK by compose", "h/p/web/1  waiting for db (service_healthy)"} {
 		if !strings.Contains(b.String(), want) {
 			t.Errorf("status output lacks %q:\n%s", want, b.String())
+		}
+	}
+}
+
+// Plan v3.15 item 4: every command that reads the configuration refuses a variable from before the rename, and its
+// error names the variable without its value (`version` reads no configuration). run is left out on purpose: should the
+// refusal regress, it would start a daemon; runCmd reads the configuration before anything else, and
+// TestVariablesFromBeforeTheRenameAreRefusedByNameOnly (internal/config) covers FromEnv itself. The socket points at
+// an empty directory, so a regression here fails fast instead of reaching a daemon.
+func TestEveryConfiguredCommandRefusesVariablesFromBeforeTheRename(t *testing.T) {
+	const secret = "tok-OLDNAME-40417"
+	t.Setenv("WHALENURSE_HTTP_TOKEN", secret)
+	t.Setenv("DOKDOSTA_CONTROL_SOCKET", filepath.Join(t.TempDir(), "none.sock"))
+	t.Setenv("DOKDOSTA_NOTIFY_URLS", "")
+	cmds := map[string]func() error{
+		"healthcheck": func() error { return healthCmd(nil) },
+		"status":      func() error { return statusCmd(nil) },
+		"pause":       func() error { return scopeCmd("pause", []string{"p/s"}) },
+		"resume":      func() error { return scopeCmd("resume", []string{"p/s"}) },
+		"unsuspend":   func() error { return scopeCmd("unsuspend", []string{"p/s"}) },
+		"notify test": func() error { return notifyCmd([]string{"test"}) },
+	}
+	for name, f := range cmds {
+		err := f()
+		if err == nil || !strings.Contains(err.Error(), "WHALENURSE_HTTP_TOKEN set") {
+			t.Errorf("%s: want the refusal naming WHALENURSE_HTTP_TOKEN, got %v", name, err)
+			continue
+		}
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: the error quotes the value: %v", name, err)
 		}
 	}
 }
