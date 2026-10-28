@@ -12,7 +12,7 @@ import "strings"
 // `up` names them after the service, so a single paste puts them all back. A name compose could not have written (it comes
 // from a label, see Project.Validate) is left out rather than pasted into a shell as a flag.
 func RollbackCommands(p Project, ref, oldImage string, alsoServices ...string) (tag, up string) {
-	tag = "docker image tag " + oldImage + " " + ShellWord(ref)
+	tag = "docker image tag " + ShellWord(oldImage) + " " + ShellWord(ref)
 	args := append([]string{"docker", "compose"}, p.baseArgs()...)
 	args = append(args, "up", "-d", "--no-deps", "--pull", "never", "--no-build", p.Service)
 	for _, s := range alsoServices {
