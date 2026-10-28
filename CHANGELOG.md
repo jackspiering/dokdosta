@@ -13,6 +13,19 @@ workflow refuses an undated section.
 ### Fixed
 
 - A recreate or a pull that took minutes no longer makes dokdosta think its own `create` and `start` events came from outside: the events are attributed to the action, and the incident stays open instead of closing as "recreated" and reopening at rung 0.
+### Added
+
+- **`/metrics` shows notification drops, rate-limit holds and refused streams.** `dokdosta_notifications_rate_limited_total`
+  counts the notifications held back by the per-URL rate limit, `dokdosta_notifications_dropped_total` those dropped
+  because the queue was full, and `dokdosta_sse_refused_total` the event streams turned away with 503 at the stream
+  limit. All URLs are counted together, and no URL appears in them.
+
+### Fixed
+
+- **A relative `DOKDOSTA_COMPOSE_BIN` is refused at startup.** dokdosta now stops with "DOKDOSTA_COMPOSE_BIN must be an
+  absolute path" instead of checking the path in one directory and running it from another. Set the full path, for
+  example `/usr/local/bin/docker-compose`.
+- `dokdosta pause --for` now refuses a duration longer than 100 years (use `--for 0` for no expiry). Before, a longer pause was accepted, its expiry overflowed and it ended at the next restart.
 
 ## [0.3.0] - YYYY-MM-DD
 
