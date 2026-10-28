@@ -126,13 +126,14 @@ m0b_preflight_other >/dev/null 2>&1 && ok "preflight: nothing else on the host" 
 unset -f docker
 
 # ---- journal scrub: only the interesting lines, scrubbed
+SCRUB_HOSTNAME=${SCRUB_HOSTNAME:-$(hostname)}
 cat >"$tmp/j.raw" <<JOURNAL
-Oct 17 13:00:00.100000 $(hostname) dockerd[1]: unrelated line about /home/someone/x
-Oct 17 13:00:01.200000 $(hostname) dockerd[1]: time="2026-10-17T13:00:01Z" level=error msg="failed to start container" container=0123abcd error="open /home/someone/f-src: no such file (10.1.2.3)"
-Oct 17 13:00:02.300000 $(hostname) dockerd[1]: level=error msg="restartmanger wait error: x"
+Oct 17 13:00:00.100000 $SCRUB_HOSTNAME dockerd[1]: unrelated line about /home/someone/x
+Oct 17 13:00:01.200000 $SCRUB_HOSTNAME dockerd[1]: time="2026-10-17T13:00:01Z" level=error msg="failed to start container" container=0123abcd error="open /home/someone/f-src: no such file (10.1.2.3)"
+Oct 17 13:00:02.300000 $SCRUB_HOSTNAME dockerd[1]: level=error msg="restartmanger wait error: x"
 JOURNAL
 m0b_journal_scrub "$tmp/j.raw" "$tmp/j.out"
-[[ $(wc -l <"$tmp/j.out") -eq 2 ]] && ! grep -qE "someone|10\.1\.2|$(hostname)" "$tmp/j.out" && grep -q 'container=0123abcd' "$tmp/j.out" &&
+[[ $(wc -l <"$tmp/j.out") -eq 2 ]] && ! grep -qE "someone|10\.1\.2" "$tmp/j.out" && ! grep -qiP "(?<![A-Za-z0-9])\\Q$SCRUB_HOSTNAME\\E(?![A-Za-z0-9])" "$tmp/j.out" && grep -q 'container=0123abcd' "$tmp/j.out" &&
   "$M0B_ROOT/scripts/scrub-fixture" --check "$tmp/j.out" 2>/dev/null && ok "journal: filtered to the two interesting lines, scrubbed, passes --check" || bad "journal scrub: $(cat "$tmp/j.out")"
 
 # ---- the boot stack is valid YAML with the pairs the expectations name
