@@ -44,21 +44,21 @@ func has(vs []string, want string) bool {
 	return false
 }
 
-// Requires=docker.service stops whalenurse when Docker is stopped, but nothing starts it again when Docker is started:
+// Requires=docker.service stops dokdosta when Docker is stopped, but nothing starts it again when Docker is started:
 // `enable` links it into multi-user.target only. WantedBy=docker.service makes a start of Docker (by hand, or by socket
-// activation) start whalenurse too. systemd-analyze verify does not read [Install], so it cannot catch this.
+// activation) start dokdosta too. systemd-analyze verify does not read [Install], so it cannot catch this.
 func TestSystemdUnitStartsAgainWithDocker(t *testing.T) {
-	u := unitValues(t, "../../examples/systemd/whalenurse.service")
+	u := unitValues(t, "../../examples/systemd/dokdosta.service")
 	if !has(u["Unit"]["Requires"], "docker.service") || !has(u["Unit"]["After"], "docker.service") {
-		t.Fatalf("[Unit] must keep Requires= and After=docker.service (plan §3.3(d): whalenurse stops before Docker): %v", u["Unit"])
+		t.Fatalf("[Unit] must keep Requires= and After=docker.service (plan §3.3(d): dokdosta stops before Docker): %v", u["Unit"])
 	}
 	if !has(u["Install"]["WantedBy"], "docker.service") {
-		t.Fatalf("[Install] WantedBy=%v: without docker.service, a stop and start of Docker leaves whalenurse stopped", u["Install"]["WantedBy"])
+		t.Fatalf("[Install] WantedBy=%v: without docker.service, a stop and start of Docker leaves dokdosta stopped", u["Install"]["WantedBy"])
 	}
 	if !has(u["Install"]["WantedBy"], "multi-user.target") {
-		t.Fatalf("[Install] WantedBy=%v: whalenurse must still start at boot", u["Install"]["WantedBy"])
+		t.Fatalf("[Install] WantedBy=%v: dokdosta must still start at boot", u["Install"]["WantedBy"])
 	}
 	if !has(u["Service"]["KillMode"], "mixed") {
-		t.Fatalf("[Service] KillMode=%v: a stop must SIGTERM whalenurse only, so a compose command in flight can finish", u["Service"]["KillMode"])
+		t.Fatalf("[Service] KillMode=%v: a stop must SIGTERM dokdosta only, so a compose command in flight can finish", u["Service"]["KillMode"])
 	}
 }

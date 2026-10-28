@@ -4,7 +4,7 @@
 # shellcheck shell=bash
 exp_e6() {
   begin E6 "recreate from a helper container with the stack mounted :ro"
-  local P=whalenurse-m0-e6 H=whalenurse-m0-e6helper dir hdir old new bin
+  local P=dokdosta-m0-e6 H=dokdosta-m0-e6helper dir hdir old new bin
   dir=$(stage e6 e6)
   bin=$(compose_plugin_path)
   m0_require_project "$P"

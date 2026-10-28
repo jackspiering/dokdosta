@@ -5,7 +5,7 @@
 # shellcheck shell=bash
 exp_e2() {
   begin E2 "non-forced up of network_mode dependents"
-  local P=whalenurse-m0-e2 dir parent dep newparent newdep
+  local P=dokdosta-m0-e2 dir parent dep newparent newdep
   dir=$(stage net e2)
   rec up.txt dcs "$P" "$dir" up -d --pull never --no-build
   parent=$(cid "$P" parent)

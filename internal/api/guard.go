@@ -39,7 +39,7 @@ func HostAllowed(hostHeader string, allowed []string) bool {
 	return false
 }
 
-// NormalizeHosts lowercases the entries of WHALENURSE_HTTP_ALLOWED_HOSTS and drops a port, brackets and a trailing dot,
+// NormalizeHosts lowercases the entries of DOKDOSTA_HTTP_ALLOWED_HOSTS and drops a port, brackets and a trailing dot,
 // so that "NAS.example.org:8484", "[fd00::5]" and "nas.example.org." all match the way HostAllowed compares.
 func NormalizeHosts(in []string) []string {
 	var out []string
@@ -89,7 +89,7 @@ func newAttemptLimiter(now func() time.Time) *attemptLimiter {
 }
 
 // clientKey is the client's IP (an IPv6 address is reduced to its /64, which a client controls entirely). It is the
-// connection's peer address, unless the peer is one of the trusted proxies (WHALENURSE_HTTP_TRUSTED_PROXIES): then it is
+// connection's peer address, unless the peer is one of the trusted proxies (DOKDOSTA_HTTP_TRUSTED_PROXIES): then it is
 // the client that proxy reports in X-Forwarded-For (see forwardedClient). Without that option, behind a reverse proxy
 // all clients share the proxy's one budget.
 func clientKey(r *http.Request, trusted []netip.Prefix) string {

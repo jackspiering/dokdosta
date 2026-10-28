@@ -116,7 +116,7 @@
       "labels": {
         "com.docker.compose.project": "media",
         "com.docker.compose.service": "vpn",
-        "whalenurse.enable": "true"
+        "dokdosta.enable": "true"
       }
     },
     {

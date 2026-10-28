@@ -25,7 +25,7 @@ func failWith(t *testing.T, stderr, code string) error {
 }
 
 // Compose's load errors can quote a line of the stack's .env or env_file (a dotenv parse error does), so its stderr
-// never goes into the error: only the exit status and the causes whalenurse knows by name do (plan §3.9: the environment
+// never goes into the error: only the exit status and the causes dokdosta knows by name do (plan §3.9: the environment
 // is never shown).
 func TestRunErrorDoesNotQuoteEnvFileValues(t *testing.T) {
 	err := failWith(t, `failed to read /srv/s/.env: line 3: unterminated quoted value "hunter2-planted`, "15")
@@ -43,10 +43,10 @@ func TestRunErrorDoesNotQuoteEnvFileValues(t *testing.T) {
 // registry login failures that docs/troubleshooting.md lists (the M7 positive control checks them in CI).
 func TestRunErrorKeepsTheKnownCauses(t *testing.T) {
 	for stderr, want := range map[string][]string{
-		"Error response from daemon: driver failed programming external connectivity on endpoint s-app-1 (0123): Bind for 0.0.0.0:80 failed: port is already allocated":                                                 {"port is already allocated"},
-		`failed to resolve reference "127.0.0.1:5000/whalenurse-test/auth-without:latest": pull access denied, repository does not exist or may require authorization: authorization failed: no basic auth credentials`: {"pull access denied", "no basic auth credentials"},
-		`Error response from daemon: Head "https://ghcr.io/v2/o/i/manifests/latest": unauthorized`:                                                                                                                      {"unauthorized"},
-		`Error response from daemon: Get "https://r.example/v2/": authentication required`:                                                                                                                              {"authentication required"},
+		"Error response from daemon: driver failed programming external connectivity on endpoint s-app-1 (0123): Bind for 0.0.0.0:80 failed: port is already allocated":                                               {"port is already allocated"},
+		`failed to resolve reference "127.0.0.1:5000/dokdosta-test/auth-without:latest": pull access denied, repository does not exist or may require authorization: authorization failed: no basic auth credentials`: {"pull access denied", "no basic auth credentials"},
+		`Error response from daemon: Head "https://ghcr.io/v2/o/i/manifests/latest": unauthorized`:                                                                                                                    {"unauthorized"},
+		`Error response from daemon: Get "https://r.example/v2/": authentication required`:                                                                                                                            {"authentication required"},
 		"no such service: web":                                                           {"no such service"},
 		"Error response from daemon: No such image: x:latest":                            {"no such image"},
 		"Error response from daemon: network s_default not found":                        {"network not found"},
@@ -87,7 +87,7 @@ func TestCommandStringIsQuoted(t *testing.T) {
 	}
 }
 
-// A compose command that is cancelled (its timeout, or the end of whalenurse's shutdown grace) gets SIGTERM first, so
+// A compose command that is cancelled (its timeout, or the end of dokdosta's shutdown grace) gets SIGTERM first, so
 // compose can stop what it is doing, and SIGKILL only StopDelay later.
 func TestExecRunnerStopsComposeWithSIGTERMFirst(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())

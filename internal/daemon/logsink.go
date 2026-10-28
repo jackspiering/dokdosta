@@ -4,8 +4,8 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
 )
 
 // LogSink returns the domain-event subscriber that writes the structured log.

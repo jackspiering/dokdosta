@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // created puts a container in the state `docker compose up` leaves it in before it starts it.

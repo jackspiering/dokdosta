@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
+	"github.com/jackspiering/dokdosta/internal/api"
 )
 
 //go:embed templates/*.html
@@ -81,7 +81,7 @@ type page struct {
 
 	// container
 	Detail   *api.ContainerDetailDoc
-	Scope    string // project/service, as `whalenurse unsuspend` takes it
+	Scope    string // project/service, as `dokdosta unsuspend` takes it
 	Timeline eventTable
 	Debug    bool          // ?debug=1: the events the dashboard hides by default are shown
 	Banner   template.HTML // the SUSPENDED banner's sentence
@@ -241,7 +241,7 @@ func (h *handler) container(w http.ResponseWriter, r *http.Request) {
 	debug := r.URL.Query().Get("debug") == "1"
 	d, ok := h.svc.ContainerOpts(r.PathValue("key"), debug)
 	if !ok {
-		h.fail(w, http.StatusNotFound, "No such container", "whalenurse has not seen a container with that key since it started.")
+		h.fail(w, http.StatusNotFound, "No such container", "dokdosta has not seen a container with that key since it started.")
 		return
 	}
 	p := h.base("container", d.Name)

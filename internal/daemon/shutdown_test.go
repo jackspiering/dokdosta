@@ -6,12 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
-// A stop of whalenurse (SIGTERM: an upgrade, systemctl restart, a reboot) during a heal must neither kill the action
+// A stop of dokdosta (SIGTERM: an upgrade, systemctl restart, a reboot) during a heal must neither kill the action
 // halfway (a force-recreate killed between its create and its start leaves the service down) nor spend the rung, which
 // would SUSPEND the container on the next run instead of finishing the repair.
 

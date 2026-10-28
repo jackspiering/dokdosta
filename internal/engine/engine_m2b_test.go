@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // M2b: rung 2 is planned by the engine and carried out (after the drift guard) by the daemon.
@@ -135,7 +135,7 @@ func TestRecreateStaleSkipsTheRestartRung(t *testing.T) {
 	if rec2.Count(RungUnavailable) != 1 || rec2.Count(Suspended) != 1 || rec2.Count(ActionStarted) != 0 {
 		t.Fatalf("%v", rec2.Types())
 	}
-	// And with whalenurse.actions=restart the same.
+	// And with dokdosta.actions=restart the same.
 	c := cfg
 	c.Actions = []string{config.RungRestart}
 	e3, _, rec3 := newEngine(t, 0)

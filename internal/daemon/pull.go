@@ -11,11 +11,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // pullTimeout bounds `compose pull`: an image can be large. The loop is busy for that long (rung 2's recreate is too,
@@ -25,7 +25,7 @@ const pullTimeout = 10 * time.Minute
 // metaTagMoved is the prefix of the store keys that remember which container moved which tag.
 const metaTagMoved = "tagmoved:"
 
-// tagMove is a record that whalenurse's own pull rung moved a tag: other stacks that share the tag see image drift
+// tagMove is a record that dokdosta's own pull rung moved a tag: other stacks that share the tag see image drift
 // afterwards, and the drift message names who did it and when (plan §3.6, §3.7).
 type tagMove struct {
 	Ref      string    `json:"ref"`       // the normalized reference
@@ -35,7 +35,7 @@ type tagMove struct {
 	New      string    `json:"new"`       // ... and after
 	OldPlain string    `json:"old_plain"` // the same without a platform: the index digest on the containerd store
 	NewPlain string    `json:"new_plain"`
-	// Followed marks a move that was not made by whalenurse: rung 2 recreated a pull-enabled container onto the image the
+	// Followed marks a move that was not made by dokdosta: rung 2 recreated a pull-enabled container onto the image the
 	// tag had been moved to by someone else (plan v3.13 item 6). The dependents step may take it like a pull's, but it is
 	// not named as the mover in a drift block of another stack.
 	Followed bool `json:"followed,omitempty"`
@@ -94,7 +94,7 @@ func normalizeRef(ref string) string {
 }
 
 // recordMove remembers the move: in memory, and in the store when there is one, so that it is still known after a restart
-// of whalenurse (a drift block on another stack can come days later).
+// of dokdosta (a drift block on another stack can come days later).
 func (d *Daemon) recordMove(m tagMove) {
 	if d.moves == nil {
 		d.moves = map[string]tagMove{}
@@ -142,14 +142,14 @@ func (d *Daemon) moverOf(ctx context.Context, c docker.Container) (tagMove, bool
 }
 
 // guardVerdict runs the drift guard (plan §3.6) before a recreate or a pull and says whether the action may go ahead. When it may not, the container is SUSPENDED (Blocked); when the findings were
-// verified drift and WHALENURSE_DRIFT_GUARD=warn, the action goes ahead and says so. It runs in dry-run too: it only reads.
+// verified drift and DOKDOSTA_DRIFT_GUARD=warn, the action goes ahead and says so. It runs in dry-run too: it only reads.
 func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project, allowImageMove, own bool) bool {
 	fs := d.driftFindings(ctx, c, p, allowImageMove, own)
 	if len(fs) == 0 {
 		return true
 	}
 	if ctx.Err() != nil {
-		return false // whalenurse is stopping: a check cut short is not a finding, and nothing is blocked or recorded
+		return false // dokdosta is stopping: a check cut short is not a finding, and nothing is blocked or recorded
 	}
 	var findings []string
 	var extra map[string]string
@@ -158,7 +158,7 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 		text := f.String()
 		if f.Check == compose.CheckImage {
 			if m, ok := d.moverOf(ctx, c); ok && !m.Followed { // a followed move was made by someone else
-				text += fmt.Sprintf(" (whalenurse moved this tag: %s pulled it at %s)", m.Key, m.At.UTC().Format(time.RFC3339))
+				text += fmt.Sprintf(" (dokdosta moved this tag: %s pulled it at %s)", m.Key, m.At.UTC().Format(time.RFC3339))
 				extra = map[string]string{"moved_by": m.Key, "moved_at": m.At.UTC().Format(time.RFC3339), "moved_ref": m.Ref}
 			}
 		}
@@ -170,7 +170,7 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 		return true
 	}
 	if d.cfg.DriftGuard == config.DriftWarn {
-		findings = append(findings, "WHALENURSE_DRIFT_GUARD=warn does not override a check that could not be made")
+		findings = append(findings, "DOKDOSTA_DRIFT_GUARD=warn does not override a check that could not be made")
 	}
 	d.eng.BlockedWith(t, dec, findings, extra)
 	return false
@@ -215,7 +215,7 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 	// The pull rung respects a service's pull_policy never and build (plan v3.8): it does not apply, the ladder is spent.
 	if why := d.pullPolicyRefusal(ctx, p); why != "" {
 		if ctx.Err() != nil {
-			return // the read failed because whalenurse is stopping, not because the policy is unreadable
+			return // the read failed because dokdosta is stopping, not because the policy is unreadable
 		}
 		d.eng.RungNotApplicable(t, config.RungPull, why, cfg)
 		d.schedule(t.Key, d.clk.Now().Add(d.cfg.Grace))
@@ -243,7 +243,7 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 		return
 	}
 	d.eng.Begin(t, plan, dec)
-	// The pull itself stops with whalenurse (killing a pull changes no container) and is then not counted.
+	// The pull itself stops with dokdosta (killing a pull changes no container) and is then not counted.
 	pctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
 	d.markActing()
@@ -252,7 +252,7 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 		d.eng.Interrupt(t, plan, pullErr)
 		return
 	}
-	// Whatever follows a pull that ran is finished even when whalenurse is stopping: a pull that moved the image must be
+	// Whatever follows a pull that ran is finished even when dokdosta is stopping: a pull that moved the image must be
 	// followed by its up, or the next run's pull would find "no newer image" and SUSPEND a container never moved onto it.
 	actx, acancel := d.actionContext(ctx, composeTimeout)
 	defer acancel()
@@ -406,7 +406,7 @@ func (d *Daemon) markActing() { d.acting.Store(d.clk.Now().UnixNano()) }
 // that stops it. The loop is synchronous, so during a pull or a recreate it does not tick and would write nothing; a
 // last_seen that old would make the shutdown window of a daemon restart (plan §3.3 rule 4: 30 s before last_seen, up to
 // 5 minutes after it within one boot) miss the containers that restart stopped, and a `restart: "no"` app that exits 1 on
-// SIGTERM would be started by whalenurse. The goroutine does not touch d.lastBeat, which only the loop owns; the store's
+// SIGTERM would be started by dokdosta. The goroutine does not touch d.lastBeat, which only the loop owns; the store's
 // SetMeta is safe from another goroutine (database/sql).
 func (d *Daemon) keepAlive() (stop func()) {
 	if d.o.Meta == nil {

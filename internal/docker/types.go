@@ -1,5 +1,5 @@
 // Package docker is the only place that talks to the Docker Engine API. It
-// exposes small snapshot types and interfaces so the rest of whalenurse never
+// exposes small snapshot types and interfaces so the rest of dokdosta never
 // imports the (pre-1.0) moby client.
 package docker
 
@@ -17,7 +17,7 @@ var ErrNotFound = errors.New("no such container")
 // ErrImageNotFound is returned when an image reference is not present locally, or has no image for the platform.
 var ErrImageNotFound = errors.New("no such image")
 
-// Compose and whalenurse label keys used across packages.
+// Compose and dokdosta label keys used across packages.
 const (
 	LabelProject       = "com.docker.compose.project"
 	LabelService       = "com.docker.compose.service"
@@ -72,7 +72,7 @@ type Summary struct {
 	Created     time.Time
 }
 
-// Event is a container event, reduced to what whalenurse reads. Action is the
+// Event is a container event, reduced to what dokdosta reads. Action is the
 // bare action: "health_status: unhealthy" is split into Action "health_status"
 // and Detail "unhealthy"; "exec_start: cmd" into "exec_start" and the command.
 type Event struct {
@@ -100,7 +100,7 @@ func IsReloadSignal(sig string) bool {
 	return false
 }
 
-// WatchedActions are the container event actions whalenurse acts on, and the only ones it subscribes to: the
+// WatchedActions are the container event actions dokdosta acts on, and the only ones it subscribes to: the
 // subscription's `event` filter and the daemon's HandleEvent both read this list. dockerd prefix-matches the filter once
 // health_status is in it, so "health_status: unhealthy" passes, and no other entry is a prefix of an exec_* action.
 var WatchedActions = []string{"create", "start", "die", "kill", "oom", "destroy", "health_status"}
@@ -140,7 +140,7 @@ type Reader interface {
 	ImageLabels(ctx context.Context, imageID string) (map[string]string, error)
 }
 
-// ServerInfo is the part of the Engine's /version that whalenurse reads.
+// ServerInfo is the part of the Engine's /version that dokdosta reads.
 type ServerInfo struct {
 	Version    string // 29.9.1
 	APIVersion string // 1.56

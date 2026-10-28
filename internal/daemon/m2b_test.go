@@ -13,12 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/store"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/store"
 )
 
 // M2b: rung 2 through compose, the drift guard, the version gate and the dependents step, against a fake Docker and a fake
@@ -288,7 +288,7 @@ func TestVersionSkewBlocksOnlyTheBundledCompose(t *testing.T) {
 	h.set(web.ID, unhealthy)
 	h.advance(6 * time.Minute)
 	b := h.events(engine.DriftBlocked)
-	if len(b) != 1 || !strings.Contains(b[0].Message, "can't verify drift (compose 5.2.0 on host vs 5.6.0 in whalenurse)") {
+	if len(b) != 1 || !strings.Contains(b[0].Message, "can't verify drift (compose 5.2.0 on host vs 5.6.0 in dokdosta)") {
 		t.Fatalf("%+v", b)
 	}
 }
@@ -664,7 +664,7 @@ func TestDependentIncidentClosesAndTheNextParentRecreateRepairsItAgain(t *testin
 	_ = dep
 }
 
-// restartWithStore stands for a restart of whalenurse on the same store (and the compose fake of the test).
+// restartWithStore stands for a restart of dokdosta on the same store (and the compose fake of the test).
 func (h *cfH) restartWithStore(st *store.Store) {
 	h.t.Helper()
 	with := h.withStore(st, "boot-A")
@@ -675,8 +675,8 @@ func (h *cfH) restartWithStore(st *store.Store) {
 }
 
 // Compose writes an empty depends_on label on a service recreated with `up --no-deps` (create.go builds it from the services
-// in scope), which is how whalenurse recreates a dependent. The parent of a dependent that is not opted in is then found
-// only through what whalenurse learned, so the second parent recreate (here, after a restart of whalenurse) must still
+// in scope), which is how dokdosta recreates a dependent. The parent of a dependent that is not opted in is then found
+// only through what dokdosta learned, so the second parent recreate (here, after a restart of dokdosta) must still
 // repair it. Found on a real host: before, the second repair never happened and nothing said so.
 func TestDependentIsRepairedAgainAfterComposeEmptiedItsDependsOnLabel(t *testing.T) {
 	st := openStore(t)
@@ -1365,7 +1365,7 @@ func TestARemovedContainerThatWasNoDependentLeavesNoParentsRow(t *testing.T) {
 
 // A sidecar without its own opt-in that was stopped by hand stays stopped when its parent is recreated: its kill feeds the
 // manual-stop evidence like an opted-in container's (WN-028, plan v3.13 item 2a). One that exited on its own (a die with no
-// kill) is recreated with its parent (item 2b), and a sidecar labelled whalenurse.enable=false gets no state at all.
+// kill) is recreated with its parent (item 2b), and a sidecar labelled dokdosta.enable=false gets no state at all.
 func TestStoppedSidecarWithoutOptInStaysStoppedWhenItsParentIsRecreated(t *testing.T) {
 	type variant struct {
 		name        string
@@ -1618,7 +1618,7 @@ func TestSidecarOptInFollowsItsNamespaceParentOnly(t *testing.T) {
 			t.Fatalf("%q", got)
 		}
 	})
-	t.Run("what was learned survives a restart of whalenurse", func(t *testing.T) {
+	t.Run("what was learned survives a restart of dokdosta", func(t *testing.T) {
 		st := openStore(t)
 		h := newCompose(t, nil, nil, docker.ServerInfo{})
 		h.restartWithStore(st)
@@ -1642,7 +1642,7 @@ func TestSidecarOptInFollowsItsNamespaceParentOnly(t *testing.T) {
 	})
 }
 
-// A sidecar that whalenurse first sees after its parent is gone has no learned namespace parent: depends_on decides.
+// A sidecar that dokdosta first sees after its parent is gone has no learned namespace parent: depends_on decides.
 func TestSidecarFirstSeenAfterItsParentIsGoneIsDecidedByDependsOn(t *testing.T) {
 	h := newCompose(t, nil, nil, docker.ServerInfo{})
 	h.svc(hexID("c1"), "p", "parent")

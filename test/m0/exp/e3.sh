@@ -3,7 +3,7 @@
 # shellcheck shell=bash
 exp_e3() {
   begin E3 "depends_on restart: true vs --no-deps"
-  local P=whalenurse-m0-e3 dir parent plain netdep t0 t1 v
+  local P=dokdosta-m0-e3 dir parent plain netdep t0 t1 v
   dir=$(stage e3 e3)
   rec up.txt dcs "$P" "$dir" up -d --pull never --no-build
   parent=$(cid "$P" parent)

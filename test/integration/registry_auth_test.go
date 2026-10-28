@@ -21,19 +21,19 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // M7: the pull rung against a registry that wants a login (plan v3.12 item 9). The registry is registry:2 with htpasswd
-// auth, a whalenurse-test-registry-* project on 127.0.0.1:<port> like the one of M4. The credentials are a throwaway
+// auth, a dokdosta-test-registry-* project on 127.0.0.1:<port> like the one of M4. The credentials are a throwaway
 // user and password made for the test; they are written to two directories the test makes and removes: a docker config
-// for the test's own pushes, and the WHALENURSE_REGISTRY_AUTH_DIR given to whalenurse.
+// for the test's own pushes, and the DOKDOSTA_REGISTRY_AUTH_DIR given to dokdosta.
 
 const (
-	regUser = "whalenurse-test-user"
+	regUser = "dokdosta-test-user"
 	regPass = "reg-PASS-SECRET-93017"
 )
 
@@ -52,7 +52,7 @@ services:
     ports: ["127.0.0.1::5000"]
     environment:
       REGISTRY_AUTH: htpasswd
-      REGISTRY_AUTH_HTPASSWD_REALM: whalenurse-test
+      REGISTRY_AUTH_HTPASSWD_REALM: dokdosta-test
       REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
     volumes:
       - ./auth:/auth:ro
@@ -122,10 +122,10 @@ func writeAuths(t *testing.T, dir, config string, mode os.FileMode) {
 	}
 }
 
-// authDirFor makes a WHALENURSE_REGISTRY_AUTH_DIR that a process other than the owner can read and no one can write.
+// authDirFor makes a DOKDOSTA_REGISTRY_AUTH_DIR that a process other than the owner can read and no one can write.
 func (r *testRegistry) authDir(t *testing.T) string {
 	t.Helper()
-	dir := tempDir(t, "whalenurse-test-auth-")
+	dir := tempDir(t, "dokdosta-test-auth-")
 	writeAuths(t, dir, r.authsJSON(), 0o444)
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func snapshot(t *testing.T, dir string) string {
 	return strings.Join(lines, "\n")
 }
 
-// The positive control: without WHALENURSE_REGISTRY_AUTH_DIR the same stack, with a newer image waiting in the registry,
+// The positive control: without DOKDOSTA_REGISTRY_AUTH_DIR the same stack, with a newer image waiting in the registry,
 // cannot pull it. The pull fails with a login error, the container ends SUSPENDED, nothing moved. Without this, the next
 // test could pass for a reason other than the credentials.
 func TestPullRungOnAnAuthenticatedRegistryFailsWithoutTheCredentials(t *testing.T) {
@@ -214,7 +214,7 @@ func TestPullRungOnAnAuthenticatedRegistryFailsWithoutTheCredentials(t *testing.
 	}
 }
 
-// With WHALENURSE_REGISTRY_AUTH_DIR (mode 0555, the file 0444) the same pull succeeds: the pull rung upgrades and recovers.
+// With DOKDOSTA_REGISTRY_AUTH_DIR (mode 0555, the file 0444) the same pull succeeds: the pull rung upgrades and recovers.
 // Only the pull ran with the directory, and compose wrote nothing into it.
 func TestPullRungLogsInWithTheRegistryAuthDirAndLeavesItAlone(t *testing.T) {
 	g, cli := requireIntegration(t)
@@ -253,14 +253,14 @@ func TestPullRungLogsInWithTheRegistryAuthDirAndLeavesItAlone(t *testing.T) {
 }
 
 // The real deployment shape: the image, a read-only root filesystem, uid 65532, the credentials directory mounted :ro. The
-// containerized whalenurse pulls from the authenticated registry; the mount is unchanged; the password is nowhere in its
+// containerized dokdosta pulls from the authenticated registry; the mount is unchanged; the password is nowhere in its
 // log or in `status`; `status` names the registry.
 func TestImagePullsFromAnAuthenticatedRegistryWithAReadOnlyMount(t *testing.T) {
 	g, cli := requireIntegration(t)
 	ctx := context.Background()
-	img := os.Getenv("WHALENURSE_TEST_IMAGE")
+	img := os.Getenv("DOKDOSTA_TEST_IMAGE")
 	if img == "" {
-		t.Skip("set WHALENURSE_TEST_IMAGE to a locally built image to test it")
+		t.Skip("set DOKDOSTA_TEST_IMAGE to a locally built image to test it")
 	}
 	reg := startAuthRegistry(t, g, cli)
 	ref := reg.ref("auth-image")
@@ -271,8 +271,8 @@ func TestImagePullsFromAnAuthenticatedRegistryWithAReadOnlyMount(t *testing.T) {
 	s := authImageStack(t, g, cli, "imgauth", img, dir, reg.authsJSON(), pullAppWith(ref, pullOpts{pull: true}))
 	s.up("app")
 	waitFor(t, "app to be unhealthy", 30*time.Second, func() bool { return s.container("app").Health == "unhealthy" })
-	s.up("whalenurse")
-	id := s.container("whalenurse").ID
+	s.up("dokdosta")
+	id := s.container("dokdosta").ID
 	if !inspectReadonly(t, id) {
 		t.Fatal("the image test must run with a read-only root filesystem")
 	}
@@ -289,11 +289,11 @@ func TestImagePullsFromAnAuthenticatedRegistryWithAReadOnlyMount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := g.Ctr(ctx, "exec", id, "/whalenurse", "status")
+	out, err := g.Ctr(ctx, "exec", id, "/dokdosta", "status")
 	if err != nil {
 		t.Fatal(err)
 	}
-	js, err := g.Ctr(ctx, "exec", id, "/whalenurse", "status", "--json")
+	js, err := g.Ctr(ctx, "exec", id, "/dokdosta", "status", "--json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,19 +319,19 @@ func TestImagePullsFromAnAuthenticatedRegistryWithAReadOnlyMount(t *testing.T) {
 // the credential.
 func TestImageRefusesACredentialsFileWithACredsStore(t *testing.T) {
 	g, cli := requireIntegration(t)
-	img := os.Getenv("WHALENURSE_TEST_IMAGE")
+	img := os.Getenv("DOKDOSTA_TEST_IMAGE")
 	if img == "" {
-		t.Skip("set WHALENURSE_TEST_IMAGE to a locally built image to test it")
+		t.Skip("set DOKDOSTA_TEST_IMAGE to a locally built image to test it")
 	}
-	dir := tempDir(t, "whalenurse-test-auth-")
+	dir := tempDir(t, "dokdosta-test-auth-")
 	writeAuths(t, dir, `{"auths": {"127.0.0.1:1": {"auth": "`+base64.StdEncoding.EncodeToString([]byte(regUser+":"+regPass))+`"}}, "credsStore": "pass"}`, 0o444)
 	s := authImageStack(t, g, cli, "imgauthbad", img, dir, "", "")
-	s.up("whalenurse")
-	id := s.container("whalenurse").ID
-	waitFor(t, "whalenurse to exit", 60*time.Second, func() bool { return !s.container("whalenurse").Running })
+	s.up("dokdosta")
+	id := s.container("dokdosta").ID
+	waitFor(t, "dokdosta to exit", 60*time.Second, func() bool { return !s.container("dokdosta").Running })
 	logs, _ := exec.Command("docker", "logs", id).CombinedOutput()
 	text := string(logs)
-	if !strings.Contains(text, "WHALENURSE_REGISTRY_AUTH_DIR") || !strings.Contains(text, `"credsStore"`) {
+	if !strings.Contains(text, "DOKDOSTA_REGISTRY_AUTH_DIR") || !strings.Contains(text, `"credsStore"`) {
 		t.Fatalf("the refusal should name the variable and the key:\n%s", text)
 	}
 	if strings.Contains(text, regPass) {
@@ -339,13 +339,13 @@ func TestImageRefusesACredentialsFileWithACredsStore(t *testing.T) {
 	}
 }
 
-// authImageStack is a project with the whalenurse image (read-only root, nonroot, the socket's group, the host's compose
+// authImageStack is a project with the dokdosta image (read-only root, nonroot, the socket's group, the host's compose
 // plugin and the stacks directory read-only at the identical path) and dir mounted read-only at /registry-auth. services
 // is more of the project's compose file ("" for none).
 func authImageStack(t *testing.T, g *Guard, cli *docker.Moby, name, img, dir, _ string, services string) *stack {
 	t.Helper()
 	if !strings.HasPrefix(img, TagPrefix) {
-		t.Fatalf("image %q: only whalenurse-test/* local tags are used", img)
+		t.Fatalf("image %q: only dokdosta-test/* local tags are used", img)
 	}
 	fi, err := os.Stat("/var/run/docker.sock")
 	if err != nil {
@@ -355,7 +355,7 @@ func authImageStack(t *testing.T, g *Guard, cli *docker.Moby, name, img, dir, _ 
 	s := newStack(t, g, cli, name, "services: {}")
 	body := fmt.Sprintf(`
 services:
-  whalenurse:
+  dokdosta:
     image: %s
     restart: "no"
     read_only: true
@@ -370,7 +370,7 @@ services:
       - "%s:%s:ro"
       - "%s:/registry-auth:ro"
     environment:
-%s      WHALENURSE_REGISTRY_AUTH_DIR: /registry-auth
+%s      DOKDOSTA_REGISTRY_AUTH_DIR: /registry-auth
 %s
 volumes:
   data: {}

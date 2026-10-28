@@ -1,7 +1,7 @@
-// Package control serves whalenurse over a local unix socket: /healthz for the
+// Package control serves dokdosta over a local unix socket: /healthz for the
 // image's HEALTHCHECK (distroless has no shell or curl) and the commands of the
 // CLI (pause, resume, unsuspend, status). The commands are writes, so they are
-// served on the socket only: the TCP listener (WHALENURSE_HTTP_ADDR) gets the
+// served on the socket only: the TCP listener (DOKDOSTA_HTTP_ADDR) gets the
 // read-only api.Handler and has no write endpoints at all (plan §2, *Control in v1*).
 package control
 
@@ -93,7 +93,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 // with mode 0600; the parent directory must exist and be writable.
 //
 // A socket left at the path by a process that is gone is replaced. A socket that
-// answers belongs to a whalenurse that is running (a second `run` beside the live
+// answers belongs to a dokdosta that is running (a second `run` beside the live
 // daemon, by `docker exec`): Serve returns ErrInUse and leaves it alone. Anything
 // at the path that is not a socket is an error and is not deleted. On shutdown the
 // path is removed only while it is still this listener's socket.
@@ -196,7 +196,7 @@ func Do(ctx context.Context, path, method, urlPath string, body any) (int, []byt
 		}
 		rd = strings.NewReader(string(b))
 	}
-	req, err := http.NewRequestWithContext(ctx, method, "http://whalenurse"+urlPath, rd)
+	req, err := http.NewRequestWithContext(ctx, method, "http://dokdosta"+urlPath, rd)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -222,7 +222,7 @@ func Get(ctx context.Context, path, urlPath string) (int, string, error) {
 func Command(ctx context.Context, path, name string, req Request) (string, error) {
 	code, b, err := Do(ctx, path, http.MethodPost, "/v1/"+name, req)
 	if err != nil {
-		return "", fmt.Errorf("cannot reach the whalenurse daemon on %s (is it running, and are you in the same container?): %w", path, err)
+		return "", fmt.Errorf("cannot reach the dokdosta daemon on %s (is it running, and are you in the same container?): %w", path, err)
 	}
 	var rep Reply
 	if err := json.Unmarshal(b, &rep); err != nil {

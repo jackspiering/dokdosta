@@ -3,7 +3,7 @@
 # through ro_docker, which allowlists read-only subcommands and fails closed.
 # shellcheck shell=bash
 
-ro_die() { printf 'whalenurse-m0: %s\n' "$*" >&2; exit 2; }
+ro_die() { printf 'dokdosta-m0: %s\n' "$*" >&2; exit 2; }
 
 # Allowed: ps, inspect, events, version, info, and `compose version`.
 # Anything else (stop, restart, rm, run, exec, compose up, ...) is refused.

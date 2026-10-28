@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/daemon"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/daemon"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
-// M2b integration tests: rung 2 and the dependents step through a real compose, in whalenurse-test-* projects only. CI runs
+// M2b integration tests: rung 2 and the dependents step through a real compose, in dokdosta-test-* projects only. CI runs
 // them against compose v5.2.0, v5.6.0 and the latest release, on both image stores.
 
 const loopCmd = `["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done"]`
@@ -31,7 +31,7 @@ func brokenService(name, extra string) string {
   %s:
     image: busybox:1.37
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     stop_grace_period: 2s
     command: %s
     healthcheck:
@@ -141,7 +141,7 @@ services:
     image: `+tag+`
     pull_policy: always
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     stop_grace_period: 2s
     command: `+loopCmd+`
     healthcheck:
@@ -236,7 +236,7 @@ func TestDriftGuardBlocksAfterAComposeEdit(t *testing.T) {
 	}
 }
 
-// retag moves a whalenurse-test/ tag onto a different image, the way `docker build -t` or a pull does.
+// retag moves a dokdosta-test/ tag onto a different image, the way `docker build -t` or a pull does.
 func retag(t *testing.T, g *Guard, tag string) {
 	t.Helper()
 	if err := g.Build(context.Background(), tag, "FROM busybox:1.37\nRUN touch /moved\n"); err != nil {
@@ -293,7 +293,7 @@ func sidecarStack(t *testing.T, g *Guard, cli *docker.Moby, name string, tmpfsFl
   parent:
     image: busybox:1.37
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     stop_grace_period: 2s
     command: %s
     healthcheck:
@@ -307,7 +307,7 @@ func sidecarStack(t *testing.T, g *Guard, cli *docker.Moby, name string, tmpfsFl
   parent:
     image: busybox:1.37
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     stop_grace_period: 2s
     tmpfs: ["/ok"]
     command: %s
@@ -321,7 +321,7 @@ func sidecarStack(t *testing.T, g *Guard, cli *docker.Moby, name string, tmpfsFl
 	if depImage == "" {
 		depImage = "busybox:1.37"
 	}
-	depLabels := "    labels:\n      whalenurse.enable: \"true\"\n"
+	depLabels := "    labels:\n      dokdosta.enable: \"true\"\n"
 	if !depOptIn {
 		depLabels = "" // repaired by the dependents step all the same, because its parent is opted in (plan v3.6)
 	}
@@ -365,7 +365,7 @@ func sharesNamespace(t *testing.T, g *Guard, a, b string) bool {
 	return ns(a) == ns(b)
 }
 
-// E1 and E2 through whalenurse: the parent needs a recreate (a restart does not repair it), and its sidecar, which is left
+// E1 and E2 through dokdosta: the parent needs a recreate (a restart does not repair it), and its sidecar, which is left
 // pointing at a parent that is gone, is recreated by compose with the non-forced up and never restarted through the API.
 func TestDependentIsRecreatedAfterItsParentIsRecreated(t *testing.T) {
 	g, cli := requireIntegration(t)
@@ -415,7 +415,7 @@ func TestDependentIsRecreatedAfterItsParentIsRecreated(t *testing.T) {
 	}
 }
 
-// E1 with the parent recreated by someone else before whalenurse looks: the sidecar is running, unhealthy (it only has a
+// E1 with the parent recreated by someone else before dokdosta looks: the sidecar is running, unhealthy (it only has a
 // loopback of its own), and a restart would turn it into an exited container. It is recreated instead. The sidecar is not
 // opted in itself: the dependents step repairs it because its parent is (plan v3.6).
 func TestStaleDependentOfAnExternallyRecreatedParentIsRecreatedNotRestarted(t *testing.T) {
@@ -447,7 +447,7 @@ func TestStaleDependentOfAnExternallyRecreatedParentIsRecreatedNotRestarted(t *t
 	}
 }
 
-// Compose writes the depends_on label of the services it has in scope, so a sidecar that whalenurse recreated with
+// Compose writes the depends_on label of the services it has in scope, so a sidecar that dokdosta recreated with
 // `up --no-deps` comes back with an empty one, and its parent could no longer be found by it. The second time the parent is
 // recreated the sidecar must still be repaired (plan v3.11). The sidecar is not opted in itself.
 func TestSidecarIsRepairedAgainWhenTheParentIsRecreatedASecondTime(t *testing.T) {
@@ -610,7 +610,7 @@ func TestDryRunNeverRecreates(t *testing.T) {
 	}
 }
 
-// ---- the image: a containerized whalenurse recreating from the stack's own files -------------------------------------
+// ---- the image: a containerized dokdosta recreating from the stack's own files -------------------------------------
 
 type imageStatus struct {
 	Compose struct {
@@ -629,25 +629,25 @@ type imageStatus struct {
 }
 
 func imageEnv() string {
-	return fmt.Sprintf(`      WHALENURSE_HOST_ID: %s
-      WHALENURSE_GRACE: 2s
-      WHALENURSE_POLL_INTERVAL: 5s
-      WHALENURSE_COOLDOWN: 5s
-      WHALENURSE_STARTUP_SETTLE: 0s
+	return fmt.Sprintf(`      DOKDOSTA_HOST_ID: %s
+      DOKDOSTA_GRACE: 2s
+      DOKDOSTA_POLL_INTERVAL: 5s
+      DOKDOSTA_COOLDOWN: 5s
+      DOKDOSTA_STARTUP_SETTLE: 0s
 `, testHost)
 }
 
-// imageStack: a whalenurse container (read-only rootfs, nonroot, the socket's group) that heals a stuck app in the same
+// imageStack: a dokdosta container (read-only rootfs, nonroot, the socket's group) that heals a stuck app in the same
 // project. hostPlugin mounts the host's compose at /host/docker-compose, read-only; the stacks directory is mounted
 // read-only at the identical path either way (plan §3.4, E6).
 func imageStack(t *testing.T, g *Guard, cli *docker.Moby, name string, hostPlugin bool) (*stack, string) {
 	t.Helper()
-	img := os.Getenv("WHALENURSE_TEST_IMAGE")
+	img := os.Getenv("DOKDOSTA_TEST_IMAGE")
 	if img == "" {
-		t.Skip("set WHALENURSE_TEST_IMAGE to a locally built image to test it")
+		t.Skip("set DOKDOSTA_TEST_IMAGE to a locally built image to test it")
 	}
 	if !strings.HasPrefix(img, TagPrefix) {
-		t.Fatalf("image %q: only whalenurse-test/* local tags are used", img)
+		t.Fatalf("image %q: only dokdosta-test/* local tags are used", img)
 	}
 	fi, err := os.Stat("/var/run/docker.sock")
 	if err != nil {
@@ -666,7 +666,7 @@ func imageStack(t *testing.T, g *Guard, cli *docker.Moby, name string, hostPlugi
 	}
 	body := fmt.Sprintf(`
 services:
-  whalenurse:
+  dokdosta:
     image: %s
     read_only: true
     cap_drop: [ALL]
@@ -687,15 +687,15 @@ volumes:
 	return s, img
 }
 
-// imageStatusOf runs `whalenurse status` in the container. The control socket appears a moment after the container
+// imageStatusOf runs `dokdosta status` in the container. The control socket appears a moment after the container
 // starts, so a failure is retried until a bounded deadline instead of failing the test on the first try.
 func imageStatusOf(t *testing.T, g *Guard, s *stack) imageStatus {
 	t.Helper()
-	id := s.container("whalenurse").ID
+	id := s.container("dokdosta").ID
 	var st imageStatus
 	var last error
-	waitFor(t, "whalenurse status to answer on the control socket", 60*time.Second, func() bool {
-		out, err := g.Ctr(context.Background(), "exec", id, "/whalenurse", "status", "--json")
+	waitFor(t, "dokdosta status to answer on the control socket", 60*time.Second, func() bool {
+		out, err := g.Ctr(context.Background(), "exec", id, "/dokdosta", "status", "--json")
 		if err == nil {
 			if err = json.Unmarshal([]byte(out), &st); err == nil {
 				return true
@@ -720,24 +720,24 @@ func suspendedIn(st imageStatus, key string) (bool, string) {
 	return false, ""
 }
 
-// The containerized whalenurse performs rung 2 itself: read-only rootfs, the nonroot user, the host's compose plugin
+// The containerized dokdosta performs rung 2 itself: read-only rootfs, the nonroot user, the host's compose plugin
 // mounted read-only, the stacks directory mounted read-only at the identical path.
 func TestImageRecreatesWithTheHostPlugin(t *testing.T) {
 	g, cli := requireIntegration(t)
 	s, _ := imageStack(t, g, cli, "imgrecreate", true)
 	before := s.container("app")
-	s.up("whalenurse")
-	if !inspectReadonly(t, s.container("whalenurse").ID) {
+	s.up("dokdosta")
+	if !inspectReadonly(t, s.container("dokdosta").ID) {
 		t.Fatal("the image test must run with a read-only root filesystem")
 	}
-	waitFor(t, "the app to be recreated by the containerized whalenurse", 150*time.Second, func() bool { return s.container("app").ID != before.ID })
+	waitFor(t, "the app to be recreated by the containerized dokdosta", 150*time.Second, func() bool { return s.container("app").ID != before.ID })
 	waitFor(t, "the app to be SUSPENDED (the stuck app stays unhealthy)", 120*time.Second, func() bool {
 		ok, _ := suspendedIn(imageStatusOf(t, g, s), s.key("app"))
 		return ok
 	})
 	st := imageStatusOf(t, g, s)
 	if !st.Compose.Rungs || st.Compose.Source != "host" || st.Compose.Binary != compose.HostMountPath {
-		t.Fatalf("whalenurse should use the host plugin it was given: %+v", st.Compose)
+		t.Fatalf("dokdosta should use the host plugin it was given: %+v", st.Compose)
 	}
 	if _, why := suspendedIn(st, s.key("app")); why != engine.ReasonLadder {
 		t.Fatalf("suspended for %q, want the ladder (restart, recreate, nothing helped)", why)
@@ -752,14 +752,14 @@ func TestImageUsesTheBundledComposeWhenThereIsNoHostPlugin(t *testing.T) {
 	s, _ := imageStack(t, g, cli, "imgbundled", false)
 	before := s.container("app")
 	hostVersion := composeBin(t).Version.String()
-	s.up("whalenurse")
+	s.up("dokdosta")
 	waitFor(t, "the app to be SUSPENDED", 150*time.Second, func() bool {
 		ok, _ := suspendedIn(imageStatusOf(t, g, s), s.key("app"))
 		return ok
 	})
 	st := imageStatusOf(t, g, s)
 	if !st.Compose.Rungs || st.Compose.Source != "bundled" {
-		t.Fatalf("whalenurse should use the bundled compose: %+v", st.Compose)
+		t.Fatalf("dokdosta should use the bundled compose: %+v", st.Compose)
 	}
 	recreated := s.container("app").ID != before.ID
 	_, why := suspendedIn(st, s.key("app"))
@@ -776,17 +776,17 @@ func TestImageUsesTheBundledComposeWhenThereIsNoHostPlugin(t *testing.T) {
 			t.Fatalf("not recreated, so it must be the guard: reason=%q", why)
 		}
 		// And it must be the skew finding, not a config or image finding (which would be a false drift report).
-		msgs := driftBlockedMessages(t, s.container("whalenurse").ID)
+		msgs := driftBlockedMessages(t, s.container("dokdosta").ID)
 		if len(msgs) != 1 || !strings.Contains(msgs[0], "can't verify drift (compose ") || strings.Contains(msgs[0], "image:") || strings.Contains(msgs[0], "config:") {
 			t.Fatalf("want one skew finding, got %q", msgs)
 		}
 	}
 }
 
-// driftBlockedMessages reads the DriftBlocked events from the JSON log of a whalenurse container.
+// driftBlockedMessages reads the DriftBlocked events from the JSON log of a dokdosta container.
 func driftBlockedMessages(t *testing.T, id string) []string {
 	t.Helper()
-	// whalenurse logs to stderr, which ExecRunner does not return.
+	// dokdosta logs to stderr, which ExecRunner does not return.
 	out, err := exec.Command("docker", "logs", id).CombinedOutput()
 	if err != nil {
 		t.Fatal(err)

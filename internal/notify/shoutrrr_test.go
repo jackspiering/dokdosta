@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // hook is a webhook receiver that records what the generic service posts.

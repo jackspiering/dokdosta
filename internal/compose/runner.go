@@ -19,7 +19,7 @@ type Command struct {
 	Args []string
 	Dir  string
 	// ConfigDir, when set, is the DOCKER_CONFIG of this one command instead of the runner's. Only the pull rung's
-	// `compose pull` sets it, to WHALENURSE_REGISTRY_AUTH_DIR.
+	// `compose pull` sets it, to DOKDOSTA_REGISTRY_AUTH_DIR.
 	ConfigDir string
 }
 
@@ -50,7 +50,7 @@ type Runner interface {
 }
 
 // ExecRunner runs real commands, with an environment that cannot redirect compose at another project or Docker config.
-// ConfigDir is the DOCKER_CONFIG the commands get: an empty directory of whalenurse's own (PrivateConfigDir); the zero
+// ConfigDir is the DOCKER_CONFIG the commands get: an empty directory of dokdosta's own (PrivateConfigDir); the zero
 // value is NoDockerConfig.
 type ExecRunner struct {
 	ConfigDir string
@@ -64,7 +64,7 @@ func (r ExecRunner) Run(ctx context.Context, c Command) (Result, error) {
 	cmd := exec.CommandContext(ctx, c.Bin, c.Args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = StopDelay
-	// Its own process group: a Ctrl-C in the terminal reaches whalenurse, which lets the command finish, and not the
+	// Its own process group: a Ctrl-C in the terminal reaches dokdosta, which lets the command finish, and not the
 	// command itself.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Dir = c.Dir
@@ -87,7 +87,7 @@ func (r ExecRunner) Run(ctx context.Context, c Command) (Result, error) {
 }
 
 // maxOutput caps what is kept of each stream of one command. The oracle's --progress json and a one-service config are
-// far smaller; a command that prints more is not one whalenurse needs all of.
+// far smaller; a command that prints more is not one dokdosta needs all of.
 const maxOutput = 4 << 20
 
 // capped keeps the first max bytes written to it, and the last tailSize bytes apart, so a cause printed at the end of a
@@ -118,7 +118,7 @@ func (w *capped) Write(p []byte) (int, error) {
 // RunError is the error of a failed compose command. Compose's own output is not in it: a load error can quote a line of
 // the stack's .env or env_file (compose-go's dotenv parser puts the value into "unterminated quoted value ..."), and the
 // error reaches the events, the API, the store and the log (plan §3.9: the environment is never shown). Only the causes
-// below, which whalenurse names in its own words, are kept from stderr; otherwise the error says how to see the rest.
+// below, which dokdosta names in its own words, are kept from stderr; otherwise the error says how to see the rest.
 func RunError(c Command, err error, stderr []byte) error {
 	if found := knownCauses(stderr); len(found) > 0 {
 		return fmt.Errorf("%s: %w: compose reported: %s", c, err, strings.Join(found, "; "))
@@ -169,13 +169,13 @@ func knownCauses(stderr []byte) []string {
 // credentials and a currentContext that points compose at another daemon. The directory must be empty and must be
 // writable: compose v5.2.0 to v5.5.x build buildx's store in their dry-run client (buildx store.New creates
 // <config>/buildx/{instances,defaults,activity}), and when that fails the dry-run fails and the oracle is lost. So it is a
-// fresh directory of whalenurse's own (PrivateConfigDir), and NoDockerConfig is only the last resort.
+// fresh directory of dokdosta's own (PrivateConfigDir), and NoDockerConfig is only the last resort.
 
 // NoDockerConfig is the DOCKER_CONFIG when there is no private directory: a path that cannot exist (nothing, root
 // included, can create an entry in /proc), which the Docker CLI reads as "no config file". A path under a regular file
 // (/dev/null/x) would not do: that is ENOTDIR, which the CLI warns about on every command, onto the stderr the oracle
 // parses. With it, the dry-run of compose v5.2.0 to v5.5.x fails and the drift guard falls back to config --hash.
-const NoDockerConfig = "/proc/whalenurse-no-docker-config"
+const NoDockerConfig = "/proc/dokdosta-no-docker-config"
 
 // PrivateConfigDir creates an empty directory (mode 0700, a fresh random name, so nothing can be planted in it
 // beforehand) in the first of the parents where that works, for the DOCKER_CONFIG of the compose commands. remove deletes
@@ -186,7 +186,7 @@ func PrivateConfigDir(parents ...string) (dir string, remove func(), err error) 
 		if p == "" {
 			continue
 		}
-		d, err := os.MkdirTemp(p, "whalenurse-docker-config-")
+		d, err := os.MkdirTemp(p, "dokdosta-docker-config-")
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -201,7 +201,7 @@ func PrivateConfigDir(parents ...string) (dir string, remove func(), err error) 
 
 // ChildEnv is the environment compose runs with: the parent's, minus everything that could point compose at another
 // project, file set, profile, Docker config or credentials (COMPOSE_*, DOCKER_CONTEXT, DOCKER_CONFIG,
-// DOCKER_AUTH_CONFIG), and minus whalenurse's own settings, plus DOCKER_CONFIG=configDir (NoDockerConfig when empty) so
+// DOCKER_AUTH_CONFIG), and minus dokdosta's own settings, plus DOCKER_CONFIG=configDir (NoDockerConfig when empty) so
 // $HOME/.docker is never read, and NO_COLOR so the output is plain.
 func ChildEnv(env []string, configDir string) []string {
 	if configDir == "" {
@@ -211,7 +211,7 @@ func ChildEnv(env []string, configDir string) []string {
 	for _, kv := range env {
 		k, _, _ := strings.Cut(kv, "=")
 		switch {
-		case strings.HasPrefix(k, "COMPOSE_"), strings.HasPrefix(k, "WHALENURSE_"), k == "DOCKER_CONTEXT", k == "DOCKER_CONFIG",
+		case strings.HasPrefix(k, "COMPOSE_"), strings.HasPrefix(k, "DOKDOSTA_"), strings.HasPrefix(k, "WHALENURSE_"), k == "DOCKER_CONTEXT", k == "DOCKER_CONFIG",
 			k == "DOCKER_AUTH_CONFIG", k == "NO_COLOR":
 			continue
 		}

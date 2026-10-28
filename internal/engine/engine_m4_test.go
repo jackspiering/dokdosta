@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // M4: rung 3, the opt-in pull. The engine plans it as ActionPull after restart and recreate; the daemon carries it out.

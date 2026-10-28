@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 var t0 = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
@@ -104,7 +104,7 @@ var scenarios = []scenario{
 		want: rules.Decision{Class: rules.ClassSkip, Action: rules.ActionNone, Skip: rules.SkipNotOptedIn},
 	},
 	{
-		name: "labelled whalenurse.enable=false: left alone even with an opted-in parent", fixture: "e1-dep-stale-after-parent-recreate",
+		name: "labelled dokdosta.enable=false: left alone even with an opted-in parent", fixture: "e1-dep-stale-after-parent-recreate",
 		cfg:   func(c *config.Container) { c.OptedIn, c.Disabled = false, true },
 		input: func(in *rules.Input, _ map[string]docker.Container) { in.DependentOfOptedIn = true },
 		want:  rules.Decision{Class: rules.ClassSkip, Action: rules.ActionNone, Skip: rules.SkipNotOptedIn},
@@ -618,6 +618,7 @@ var streamLostAfter = map[string]bool{"m0b-daemon-restart-shutdown": true, "m0b-
 func allServices(v rules.Verdict, services ...string) map[string]rules.Verdict {
 	out := map[string]rules.Verdict{}
 	for _, s := range services {
+		// The fixtures were captured before the rename (plan v3.15), so their project keeps the old name.
 		out["h/whalenurse-m0-b-boot/"+s+"/1"] = v
 	}
 	return out
@@ -879,5 +880,20 @@ func TestHostStoppedOnFailureContainerDockerWillNotRestore(t *testing.T) {
 		if got := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, HostStopped: true}); got.Class != rules.ClassExitedHostRestore {
 			t.Errorf("%s: %s", policy, got.Class)
 		}
+	}
+}
+
+// Plan v3.15 item 5: the skip for labels from before the rename comes right after the own container, before every
+// other rule; an unhealthy container under DOKDOSTA_MODE=all with the old opt-out is left alone.
+func TestLabelsFromBeforeTheRenameAreSkippedRightAfterTheOwnContainer(t *testing.T) {
+	labels := map[string]string{"whalenurse.enable": "false"}
+	cfg, _ := config.ParseLabels(labels, config.ModeAll)
+	c := docker.Container{ID: "a", Name: "old", Labels: labels, Status: "running", Running: true, Health: "unhealthy"}
+	d := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg})
+	if d.Class != rules.ClassSkip || d.Skip != rules.SkipLegacy || !strings.Contains(d.Reason, "whalenurse.enable") {
+		t.Fatalf("%+v", d)
+	}
+	if d := rules.Classify(rules.Input{Now: time.Now(), C: c, Cfg: cfg, Self: true}); d.Skip != rules.SkipSelf {
+		t.Fatalf("the own container comes first: %+v", d)
 	}
 }

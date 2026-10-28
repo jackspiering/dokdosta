@@ -1,5 +1,7 @@
 # M3 notes
 
+> whalenurse was renamed dokdosta on 28 Oct 2026 (plan v3.15). This record keeps the old name; the files and commands it names now carry the new one.
+
 Decisions, deviations and open questions for milestone M3 (notifications) of [PLAN.md](PLAN.md). The rules that changed are in the plan as **v3.7** (approved 19 Oct 2026; §3.12 is the new section; the review's four answers are *Review follow-ups* below). Where the plan was ambiguous this file says what was chosen and why, so the maintainer can overrule it.
 
 ## Upstream check (18 Oct 2026): Shoutrrr

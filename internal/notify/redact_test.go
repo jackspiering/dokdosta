@@ -112,7 +112,7 @@ func TestRedactorRemovesRegistryCredentials(t *testing.T) {
 }
 
 // A registry user name is usually the image namespace (ghcr.io/<user>/app): it is not a secret, and masking it would break
-// the image references and the pasteable rollback commands that whalenurse shows.
+// the image references and the pasteable rollback commands that dokdosta shows.
 func TestRedactorLeavesImageReferencesOfTheRegistryUserAlone(t *testing.T) {
 	r := NewRedactorWith([]string{"YWxpY2U6cDQ1NXcwcmQ=", "p455w0rd"}, "ntfy://ntfy.example.com/topic-SECRET-1")
 	in := "docker image tag sha256:0123456789ab ghcr.io/jackspiering/app:1 && docker compose -p stack up -d --no-deps --pull never app"
@@ -122,7 +122,7 @@ func TestRedactorLeavesImageReferencesOfTheRegistryUserAlone(t *testing.T) {
 }
 
 // A boolean option value of a notification URL (Telegram's preview=false, SMTP's usehtml=true) is no secret, and masking
-// it turned whalenurse's own ok=false into ok=*** (plan v3.13 item 20). Every other value is still masked.
+// it turned dokdosta's own ok=false into ok=*** (plan v3.13 item 20). Every other value is still masked.
 func TestRedactorKeepsBooleanOptionValues(t *testing.T) {
 	r := NewRedactor("telegram://123456789:AAEhBP0-tok@telegram?channels=@ops&preview=false&x=TRUE&y=yes,Off,secret-piece&notify=on")
 	if got := r.Redact("ok=false dry_run=true TRUE yes off"); got != "ok=false dry_run=true TRUE yes off" {

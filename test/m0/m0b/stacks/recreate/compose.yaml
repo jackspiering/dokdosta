@@ -1,14 +1,14 @@
-# M0b whalenurse-recreate (plan v3.6, M2b): whalenurse in a container (built from this branch) heals a parent that only a
-# recreate repairs, and its network_mode sidecar. Project whalenurse-m0-b-recreate. vars.env supplies NURSE_IMAGE,
+# M0b dokdosta-recreate (plan v3.6, M2b): dokdosta in a container (built from this branch) heals a parent that only a
+# recreate repairs, and its network_mode sidecar. Project dokdosta-m0-b-recreate. vars.env supplies NURSE_IMAGE,
 # DOCKER_GID, COMPOSE_PLUGIN (the host's compose plugin, mounted read-only at /host/docker-compose) and STACK_DIR (this
 # directory, mounted read-only at the IDENTICAL path, which is what makes the recreate work from inside the container).
 #
 # The parent is healthy until /broken exists. /broken lives in the container's writable layer: a restart does not repair it,
-# a recreate does. The step touches it; whalenurse restarts the parent (no help), recreates it from this file (help), and
+# a recreate does. The step touches it; dokdosta restarts the parent (no help), recreates it from this file (help), and
 # then recreates the sidecar, which was left pointing at a parent that no longer exists.
-name: whalenurse-m0-b-recreate
+name: dokdosta-m0-b-recreate
 services:
-  whalenurse:
+  dokdosta:
     image: ${NURSE_IMAGE}
     restart: unless-stopped
     read_only: true
@@ -22,19 +22,19 @@ services:
       - ${COMPOSE_PLUGIN}:/host/docker-compose:ro
       - ${STACK_DIR}:${STACK_DIR}:ro
     environment:
-      WHALENURSE_HOST_ID: m0b
-      WHALENURSE_MODE: label
-      WHALENURSE_GRACE: 5s
-      WHALENURSE_POLL_INTERVAL: 15s
-      WHALENURSE_COOLDOWN: 10s
-      WHALENURSE_RECOVERY_PERIOD: 30s
-      WHALENURSE_STARTUP_SETTLE: 20s
-      WHALENURSE_RATE_LIMIT: "100"
+      DOKDOSTA_HOST_ID: m0b
+      DOKDOSTA_MODE: label
+      DOKDOSTA_GRACE: 5s
+      DOKDOSTA_POLL_INTERVAL: 15s
+      DOKDOSTA_COOLDOWN: 10s
+      DOKDOSTA_RECOVERY_PERIOD: 30s
+      DOKDOSTA_STARTUP_SETTLE: 20s
+      DOKDOSTA_RATE_LIMIT: "100"
 
   parent:
-    image: whalenurse-m0/busybox:1
+    image: dokdosta-m0/busybox:1
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     stop_grace_period: 2s
     command: ["sh", "-c", "mkdir -p /www; echo ok > /www/index.html; trap 'exit 0' TERM; httpd -f -p 8080 -h /www & wait"]
     healthcheck:
@@ -46,10 +46,10 @@ services:
   # Shares the parent's network namespace: it reaches the parent's httpd on its own 127.0.0.1 only while it is in the
   # parent's current namespace (a stale sidecar has a loopback of its own and fails).
   sidecar:
-    image: whalenurse-m0/busybox:1
+    image: dokdosta-m0/busybox:1
     network_mode: service:parent
     labels:
-      whalenurse.enable: "true"
+      dokdosta.enable: "true"
     stop_grace_period: 2s
     command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done"]
     healthcheck:

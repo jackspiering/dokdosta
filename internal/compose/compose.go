@@ -19,7 +19,7 @@ type Reader interface {
 	// has none). Only that one field is read: the rest of the rendered config (which can hold interpolated secrets) is
 	// dropped, never logged.
 	PullPolicy(ctx context.Context, p Project) (string, error)
-	// DeclaredLabels runs the same `config --format json --no-env-resolution -- <svc>` and returns the whalenurse.* label
+	// DeclaredLabels runs the same `config --format json --no-env-resolution -- <svc>` and returns the dokdosta.* label
 	// keys that the service's `labels:` declare (plan v3.13 item 10): a label of the container that the compose file does
 	// not declare was not put there by the operator. Only those keys are kept, never a value.
 	DeclaredLabels(ctx context.Context, p Project) ([]string, error)
@@ -34,7 +34,7 @@ type Actor interface {
 	// --force-recreate. Compose hashes the resolved container:<id>, so the new parent ID makes it recreate the dependent
 	// itself (E2b, E2d).
 	Up(ctx context.Context, p Project) error
-	// Pull is rung 3's first step and the only call in whalenurse that fetches an image: `pull --policy always <svc>`.
+	// Pull is rung 3's first step and the only call in dokdosta that fetches an image: `pull --policy always <svc>`.
 	// Nothing else is added (no --include-deps), so it refreshes the one service's image and nothing else. It does not
 	// recreate anything: the caller compares what the reference resolves to before and after, and only a changed image
 	// is followed by Up (plan §3.7).
@@ -45,7 +45,7 @@ type Actor interface {
 type Compose struct {
 	bin     Binary
 	run     Runner
-	authDir string // WHALENURSE_REGISTRY_AUTH_DIR: the DOCKER_CONFIG of Pull and of nothing else
+	authDir string // DOKDOSTA_REGISTRY_AUTH_DIR: the DOCKER_CONFIG of Pull and of nothing else
 }
 
 // WithRegistryAuth makes Pull run with DOCKER_CONFIG=dir (plan v3.12 item 3). Every other command keeps the runner's
@@ -147,7 +147,7 @@ func (c *Compose) Up(ctx context.Context, p Project) error {
 // Pull runs `pull --policy always <svc>`. --policy always makes compose ignore the service's own pull_policy: without
 // it, `never`, `build` and (before v5.6.0, and for a tag other than latest) `missing` and `if_not_present` make
 // `compose pull` skip an image that is already present, and the rung would report "no newer image" for an image it never
-// looked up (upstream check, plan v3.8). The label whalenurse.heal.pull=true is the opt-in to exactly this.
+// looked up (upstream check, plan v3.8). The label dokdosta.heal.pull=true is the opt-in to exactly this.
 func (c *Compose) Pull(ctx context.Context, p Project) error {
 	if err := p.Validate(); err != nil {
 		return err

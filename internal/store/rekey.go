@@ -16,11 +16,11 @@ type RekeyMeta struct {
 
 // Rekey gives every persisted record keyed by a state key of another host the current host (plan v3.13 item 12). One
 // store belongs to one installation; in a container the default host ID is the hostname, the container's ID, which
-// changes whenever whalenurse is recreated (an upgrade), and the state under the old ID would otherwise never match a
+// changes whenever dokdosta is recreated (an upgrade), and the state under the old ID would otherwise never match a
 // live container again.
 //
 // It covers the per-key state, the flap history, the incidents (open and closed), the meta rows of m, and the
-// notification dedupe rows of every key it moves. When the current key already has state records (whalenurse ran under this host ID before), the key whose records
+// notification dedupe rows of every key it moves. When the current key already has state records (dokdosta ran under this host ID before), the key whose records
 // show the later activity wins and every record of the other is dropped; on a tie the current one wins. The event
 // history keeps the host it was written with. A key whose remainder is not <project>/<service>/<number> or <name> (a host
 // ID with a "/" in it) is left alone. It runs in one transaction and returns how many keys were moved.

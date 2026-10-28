@@ -116,7 +116,8 @@ func ParsePullPolicy(out []byte, service string) (string, error) {
 }
 
 // ParseDeclaredLabels reads services.<svc>.labels from `config --format json` and returns the keys that begin with
-// "whalenurse.", sorted. Compose renders `labels:` as a map; the list form ("key=value") is read too. No value is kept.
+// "dokdosta." (or "whalenurse.", the namespace from before the rename, plan v3.15 item 5), sorted. Compose renders
+// `labels:` as a map; the list form ("key=value") is read too. No value is kept.
 func ParseDeclaredLabels(out []byte, service string) ([]string, error) {
 	var doc struct {
 		Services map[string]struct {
@@ -132,7 +133,7 @@ func ParseDeclaredLabels(out []byte, service string) ([]string, error) {
 	}
 	var keys []string
 	add := func(k string) {
-		if k = strings.TrimSpace(k); strings.HasPrefix(k, "whalenurse.") {
+		if k = strings.TrimSpace(k); strings.HasPrefix(k, "dokdosta.") || strings.HasPrefix(k, "whalenurse.") {
 			keys = append(keys, k)
 		}
 	}

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // mask replaces every secret in a redacted string.
@@ -23,7 +23,7 @@ const minPathSecret = 6
 // Redactor removes the pieces of the configured URLs from text. Notification URLs hold tokens (a Discord webhook id and
 // token are the host and path, a Telegram bot token is the user name, ntfy and Gotify tokens are a path or a query
 // value), and the errors of an HTTP client quote the URL it called. Shoutrrr redacts its own errors too (v0.22.0), but
-// that is one layer, and whalenurse logs, counts and prints these errors in several places, so every one of them goes
+// that is one layer, and dokdosta logs, counts and prints these errors in several places, so every one of them goes
 // through here.
 type Redactor struct {
 	fragments []string // longest first, so a URL goes before the pieces inside it
@@ -115,7 +115,7 @@ func fragmentsOf(raw string) []string {
 	for _, vals := range u.Query() {
 		for _, v := range vals {
 			// A value with commas (tags=a,b, chats=1,2) is leaked piece by piece as well. A boolean word (preview=false,
-			// usehtml=true) is an option, not a token, and masking it turned whalenurse's own ok=false into ok=*** (plan
+			// usehtml=true) is an option, not a token, and masking it turned dokdosta's own ok=false into ok=*** (plan
 			// v3.13 item 20).
 			for _, piece := range append([]string{v}, strings.Split(v, ",")...) {
 				if !booleanWord(piece) {
@@ -151,7 +151,7 @@ func (r *Redactor) Redact(s string) string {
 }
 
 // controlAttrs are the event attributes that steer the templates and the dedupe (an action, a rung, ok, a reason, a time).
-// whalenurse writes them itself and no Docker or compose text reaches them, so Event leaves them alone: a short query value
+// dokdosta writes them itself and no Docker or compose text reaches them, so Event leaves them alone: a short query value
 // of a URL ("true", "json") must not turn ok=true into ok=***.
 var controlAttrs = map[string]bool{
 	"action": true, "at": true, "class": true, "count": true, "dry_run": true, "held": true, engine.AttrIncident: true,

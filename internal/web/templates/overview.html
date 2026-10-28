@@ -53,7 +53,7 @@
     {{with .Notifications}}
     {{if .Enabled}}
     <p>{{.URLs}} URL{{if ne .URLs 1}}s{{end}}{{if .Invalid}}, <strong>{{.Invalid}} invalid</strong>{{end}}: {{.Sent}} sent, {{.Failed}} failed{{if .RateLimited}}, {{.RateLimited}} held back{{end}}.</p>
-    {{else}}<p class="muted">Off: WHALENURSE_NOTIFY_URLS is not set.</p>{{end}}
+    {{else}}<p class="muted">Off: DOKDOSTA_NOTIFY_URLS is not set.</p>{{end}}
     {{with .UptimePing}}<p>Uptime ping: {{.Sent}} sent, {{.Failed}} failed, {{.SkippedUnhealthy}} skipped while unhealthy.</p>{{end}}
     {{end}}
     <h2>Pull credentials</h2>

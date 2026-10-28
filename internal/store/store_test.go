@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 var t0 = time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC)
@@ -394,7 +394,7 @@ func TestReadsUseASeparateReadOnlyConnection(t *testing.T) {
 	tx.Rollback()
 }
 
-// Two whalenurse processes on one data directory would both heal, each from its own copy of the state: the second Open
+// Two dokdosta processes on one data directory would both heal, each from its own copy of the state: the second Open
 // is refused while the first store is open, and allowed once it is closed. (flock locks belong to the open file, so two
 // Opens in one process conflict just as two processes do.)
 func TestASecondOpenOfTheSameDirectoryIsRefused(t *testing.T) {

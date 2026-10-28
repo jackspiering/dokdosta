@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 const imgID = "sha256:img0000000000000000000000000000000000000000000000000000000000000"
@@ -30,7 +30,7 @@ func (h *cfH) breaks(c docker.Container) {
 	h.advance(10 * time.Minute)
 }
 
-// WN-005, plan v3.13 item 10: a whalenurse.* label that has the value the image gives it is the image publisher's, not the
+// WN-005, plan v3.13 item 10: a dokdosta.* label that has the value the image gives it is the image publisher's, not the
 // operator's: it does not opt the container in, and one warning names it.
 func TestImageProvidedLabelsDoNotOptIn(t *testing.T) {
 	h := newCompose(t, nil, nil, docker.ServerInfo{})
@@ -42,7 +42,7 @@ func TestImageProvidedLabelsDoNotOptIn(t *testing.T) {
 	if h.count(engine.IncidentOpened) != 0 {
 		t.Fatal(h.rec.Types())
 	}
-	if n := strings.Count(h.log.String(), "labels from the image do not steer whalenurse"); n != 1 || !strings.Contains(h.log.String(), config.LabelEnable) {
+	if n := strings.Count(h.log.String(), "labels from the image do not steer dokdosta"); n != 1 || !strings.Contains(h.log.String(), config.LabelEnable) {
 		t.Fatalf("want one warning naming %s, got %d:\n%s", config.LabelEnable, n, h.log.String())
 	}
 }
@@ -97,7 +97,7 @@ func TestComposeIdentityFromTheImageMakesItNonCompose(t *testing.T) {
 	}
 }
 
-// A compose container takes a whalenurse.* label only if the compose file declares it.
+// A compose container takes a dokdosta.* label only if the compose file declares it.
 func TestComposeContainerNeedsTheLabelDeclaredInTheComposeFile(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
@@ -132,7 +132,7 @@ func TestComposeContainerNeedsTheLabelDeclaredInTheComposeFile(t *testing.T) {
 	}
 }
 
-// The compose file is read once per config-hash, not on every poll, and not at all for a container with no whalenurse.* label.
+// The compose file is read once per config-hash, not on every poll, and not at all for a container with no dokdosta.* label.
 func TestDeclaredLabelsAreReadOncePerConfigHash(t *testing.T) {
 	h := newCompose(t, nil, nil, docker.ServerInfo{})
 	var reads atomic.Int32

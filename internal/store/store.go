@@ -1,5 +1,5 @@
-// Package store persists whalenurse's state in SQLite (modernc.org/sqlite, no
-// cgo) under WHALENURSE_DATA_DIR: per-key state, incidents and their history,
+// Package store persists dokdosta's state in SQLite (modernc.org/sqlite, no
+// cgo) under DOKDOSTA_DATA_DIR: per-key state, incidents and their history,
 // flap history, manual-stop markers, pauses, the rate-limit ledger and the boot
 // id. It implements engine.Persister, so the engine never touches a file.
 //
@@ -24,11 +24,11 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // FileName is the database file inside the data directory.
-const FileName = "whalenurse.db"
+const FileName = "dokdosta.db"
 
 // schemaVersion is stored in PRAGMA user_version. Bump it with a migration step in migrate.
 const schemaVersion = 3
@@ -46,13 +46,13 @@ type Store struct {
 	lastOp Op
 }
 
-// LockName is the file in the data directory that a running whalenurse holds an exclusive flock(2) on. A second whalenurse on
+// LockName is the file in the data directory that a running dokdosta holds an exclusive flock(2) on. A second dokdosta on
 // the same directory would heal the same containers from the same state, so Open refuses it. The lock is not SQLite's
 // own (those are fcntl locks, which any close in the process drops); it goes away with the process.
-const LockName = "whalenurse.lock"
+const LockName = "dokdosta.lock"
 
 // ErrLocked is returned by Open when another process holds the data directory.
-var ErrLocked = errors.New("another whalenurse is running with this data directory")
+var ErrLocked = errors.New("another dokdosta is running with this data directory")
 
 // Op names the kind of operation that failed. It is a fixed word, never a key or a scope, so it can be shown anywhere.
 type Op string
@@ -69,7 +69,8 @@ const (
 	OpReadEvents    Op = "read events"
 )
 
-// Open creates the data directory if needed and opens (and migrates) the database.
+// Open creates the data directory if needed, moves the store from before the rename (migrateLegacy), and opens (and
+// migrates) the database.
 func Open(dir string, log *slog.Logger) (*Store, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -79,6 +80,10 @@ func Open(dir string, log *slog.Logger) (*Store, error) {
 	}
 	lock, err := lockDir(dir)
 	if err != nil {
+		return nil, err
+	}
+	if err := migrateLegacy(dir, log); err != nil {
+		lock.Close()
 		return nil, err
 	}
 	s, err := openDB(dir, log)
@@ -120,7 +125,7 @@ func openDB(dir string, log *slog.Logger) (*Store, error) {
 	}
 	// Earlier versions emptied a parents:<key> row instead of deleting it, and wrote one for keys that never had a parent
 	// set. An empty row means the same as none. A plain idempotent statement, not a schema step: a newer schema number
-	// would stop an older whalenurse from opening this database.
+	// would stop an older dokdosta from opening this database.
 	if _, err := db.Exec(`DELETE FROM meta WHERE key LIKE 'parents:%' AND value = ''`); err != nil && log != nil {
 		log.Warn("store: could not remove empty parents rows", "error", err.Error())
 	}
@@ -147,7 +152,7 @@ func openDB(dir string, log *slog.Logger) (*Store, error) {
 
 // uriPath escapes a file path for SQLite's file: URI: the driver splits the DSN at the first '?', and SQLite ends the
 // path at a '#' and decodes %HH in it, so a data directory with any of those characters would name another database
-// (WHALENURSE_DATA_DIR=/data?mode=memory would keep the state in memory).
+// (DOKDOSTA_DATA_DIR=/data?mode=memory would keep the state in memory).
 func uriPath(p string) string {
 	return strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23").Replace(p)
 }
@@ -180,7 +185,7 @@ func (s *Store) migrate() error {
 		return err
 	}
 	if v > schemaVersion {
-		return fmt.Errorf("database schema %d is newer than this whalenurse understands (%d)", v, schemaVersion)
+		return fmt.Errorf("database schema %d is newer than this dokdosta understands (%d)", v, schemaVersion)
 	}
 	if v < 1 {
 		stmts := []string{

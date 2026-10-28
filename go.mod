@@ -1,4 +1,4 @@
-module github.com/jackspiering/whalenurse
+module github.com/jackspiering/dokdosta
 
 go 1.27.3
 

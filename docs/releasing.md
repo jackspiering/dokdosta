@@ -17,7 +17,7 @@ An agent never tags on its own initiative, as a side effect of another task, or 
    v1.55.0, logs in to GHCR with the workflow's `GITHUB_TOKEN`, and runs GoReleaser v2.18.3, which
    - builds `linux/amd64` and `linux/arm64` binaries (`CGO_ENABLED=0`, `-trimpath`, stripped, the version stamped in) into
      `.tar.gz` archives with the README, LICENSE, CHANGELOG and the systemd unit, a syft SBOM per archive, and `checksums.txt`;
-   - builds and pushes the multi-arch image `ghcr.io/jackspiering/whalenurse` from `Dockerfile.release` (which only copies the
+   - builds and pushes the multi-arch image `ghcr.io/jackspiering/dokdosta` from `Dockerfile.release` (which only copies the
      binaries; the bundled compose is downloaded and sha256-checked in a build-platform stage, so no emulation is needed) with
      the tags `vX.Y.Z`, `vX.Y`, `vX` and `latest` (a pre-release like `v0.2.0-rc.1` gets only its own tag and never moves the
      others);
@@ -62,8 +62,8 @@ Verify a release yourself: [verifying-releases.md](verifying-releases.md).
 **No new minor or major version is tagged until it has run for a few days in dry-run on a real host, and then live on a few
 test containers** (v0.1.0 went through this gate). **[maintainer]**
 
-1. Run the image built from `main` (`docker build -t whalenurse .`, or a snapshot) on your real host with
-   `WHALENURSE_DRY_RUN=true` and notifications on. Read every `IncidentOpened`, `would restart` and `DriftBlocked` for a few days,
+1. Run the image built from `main` (`docker build -t dokdosta .`, or a snapshot) on your real host with
+   `DOKDOSTA_DRY_RUN=true` and notifications on. Read every `IncidentOpened`, `would restart` and `DriftBlocked` for a few days,
    across at least one host reboot or daemon restart, a deploy of one of your stacks, and a night.
 2. Switch to live for a few test containers (a stack you can afford to break; the [demo](../examples/demo/compose.yaml) is
    good for rehearsal). Break them on purpose; check the ladder, the sidecar repair, the notifications and `unsuspend`.
@@ -94,13 +94,13 @@ Do not skip this because CI is green. CI runs on throwaway runners; what it cann
 
 ### The GHCR package
 
-The first push creates `ghcr.io/jackspiering/whalenurse` as a **private** package. After the first publish:
+The first push creates `ghcr.io/jackspiering/dokdosta` as a **private** package. After the first publish:
 
-1. Open the package (your profile, Packages, `whalenurse`). It should already be linked to this repository: the image carries
+1. Open the package (your profile, Packages, `dokdosta`). It should already be linked to this repository: the image carries
    `org.opencontainers.image.source`, which links it. If not, "Connect repository".
 2. **Make it public** (Package settings, Danger zone, Change visibility). Public packages cannot be made private again.
 3. Under "Manage Actions access", make sure this repository has **write** access (it does when the package is linked).
-4. Test as a stranger: `docker logout ghcr.io && docker pull ghcr.io/jackspiering/whalenurse:v0.1.0`, then
+4. Test as a stranger: `docker logout ghcr.io && docker pull ghcr.io/jackspiering/dokdosta:v0.1.0`, then
    `make verify-release TAG=v0.1.0`.
 
 ## Cutting a release **[maintainer]**
@@ -114,7 +114,7 @@ The first push creates `ghcr.io/jackspiering/whalenurse` as a **private** packag
    ```
    git switch main && git pull
    git tag -s v0.1.0-rc.1 -m "v0.1.0-rc.1"      # or: git tag -a (a signed tag is better)
-   git push git@github.com:jackspiering/whalenurse.git v0.1.0-rc.1
+   git push git@github.com:jackspiering/dokdosta.git v0.1.0-rc.1
    ```
    Watch the `release` workflow. A `-rc` tag publishes `v0.1.0-rc.1` only (never `latest`, `v0.1`, `v0`), as a GitHub
    pre-release. Run `make verify-release TAG=v0.1.0-rc.1`. If a step fails, fix it on `main` and tag `rc.2`: **a tag that

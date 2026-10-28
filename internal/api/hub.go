@@ -3,7 +3,7 @@ package api
 import (
 	"sync"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // MaxStreams bounds the SSE clients; one more is refused with 503.

@@ -14,7 +14,7 @@ norm() {
     s/[0-9]+(\.[0-9]+)?s\b/<N>s/g;
     s/\[[a-z0-9._-]+ rc=[0-9]+\]/[<file> rc=N]/g;
     s#(/[A-Za-z0-9._-]+)*/captures/m0-[A-Za-z0-9._-]+/scratch#<scratch>#g;
-    s/whalenurse-m0-[a-z0-9]+-(parent|dep|plain|netdep|ipcdep|piddep|vfdep|tagged|stuck|control|svc)-[0-9]+/<container>/g' "$1"
+    s/dokdosta-m0-[a-z0-9]+-(parent|dep|plain|netdep|ipcdep|piddep|vfdep|tagged|stuck|control|svc)-[0-9]+/<container>/g' "$1"
 }
 same=0
 differ=0

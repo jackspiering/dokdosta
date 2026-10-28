@@ -23,8 +23,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/jackspiering/whalenurse/internal/clock"
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/clock"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // Sender delivers a message to one URL.
@@ -43,7 +43,7 @@ type Target struct {
 	Err    string
 }
 
-// Ledger persists the dedupe, so a restart of whalenurse does not say the same thing twice. internal/store implements it.
+// Ledger persists the dedupe, so a restart of dokdosta does not say the same thing twice. internal/store implements it.
 // It is called from the dispatcher goroutine only, never from the engine's.
 type Ledger interface {
 	// LoadNotified returns the identity of every message sent within ttl, and when; older ones are dropped.
@@ -506,7 +506,7 @@ type TargetStatus struct {
 	Invalid     string    `json:"invalid,omitempty"` // why the URL cannot be used, redacted
 }
 
-// Status is the notification part of `whalenurse status`.
+// Status is the notification part of `dokdosta status`.
 type Status struct {
 	Enabled       bool           `json:"enabled"`
 	DryRun        bool           `json:"dry_run,omitempty"`
@@ -535,7 +535,7 @@ func Label(i int, rawURL string) string { return fmt.Sprintf("#%d %s", i+1, sche
 // Summary is one line for the CLI and the log: how many URLs, never which.
 func (s Status) Summary() string {
 	if !s.Enabled {
-		return "none configured (WHALENURSE_NOTIFY_URLS)"
+		return "none configured (DOKDOSTA_NOTIFY_URLS)"
 	}
 	var parts []string
 	for _, t := range s.Targets {

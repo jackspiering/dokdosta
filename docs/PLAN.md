@@ -1,7 +1,19 @@
-# whalenurse — implementation plan v3.14
+# dokdosta — implementation plan v3.15
 
-Status: **v3.14, written on 28 Oct 2026, was approved by the maintainer on 28 Oct 2026.** It is v3.13 plus two changes to how CI spends its runners (items 1 and 2 below); the code and its tests are unchanged. **v3.13, written on 22 Oct 2026, was approved by the maintainer on 22 Oct 2026.** It is v3.12 plus the maintainer's decisions of 22 Oct 2026 on the code review of 21 Oct 2026 (items 1 to 23 below); each item names the review finding (WN-NNN) or design question (DQn) it settles. The fixes land as stacked pull requests, not as a milestone. **v3.12, written on 20 Oct 2026 to start milestone M7 (private registries, R5), was approved by the maintainer on 21 Oct 2026; M7 is built ([m7-notes.md](m7-notes.md)).** It is v3.11 plus the compose child's Docker config fix (item 1) and the M7 design below; items 3, 4 and 7 hold the maintainer's answers of 20 Oct 2026. **v3.11, written on 20 Oct 2026 after the release-gate rehearsal and approved by the maintainer on 20 Oct 2026** (it is v3.10 plus the two fixes below: [m6-notes.md](m6-notes.md), "Found by the release-gate rehearsal"). **v3.10, written by the M6 build on 20 Oct 2026, was approved by the maintainer on 20 Oct 2026** with its four publish permissions, the trusted-proxy option as built, the deferral of private registries (R5, the first post-v1 item) and the `v0.1.0-rc.1` rehearsal before `v0.1.0` (it is v3.9 plus the release pipeline, the documentation set and the trusted-proxy option below, with the post-v1 list; [m6-notes.md](m6-notes.md)). **v3.9 was approved by the maintainer on 19 Oct 2026** (the M5 review: it is v3.8 plus the M5 decisions below, [m5-notes.md](m5-notes.md), with the maintainer's six answers in items 11 to 16 and the screenshot review's fixes in items 17 and 18). v3.8 was approved by the maintainer on 19 Oct 2026 (the M4 review: it is v3.7 plus the M4 findings and decisions below, [m4-notes.md](m4-notes.md), with the maintainer's answers in items 11 to 15). v3.7 was approved by the maintainer on 19 Oct 2026 (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.10 (which was never approved; v3.11 contains it). Facts and versions are as of 20 Oct 2026 (16 Oct for the prior-art survey; the release tooling versions are in [m6-notes.md](m6-notes.md)).
-Repo: `github.com/jackspiering/whalenurse` (Go module path, GHCR image and binary are all lowercase).
+Status: **v3.15, written on 28 Oct 2026, was approved by the maintainer on 28 Oct 2026** (the instruction to carry out the rename). It is v3.14 plus the rename of the product from whalenurse to dokdosta (items 1 to 9 below). **v3.14, written on 28 Oct 2026, was approved by the maintainer on 28 Oct 2026.** It is v3.13 plus two changes to how CI spends its runners (items 1 and 2 below); the code and its tests are unchanged. **v3.13, written on 22 Oct 2026, was approved by the maintainer on 22 Oct 2026.** It is v3.12 plus the maintainer's decisions of 22 Oct 2026 on the code review of 21 Oct 2026 (items 1 to 23 below); each item names the review finding (WN-NNN) or design question (DQn) it settles. The fixes land as stacked pull requests, not as a milestone. **v3.12, written on 20 Oct 2026 to start milestone M7 (private registries, R5), was approved by the maintainer on 21 Oct 2026; M7 is built ([m7-notes.md](m7-notes.md)).** It is v3.11 plus the compose child's Docker config fix (item 1) and the M7 design below; items 3, 4 and 7 hold the maintainer's answers of 20 Oct 2026. **v3.11, written on 20 Oct 2026 after the release-gate rehearsal and approved by the maintainer on 20 Oct 2026** (it is v3.10 plus the two fixes below: [m6-notes.md](m6-notes.md), "Found by the release-gate rehearsal"). **v3.10, written by the M6 build on 20 Oct 2026, was approved by the maintainer on 20 Oct 2026** with its four publish permissions, the trusted-proxy option as built, the deferral of private registries (R5, the first post-v1 item) and the `v0.1.0-rc.1` rehearsal before `v0.1.0` (it is v3.9 plus the release pipeline, the documentation set and the trusted-proxy option below, with the post-v1 list; [m6-notes.md](m6-notes.md)). **v3.9 was approved by the maintainer on 19 Oct 2026** (the M5 review: it is v3.8 plus the M5 decisions below, [m5-notes.md](m5-notes.md), with the maintainer's six answers in items 11 to 16 and the screenshot review's fixes in items 17 and 18). v3.8 was approved by the maintainer on 19 Oct 2026 (the M4 review: it is v3.7 plus the M4 findings and decisions below, [m4-notes.md](m4-notes.md), with the maintainer's answers in items 11 to 15). v3.7 was approved by the maintainer on 19 Oct 2026 (the M3 review: it is v3.6 plus the M3 decisions below, [m3-notes.md](m3-notes.md), with the maintainer's four answers, items 13 to 15). v3.6 was approved by the maintainer on 18 Oct 2026 (the M2b review, including item 3 and the decisions of items 9 to 12): v3.5 plus the M2b findings ([m2b-notes.md](m2b-notes.md)); v3.5 was v3.4 plus three M2a verdicts below (the `last_seen` heartbeat, the stricter crash-loop rule, and the shutdown-window rule for containers stopped by the host), which the maintainer approved on 17 Oct 2026. v3.4 was v3.3 plus a split of milestone M2 into M2a and M2b. v3.3 was v3.2 plus the M0b verdicts ([m0b-findings.md](m0b-findings.md) §4), which the maintainer approved on 17 Oct 2026. v3.2 was v3.1 plus the two M1 verdicts ([m1-notes.md](m1-notes.md) decisions 2 and 11), and v3.1 was v3 plus the M0 verdicts ([m0-findings.md](m0-findings.md) §4). Supersedes v3.10 (which was never approved; v3.11 contains it). Facts and versions are as of 20 Oct 2026 (16 Oct for the prior-art survey; the release tooling versions are in [m6-notes.md](m6-notes.md)).
+Repo: `github.com/jackspiering/dokdosta` (Go module path, GHCR image and binary are all lowercase).
+
+**Changes in v3.15** (the maintainer's decisions of 26 Oct 2026, carried out from 28 Oct 2026 after `v0.2.0`). **whalenurse is renamed dokdosta**: two Serbo-Croatian words, *dok* ("until") and *dosta* ("enough"). The GitHub repository is `jackspiering/dokdosta` (renamed by the maintainer; GitHub redirects the old URLs). The rename lands as a stack of three pull requests (this plan, the mechanical rename, the guards of items 4 to 6); the last two merge together, so `main` never has the new names without the guards. The v3.13 items not built yet are built afterwards, under the new names.
+
+1. **Every name changes, and the old names are not aliases.** Lowercase `dokdosta` everywhere (Go module `github.com/jackspiering/dokdosta`, binary, `cmd/dokdosta`, image `ghcr.io/jackspiering/dokdosta`, labels `dokdosta.*`, metrics `dokdosta_*`, the store `dokdosta.db` and `dokdosta.lock`, the control socket `/run/dokdosta.sock`, the bundled compose at `/usr/libexec/dokdosta/docker-compose`, the systemd unit, user and directories, the User-Agent); `DOKDOSTA_*` for the variables. The safety rule's project names become `dokdosta-test-*` and `dokdosta-m0-*`, and the guards of the integration tests and the M0 scripts refuse the old `whalenurse-*` projects like any other. The `dokdosta.*` labels are the `whalenurse.*` ones with the new prefix; their meaning, the rule precedence and every other behaviour are unchanged.
+2. **The next release is a new minor version (`v0.3.0`)** and goes through the release gate. Tagging stays the maintainer's alone. The old image `ghcr.io/jackspiering/whalenurse` and its tags are left as they are; published tags are never moved or deleted. The releases before the rename keep their signatures: their certificate identity names `jackspiering/whalenurse`, so `make verify-release` takes `REPO=jackspiering/whalenurse` for them.
+3. **History keeps the old name.** The scrubbed fixtures in `testdata/` (their `whalenurse-m0-*` projects are what was captured), the milestone notes and findings (`docs/m*-notes.md`, `docs/m0-findings.md`, `docs/m0b-findings.md`), the released sections of `CHANGELOG.md`, the *Changes in* sections of this plan up to v3.14 and its appendices stay as written, with a one-line rename note; only their relative link targets follow renamed files. The tests that build keys from those fixtures keep the old project names. The finding IDs `WN-NNN` and the `wn` abbreviations in the code stay. The whale stays (item 9).
+4. §4 (guard 1), **dokdosta refuses to start while a `WHALENURSE_*` variable is set**, even an empty one, in every subcommand but `version`. The error lists the variable names, sorted, and never a value (the token and the URLs are secrets), and points at `docs/upgrading.md`. Otherwise a lost `HTTP_TOKEN`, `NOTIFY_URLS` or `MODE` would go unnoticed. The compose child's environment drops both prefixes.
+5. §3.3 (guard 2), **a container that carries a `whalenurse.*` label is skipped**, whatever else it carries (fail closed), as a skip rule right after the own-container rule. Otherwise `whalenurse.enable=false` would be ignored under `MODE=all` and dokdosta would heal a container the user excluded. The labels are read as v3.13 item 10 reads labels (a value the image supplies does not count). The decision reason names the label keys, never a value, and says to rename them; it is logged once per key and run, and shown on the dashboard as every skip reason is. The dependents step does not repair such a sidecar either. No new event type.
+6. §3.10 (guard 3), **the store moves once.** In a live run, before the store opens: when `whalenurse.db` exists in the data directory and `dokdosta.db` does not, dokdosta takes the old `whalenurse.lock` (refusing if an old process holds it) and renames `whalenurse.db` and its `-wal` and `-shm` in place (never a copy), then removes the old lock. Both files present is a startup error. A dry run moves nothing. Under systemd the state directory moves too (`/var/lib/dokdosta`), which `docs/upgrading.md` covers.
+7. **`docs/upgrading.md` gets a "from whalenurse" checklist**: the variables, the labels (a label changes only on a recreate; until then the container is skipped and says why), the image and the container name, the healthcheck or entrypoint overrides, the metric names, systemd (state directory, user, socket, environment file), and verifying the old releases.
+8. **The six required `integration (...)` checks are renamed with the job** ("real Docker, dokdosta-test-* projects only"); the ruleset on `main` is switched to the new names when the stack merges, in the same step, so `main` never waits on a name that no job reports. No other check name contains the old name.
+9. **Branding** (the maintainer's decision of 28 Oct 2026): no image shows the old name. The wordmark (`docs/assets/logo.svg`, `logo.png`) is redone as the whale beside "dokdosta" in two colours; the dashboard screenshots (`docs/screenshots/`, all of them showing whalenurse) are removed, and the README shows none until they are retaken. The whale in a nurse cap and the icons carry no name and stay; the social preview is removed (a new one is the maintainer's).
 
 **Changes in v3.14** (the maintainer's decisions of 27 Oct 2026, built on 28 Oct 2026 after `v0.2.0`). CI waited up to an hour for runners: the account runs 20 jobs at once, a full run is 34 jobs and about 120 runner-minutes (93 % of it the 18 integration shards), so about 10 full runs fit in an hour. Two patterns filled that: every layer of a stack of pull requests ran the full matrix, again after each merge of `main` into the stack, and a burst of merges to `main` queued one full run per merge, none of which could be cancelled.
 
@@ -252,7 +264,7 @@ Not changed: which legs run (the full matrix runs on every pull request into `ma
 - **Check sources first.** This plan dates from 16 Oct 2026, so some facts and versions may have changed. Before you rely on a Docker or Compose behavior, or add a dependency, check the current upstream source, docs or releases page. Use the latest stable Go and the latest release of each dependency. Record anything that differs from this plan.
 - **Stop on conflicts.** If an M0 finding or a test contradicts a rule in this plan, report it. Don't quietly change the design.
 - **Safety on any Docker host:**
-  - Only act on containers in compose projects named `whalenurse-test-*` or `whalenurse-m0-*`. Never stop, restart, recreate, pull, prune or remove anything else.
+  - Only act on containers in compose projects named `dokdosta-test-*` or `dokdosta-m0-*`. Never stop, restart, recreate, pull, prune or remove anything else.
   - Integration tests and M0 scripts must enforce this in code (a project-name filter that fails closed). Convention alone is not enough.
   - Don't run M0 experiments until the maintainer confirms which host to use.
 - **Fixtures:** never commit raw `docker inspect`, `docker events` or `journalctl` output. Raw captures go in `/captures/`, which is gitignored. Fixtures in `testdata/` must be scrubbed first (§3.3).
@@ -273,7 +285,7 @@ Prior art (checked 16 Oct 2026):
 | `satya-sovan/docker-autoheal` | Python + React; dashboard, maintenance mode, persistent `/data` state, webhook alerts | Restart only; uses compose labels only as a stable ID; UI has no built-in auth |
 | Watchtower | `containrrr/watchtower` was archived on 17 Dec 2025; `nicholas-fedor/watchtower` is the maintained fork (v1.22.3, 22 Sep 2026) | Updates containers; does not heal |
 
-**Differentiator** (lead with this in the README and docs): whalenurse recreates from the stack's own compose files, handles `network_mode` sidecar dependents, and has a drift guard. Dashboard, pause and notifications are table stakes now.
+**Differentiator** (lead with this in the README and docs): dokdosta recreates from the stack's own compose files, handles `network_mode` sidecar dependents, and has a drift guard. Dashboard, pause and notifications are table stakes now.
 
 ## 2. Decisions
 
@@ -294,7 +306,7 @@ Prior art (checked 16 Oct 2026):
 | Dashboard | Read-only, off by default, built on a versioned JSON API; default port 8484 |
 | Control in v1 | CLI over a local unix socket (pause/resume/unsuspend/status). No network-exposed write endpoints |
 | Multi-server | Post-v1 hub (R1). v1 already carries a host ID in every key, event and API record |
-| Repo name | Lowercase `whalenurse` (rename is a **[maintainer]** task in H) |
+| Repo name | Lowercase `dokdosta` (rename is a **[maintainer]** task in H) |
 
 ## 3. Design
 
@@ -317,16 +329,16 @@ more than FLAP_LIMIT incidents (default 3) within FLAP_WINDOW (default 24h)
 any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)--> re-evaluate
 ```
 
-- **Rungs:** set per container with `whalenurse.actions` (default `restart,recreate`). Rung 3 is appended only with `whalenurse.heal.pull=true`, and only if `recreate` is in the ladder (v3.8 item 11). Each rung runs once per incident. The one exception is the dependents step: a sidecar made stale again by a parent that changed since its last repair gets a fresh incident (v3.13 item 1). Rungs 2 and 3 are available only with Engine ≥ 28.1 and Compose ≥ v5.2.0; otherwise they are disabled at startup and the ladder ends after rung 1 (§3.6, *Minimum versions per rung*).
+- **Rungs:** set per container with `dokdosta.actions` (default `restart,recreate`). Rung 3 is appended only with `dokdosta.heal.pull=true`, and only if `recreate` is in the ladder (v3.8 item 11). Each rung runs once per incident. The one exception is the dependents step: a sidecar made stale again by a parent that changed since its last repair gets a fresh incident (v3.13 item 1). Rungs 2 and 3 are available only with Engine ≥ 28.1 and Compose ≥ v5.2.0; otherwise they are disabled at startup and the ladder ends after rung 1 (§3.6, *Minimum versions per rung*).
 - **Recovered means:**
   - with a healthcheck: health is `healthy`;
   - without one: the container is running and `RestartCount` has not changed for `RECOVERY_PERIOD`.
 - **Flap count:** closing an incident does not reset it. Only the window expiring does.
 - **State key:** `host/project/service/container-number`, taken from the `com.docker.compose.project`, `.service` and `.container-number` labels. Never the container ID, because a recreate changes it.
-  - `host` comes from `WHALENURSE_HOST_ID` (default: the hostname). At startup, persisted keys with another host segment are re-keyed to the current one (v3.13 item 12).
+  - `host` comes from `DOKDOSTA_HOST_ID` (default: the hostname). At startup, persisted keys with another host segment are re-keyed to the current one (v3.13 item 12).
   - Non-compose containers fall back to the container name and only get rung 1. So does a container whose compose identity labels come from its image (v3.13 item 10).
 - **Persisted from M2a:** incident state, rung reached, SUSPENDED/PAUSED (with reason and expiry), flap history, manual-stop markers and the `last_seen` heartbeat.
-- **Action-in-flight window:** while whalenurse is acting on a key, events for that key are *recorded and attributed to the action*, not interpreted. They must not:
+- **Action-in-flight window:** while dokdosta is acting on a key, events for that key are *recorded and attributed to the action*, not interpreted. They must not:
   - trigger the manual-stop heuristic;
   - clear SUSPENDED;
   - open a new incident.
@@ -334,11 +346,11 @@ any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)-
   - the container returns to healthy;
   - an external `create` arrives outside any in-flight window;
   - a `start` arrives outside any in-flight window **and follows a manual-stop marker** (someone stopped it, someone started it). A `start` by the restart policy never clears SUSPENDED: it is also a `start` event, and clearing on it would re-arm the ladder on every cycle of a crash loop. Neither does a `start` inside a restore window, nor one that follows a quarantined shutdown kill (§3.3, *Manual-stop markers*): the restore of a daemon restart or reboot would otherwise unsuspend every container;
-  - someone runs `whalenurse unsuspend`.
+  - someone runs `dokdosta unsuspend`.
 - **Pause:**
-  - Syntax: `whalenurse pause <project>[/<service>] [--for 2h]` and `whalenurse resume ...`, run via `docker exec`. The CLI talks to the daemon over a unix socket.
+  - Syntax: `dokdosta pause <project>[/<service>] [--for 2h]` and `dokdosta resume ...`, run via `docker exec`. The CLI talks to the daemon over a unix socket.
   - Default duration is 2h; `--for 0` means indefinite. Pauses expire so a forgotten pause doesn't disable healing for good.
-- **Global rate limit:** `WHALENURSE_RATE_LIMIT` actions per hour (default 10). This prevents action storms during host-wide outages.
+- **Global rate limit:** `DOKDOSTA_RATE_LIMIT` actions per hour (default 10). This prevents action storms during host-wide outages.
 
 ### 3.3 Decision rules (inspect after the grace period)
 
@@ -355,7 +367,8 @@ any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)-
 **Rule precedence:**
 
 0. **Skip entirely:**
-   - whalenurse's own container;
+   - dokdosta's own container;
+   - a container with any `whalenurse.*` label, the namespace from before the rename, whatever else it carries (v3.15 item 5; read like `dokdosta.*` under v3.13 item 10, the reason names the keys);
    - `com.docker.compose.oneoff=True` (`compose run` containers carry the same project and service labels);
    - swarm tasks (`com.docker.swarm.task.id` present);
    - containers that are not opted in;
@@ -383,17 +396,17 @@ any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)-
        - `stat <cmd>: not a directory` (E8c). Docker adds a misleading hint about mounting a directory onto a file; ignore it.
 2. `running` + `unhealthy` → ladder.
 3. A **crash loop**, or `on-failure:N` exhausted → ladder. (A container still `restarting` after GRACE is re-inspected on each poll; rule 1 applies when it fails.) A container that was `created` but never started → the ladder (start at rung 1, then recreate), unless compose is holding it back on a `depends_on` condition that does not hold yet: then it is held, with no incident (v3.13 item 14).
-   - **Crash loop:** at least 3 `RestartCount` increases, the first at least `CRASHLOOP_AFTER` (default 5m) ago **and the latest less than `CRASHLOOP_AFTER` ago** (three quick restarts followed by a long quiet are not a loop). `RestartCount` and `die` events are the signal, not the `restarting` status: the engine's restart manager resets its backoff after a run of 10s or more, so a container that crashes every ~15s is almost always `running` when inspected, and a rule that needs `restarting` never fires. The rule must give the same answer however often whalenurse inspects, so it counts increases between inspects rather than comparing two snapshots. The loop clears after `RECOVERY_PERIOD` (default 10m) without an increase.
+   - **Crash loop:** at least 3 `RestartCount` increases, the first at least `CRASHLOOP_AFTER` (default 5m) ago **and the latest less than `CRASHLOOP_AFTER` ago** (three quick restarts followed by a long quiet are not a loop). `RestartCount` and `die` events are the signal, not the `restarting` status: the engine's restart manager resets its backoff after a run of 10s or more, so a container that crashes every ~15s is almost always `running` when inspected, and a rule that needs `restarting` never fires. The rule must give the same answer however often dokdosta inspects, so it counts increases between inspects rather than comparing two snapshots. The loop clears after `RECOVERY_PERIOD` (default 10m) without an increase.
    - M1 ships a simpler form: the clock starts on `restarting` or a rising `RestartCount` and clears after GRACE of a steady count ([m1-notes.md](m1-notes.md) decision 11). M2a replaces it with the rule above.
-4. `exited` with no `State.Error` → apply `whalenurse.heal-exited` (`crashed` | `always` | `never`; default `crashed`):
+4. `exited` with no `State.Error` → apply `dokdosta.heal-exited` (`crashed` | `always` | `never`; default `crashed`):
    - **Intended exit:** with restart policy `no` or `on-failure` and exit code 0, the exit was intended. Leave it alone in `crashed` and `never` modes.
-   - **`crashed`:** heal if whalenurse saw a `die` **without a preceding `kill`**, or `OOMKilled=true` (also watch the `oom` event). If whalenurse missed the events (it was down):
+   - **`crashed`:** heal if dokdosta saw a `die` **without a preceding `kill`**, or `OOMKilled=true` (also watch the `oom` event). If dokdosta missed the events (it was down):
      - heal on a non-zero exit code other than 137/143;
      - 137 with `OOMKilled=true` is a crash, so heal;
      - 137 or 143 without OOM: notify only, don't heal.
    - **`always`:** heal any exited container.
-   - **A container stopped by a host shutdown or reboot is judged by its restart policy, whatever its exit code** (v3.5). *Stopped by the host* means its `FinishedAt` falls inside a **shutdown window**: from 30 s before the previous run's `last_seen` (or before the events-stream loss) to the daemon's restore. The window is closed at the reconnect after a stream loss; for the startup case it ends when whalenurse started after a reboot (new boot id), and within one boot at most 5 minutes after `last_seen`, so a crash while whalenurse was down for hours is still a crash. Exit 137 and 143 are only the common cases: an app that handles SIGTERM may exit 1 or 0 (M0b `n-parent` exited 137; a test app that exits 1 on SIGTERM was started by whalenurse in the first M2a run on the VM, which is what this rule prevents). Then:
-     - **`restart: "no"`** stays down. Docker does not restore it, and whalenurse does not either, in `crashed` and `never` modes: the shutdown is not a crash (see *Manual-stop markers*). One notification (`NotifyOnly`, deduplicated, not repeated every poll). Its `network_mode` dependents, which fail at boot with `cannot join network namespace of a non running container`, stay down with it: no ladder runs for them, and the single notification that names the parent and its dependents is M2b.
+   - **A container stopped by a host shutdown or reboot is judged by its restart policy, whatever its exit code** (v3.5). *Stopped by the host* means its `FinishedAt` falls inside a **shutdown window**: from 30 s before the previous run's `last_seen` (or before the events-stream loss) to the daemon's restore. The window is closed at the reconnect after a stream loss; for the startup case it ends when dokdosta started after a reboot (new boot id), and within one boot at most 5 minutes after `last_seen`, so a crash while dokdosta was down for hours is still a crash. Exit 137 and 143 are only the common cases: an app that handles SIGTERM may exit 1 or 0 (M0b `n-parent` exited 137; a test app that exits 1 on SIGTERM was started by dokdosta in the first M2a run on the VM, which is what this rule prevents). Then:
+     - **`restart: "no"`** stays down. Docker does not restore it, and dokdosta does not either, in `crashed` and `never` modes: the shutdown is not a crash (see *Manual-stop markers*). One notification (`NotifyOnly`, deduplicated, not repeated every poll). Its `network_mode` dependents, which fail at boot with `cannot join network namespace of a non running container`, stay down with it: no ladder runs for them, and the single notification that names the parent and its dependents is M2b.
      - **`always`, `unless-stopped`, `on-failure`** are left to Docker's restore. If the restore failed, the container has `State.Error` and rule 1 handles it. Exception (v3.13 item 17): Docker does not restore an **`on-failure`** container that exited 0 or whose `MaxRetries` are spent, so it is treated like `restart: "no"` (stays down, one notification).
      - **`heal-exited=always`** starts the container (and then its dependents, the heal-the-parent-first path of rule 1).
      - Containers outside a window are judged as before (`crashed`: heal on a non-zero exit code other than 137/143, and so on).
@@ -402,15 +415,15 @@ any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)-
 **Manual-stop markers:**
 - A marker is set on a `kill` event outside any in-flight window, and cleared on the next `start` event. A `kill` with a reload signal (SIGHUP, SIGUSR1, SIGUSR2, SIGWINCH) sets none (v3.13 item 15). A sidecar without its own opt-in gets markers too (v3.13 item 2).
 - **A daemon shutdown or reboot sends `kill` to every running container** (M0b: 12 of 12 within 20ms at a daemon restart, `kill[15]` then `kill[9]`; at a reboot the observer is cut off after `kill[15]`, before any `stop` or `die`). Taken literally, the rules above would mark every container as manually stopped, and the `start` events of the restore would then clear SUSPENDED on all of them (§3.2). **Kills seen during a daemon shutdown or reboot must not set manual-stop markers or clear SUSPENDED.** Four mechanisms, all required:
-  - **(a) Quarantine on stream loss.** When the events stream ends for a reason other than whalenurse's own shutdown (EOF or an error; for whalenurse's own end see (d)), discard every marker created in the 30 s before the loss: the daemon's shutdown limit is 15 s, plus the stop timeouts. A real manual stop in that window is lost too. That container is then judged by rule 4 without evidence (137/143 without OOM: notify only), which is the safe outcome.
-  - **(b) Persist the boot id.** Store `/proc/sys/kernel/random/boot_id` with the markers. If it differs at startup, drop the markers and treat the first `STARTUP_SETTLE` as a restore window. With the previous run's `last_seen` known, only the markers set at or after `last_seen` − 30 s are dropped and older ones are kept (v3.13 item 16); without it, all of them. A reboot stops whalenurse in the same second as the containers, so a marker can exist without any matching event in the next run.
+  - **(a) Quarantine on stream loss.** When the events stream ends for a reason other than dokdosta's own shutdown (EOF or an error; for dokdosta's own end see (d)), discard every marker created in the 30 s before the loss: the daemon's shutdown limit is 15 s, plus the stop timeouts. A real manual stop in that window is lost too. That container is then judged by rule 4 without evidence (137/143 without OOM: notify only), which is the safe outcome.
+  - **(b) Persist the boot id.** Store `/proc/sys/kernel/random/boot_id` with the markers. If it differs at startup, drop the markers and treat the first `STARTUP_SETTLE` as a restore window. With the previous run's `last_seen` known, only the markers set at or after `last_seen` − 30 s are dropped and older ones are kept (v3.13 item 16); without it, all of them. A reboot stops dokdosta in the same second as the containers, so a marker can exist without any matching event in the next run.
   - **(c) Restore window.** After connecting to a daemon that was down, until `STARTUP_SETTLE` has passed, a `start` event is a restore: it does not clear SUSPENDED, and a `kill` in the window does not set a marker.
-  - **(d) Heartbeat: whalenurse's own end.** In container mode a daemon shutdown kills whalenurse too. Its stream then ends by its own SIGTERM, which (a) excludes, and the boot id is unchanged, so (b) does not fire; the markers it saw and persisted would let the restore's `start` clear SUSPENDED. So persist `last_seen` (a heartbeat, written at most every 5 s, and on a clean stop). At startup treat the previous run's end as a stream loss: discard every marker set in the 30 s before `last_seen` (as in (a)), and if the gap between `last_seen` and now exceeds `POLL_INTERVAL`, open the restore window of (c) (the daemon may be restoring containers). The price is the same as (a): a real manual stop in the 30 s before whalenurse is itself stopped is forgotten, which is the safe outcome. In systemd mode this also covers systemd stopping whalenurse before Docker.
+  - **(d) Heartbeat: dokdosta's own end.** In container mode a daemon shutdown kills dokdosta too. Its stream then ends by its own SIGTERM, which (a) excludes, and the boot id is unchanged, so (b) does not fire; the markers it saw and persisted would let the restore's `start` clear SUSPENDED. So persist `last_seen` (a heartbeat, written at most every 5 s, and on a clean stop). At startup treat the previous run's end as a stream loss: discard every marker set in the 30 s before `last_seen` (as in (a)), and if the gap between `last_seen` and now exceeds `POLL_INTERVAL`, open the restore window of (c) (the daemon may be restoring containers). The price is the same as (a): a real manual stop in the 30 s before dokdosta is itself stopped is forgotten, which is the safe outcome. In systemd mode this also covers systemd stopping dokdosta before Docker.
 - **Rejected: recognising the shutdown by its burst of `kill[15]`** (two or more containers within a second, tagged as a shutdown). `docker compose stop` and `docker compose down` send the same burst, and so does stopping several containers by hand. A burst rule would label those deliberate stops as shutdowns, drop their markers, and heal the stopped containers. The stream loss in (a), the boot id in (b) and the heartbeat in (d) are the only reliable signals; do not add a burst heuristic.
 - Containers that fail to start at boot have `State.Error`, so rule 1 wins. The restored containers' markers never matter again, because the restore starts them.
 - A container stopped by hand before the shutdown (`unless-stopped`) stays down after the restore and keeps its marker; that case needs nothing.
 
-**Startup sweep:** after whalenurse starts (including at host boot), and **after every reconnect that follows a lost events stream**, wait `STARTUP_SETTLE` (default 2m), then apply the rules to everything. Replay with `since=` does not replace it (see above).
+**Startup sweep:** after dokdosta starts (including at host boot), and **after every reconnect that follows a lost events stream**, wait `STARTUP_SETTLE` (default 2m), then apply the rules to everything. Replay with `since=` does not replace it (see above).
 
 **Exit-code reading guide** (for M0, docs and the dashboard):
 
@@ -425,7 +438,7 @@ any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)-
 
 **Fixtures:** every rule gets a unit test with scrubbed `docker inspect` fixtures. The scrubber (`scripts/scrub-fixture`):
 - removes `Config.Env`;
-- replaces label values except `com.docker.compose.*` and `whalenurse.*`; other label keys are kept;
+- replaces label values except `com.docker.compose.*` and `dokdosta.*`; other label keys are kept;
 - rewrites the path-valued compose labels (`working_dir`, `config_files`, `environment_file`) to `/srv/stacks/<project>[/<file>]`;
 - replaces `Config.Cmd`, `Entrypoint`, `Args`, healthcheck test arguments and health-check log output with `<scrubbed>`, because a raw capture can hold secrets there;
 - replaces hostnames, MACs and host mount sources with placeholders, and every IP except `0.0.0.0` and `127.0.0.1` with `192.0.2.99`. Those two stay so that strings like `Bind for 0.0.0.0:38080 failed` still match;
@@ -435,9 +448,9 @@ any state --(pause)--> PAUSED (no actions; events recorded) --(resume / expiry)-
 ### 3.4 Recreate via compose
 
 **Compose binary lookup** (first match wins):
-1. `WHALENURSE_COMPOSE_BIN`
+1. `DOKDOSTA_COMPOSE_BIN`
 2. The host plugin, mounted read-only at `/host/docker-compose`. The host path is typically `/usr/libexec/docker/cli-plugins/docker-compose`; `docker info` shows it. The compose plugin runs standalone.
-3. The bundled copy, at `/usr/libexec/whalenurse/docker-compose` (a different path on purpose: v3.6).
+3. The bundled copy, at `/usr/libexec/dokdosta/docker-compose` (a different path on purpose: v3.6).
 4. Under systemd, the host's plugin directories.
 
 Log which binary and version is in use at startup, and expose it in `/api/v1/status`. Below Compose v5.2.0 (or Engine 28.1) rungs 2 and 3 are disabled (§3.6). In systemd mode, use the host's `docker compose`.
@@ -463,7 +476,7 @@ Log which binary and version is in use at startup, and expose it in `/api/v1/sta
 
 ### 3.5 Dependents (network_mode sidecars)
 
-Dependents break whenever their parent is restarted or recreated, by anything: Docker's restart policy, whalenurse, or a manual `compose up`.
+Dependents break whenever their parent is restarted or recreated, by anything: Docker's restart policy, dokdosta, or a manual `compose up`.
 
 - **Discovery:** a dependent is any container whose `HostConfig.NetworkMode` (or IPC/PID mode) is `container:<id-or-name>` pointing at the parent. Compose resolves `service:X` to `container:<id>` at create time.
 - **Parent restart** (same ID): restart dependents via the Docker API, one at a time, with a health wait between each. The dependent keeps the parent's old namespace until it is restarted (E1 part B). A non-forced `up` does not repair it (E2c).
@@ -475,9 +488,9 @@ Dependents break whenever their parent is restarted or recreated, by anything: D
   - *Same ID, parent started later* → **restart** the dependent via the API.
   - **Never API-restart a dependent whose parent ID is gone.** The restart fails (`joining network namespace of container: No such container`) and turns a running-but-disconnected dependent into an exited one (E1).
 - **Finding the parent after its ID is gone (v3.11, item 2):** through the services learned for the dependent (`parents:<key>` in the store), taken from the `depends_on` label while it has one and from a live `container:` reference otherwise. Compose empties the label of a service recreated with `up --no-deps`, so the label alone is not enough from the second repair on. The namespace parent (the service the `container:` reference points at) is persisted on its own and decides the opt-in (v3.13 item 3).
-- **Opt-in (v3.6, item 9):** the dependents step repairs the dependents of an opted-in parent even if they are not opted in themselves, unless labelled `whalenurse.enable=false`; their own failures need their own opt-in. It does not count toward their flap limit (item 10). The parent is the namespace parent (v3.13 item 3). A sidecar that exited on its own is recreated with its parent; one stopped by hand stays stopped (v3.13 item 2).
+- **Opt-in (v3.6, item 9):** the dependents step repairs the dependents of an opted-in parent even if they are not opted in themselves, unless labelled `dokdosta.enable=false`; their own failures need their own opt-in. It does not count toward their flap limit (item 10). The parent is the namespace parent (v3.13 item 3). A sidecar that exited on its own is recreated with its parent; one stopped by hand stays stopped (v3.13 item 2).
 - **Every parent change is repaired (v3.13 item 1):** a dependents-step repair records the parent's ID and `StartedAt`; when the sidecar is stale again against a different parent, a fresh incident opens at rung 0 (restart for a same-ID parent restart, the non-forced `up` for a recreate).
-- **Trigger:** a parent `start` or `create` event outside the in-flight window. When the action is whalenurse's own, it runs the dependents step explicitly.
+- **Trigger:** a parent `start` or `create` event outside the in-flight window. When the action is dokdosta's own, it runs the dependents step explicitly.
 - **Staleness sweep** (part of the poll and startup sweep). A dependent is stale if either:
   - its `NetworkMode` is `container:<id>` and `<id>` is not the parent's current ID; or
   - the parent's `State.StartedAt` is newer than the dependent's.
@@ -521,22 +534,22 @@ A recreate deploys whatever is on disk and in the local image store *now*. The g
    - Not a finding before rung 3's pull (v3.8 item 2): the pull is about to move the tag.
 3. **Compose version skew** (only when running the bundled compose fallback):
    - Compare the container's `com.docker.compose.version` label (present; `5.6.0` in the fixtures) with the bundled version.
-   - If both the versions and the hashes differ, report "can't verify drift (compose X on host vs Y in whalenurse)". This blocks, also in `warn`.
+   - If both the versions and the hashes differ, report "can't verify drift (compose X on host vs Y in dokdosta)". This blocks, also in `warn`.
    - With the host plugin (v3.6, item 12): if the plugin's release differs from the one in the container's label, add "compose upgraded from X to Y since this container was created" to the drift message, as information only: it is not a block of its own.
    - This is a real risk: v5.5.0 changed image-digest reconciliation and v5.6.0 pinned the hash byte layout. M0 had only one compose version, so skew is exercised by the CI matrix (§6).
 
 **On any failure:** skip the recreate, notify with the specific cause, and set SUSPENDED.
-- If whalenurse itself moved a shared tag (via rung 3 on another service), the message says which service did it and when (v3.8 item 5).
+- If dokdosta itself moved a shared tag (via rung 3 on another service), the message says which service did it and when (v3.8 item 5).
 
-**Strictness:** `WHALENURSE_DRIFT_GUARD=strict|warn` (default `strict`). `warn` recreates anyway and says so, for **verified drift only** (a `config` or `image` finding); a "can't verify" finding (a check that could not be made, the bundled compose's version skew) still blocks (v3.6, item 11).
+**Strictness:** `DOKDOSTA_DRIFT_GUARD=strict|warn` (default `strict`). `warn` recreates anyway and says so, for **verified drift only** (a `config` or `image` finding); a "can't verify" finding (a check that could not be made, the bundled compose's version skew) still blocks (v3.6, item 11).
 
 **Minimum versions per rung** (decided 17 Oct 2026, after the first CI run of the M0b `image-drift` job):
-- **Rung 1 (restart, Docker API only) works from Engine v25**, the minimum for whalenurse as a whole.
+- **Rung 1 (restart, Docker API only) works from Engine v25**, the minimum for dokdosta as a whole.
 - **Rungs 2 and 3 (recreate, pull) and the drift guard require Engine ≥ 28.1 and Compose ≥ v5.2.0**, the oldest compose in the CI matrix (§6). Engine 28.1 is the first with `image inspect --platform` (§3.6 check 2); the dry-run oracle's output is pinned by the compose matrix (on the runner's compose 2.38.2 it printed `null` instead of JSON lines).
-- **whalenurse checks both at startup** (the Engine version from the API, the compose version of the binary chosen in §3.4). If either is below the minimum it logs **one warning** that names the versions, **disables rungs 2 and 3** for every container, and the ladder ends after rung 1 with notify + SUSPENDED, as if `whalenurse.actions=restart` were set. The same applies per container when its labels select rungs that are disabled. Status and the dashboard show the disabled rungs and the reason.
+- **dokdosta checks both at startup** (the Engine version from the API, the compose version of the binary chosen in §3.4). If either is below the minimum it logs **one warning** that names the versions, **disables rungs 2 and 3** for every container, and the ladder ends after rung 1 with notify + SUSPENDED, as if `dokdosta.actions=restart` were set. The same applies per container when its labels select rungs that are disabled. Status and the dashboard show the disabled rungs and the reason.
 - **No store-guessing fallback.** Plain `<ref>` `.Id` equals the label on the classic store but not on the containerd store, and guessing the store is how the guard would flag or miss drift silently. Below the minimum, the guard does not run at all, and neither does the recreate it protects.
 
-### 3.7 Pull rung (opt-in, `whalenurse.heal.pull=true`)
+### 3.7 Pull rung (opt-in, `dokdosta.heal.pull=true`)
 
 Runs only after restart and recreate have failed (it needs `recreate` in the ladder, v3.8 item 11) and only above the version gate, §3.6. In this order:
 0. Read the service's `pull_policy`; `never` and `build` (or an unreadable policy) end the rung without running it: SUSPENDED with "pull rung does not apply (pull_policy ...)" (v3.8 item 14).
@@ -548,11 +561,11 @@ Runs only after restart and recreate have failed (it needs `recreate` in the lad
 The notification ("upgraded during heal", from `TagMoved`) includes:
 - the old image → new image;
 - the exact rollback commands: `docker image tag <old-id> <ref>`, then `<docker compose> -p ... up -d --no-deps --pull never --no-build <svc> [<sidecar>...]` (the old image stays local until pruned; `--no-build` from v3.13 item 7); the same message, as `Upgraded`, when rung 2 of a `heal.pull=true` container took a tag that someone else had moved (v3.8 item 12), only when its pull rung would apply (v3.13 item 5); its sidecars may follow that move and are named in the rollback (v3.13 item 6);
-- one cuttable line saying the rollback does not last while `whalenurse.heal.pull` stays on (v3.13 item 8).
+- one cuttable line saying the rollback does not last while `dokdosta.heal.pull` stays on (v3.13 item 8).
 
-`TagMoved` records that whalenurse moved a tag: the container, the time and the old and new IDs, in the store's meta, kept until the same reference is moved again. Other stacks sharing the tag will now see image drift, and when the drift guard blocks one of them, its message says which container moved the tag and when (only while the reference still resolves to what that pull produced). A dry run never pulls and records nothing.
+`TagMoved` records that dokdosta moved a tag: the container, the time and the old and new IDs, in the store's meta, kept until the same reference is moved again. Other stacks sharing the tag will now see image drift, and when the drift guard blocks one of them, its message says which container moved the tag and when (only while the reference still resolves to what that pull produced). A dry run never pulls and records nothing.
 
-Private registries (M7, v3.12 items 3 to 8). Without `WHALENURSE_REGISTRY_AUTH_DIR`, the pull runs with the compose child's environment, which reads no Docker config (an empty private `DOCKER_CONFIG`, v3.12 item 1), so a registry that needs a login refuses it (v3.8 item 15). With the variable set, **the pull command and only the pull command** runs with `DOCKER_CONFIG=<dir>`:
+Private registries (M7, v3.12 items 3 to 8). Without `DOKDOSTA_REGISTRY_AUTH_DIR`, the pull runs with the compose child's environment, which reads no Docker config (an empty private `DOCKER_CONFIG`, v3.12 item 1), so a registry that needs a login refuses it (v3.8 item 15). With the variable set, **the pull command and only the pull command** runs with `DOCKER_CONFIG=<dir>`:
 - the directory's `config.json` may hold only `auths`, each entry with an inline `auth`, `username`+`password` or `identitytoken`;
 - any other key, or a `contexts` entry, is a startup error;
 - the file is checked again before each pull;
@@ -560,13 +573,13 @@ Private registries (M7, v3.12 items 3 to 8). Without `WHALENURSE_REGISTRY_AUTH_D
 - `status`, the API and the home page show only the registry hosts.
 
 ### 3.8 Guardrails
-- Opt-in label `whalenurse.enable=true`, or `WHALENURSE_MODE=all`. A `whalenurse.*` label that comes from the image does not count (v3.13 item 10).
+- Opt-in label `dokdosta.enable=true`, or `DOKDOSTA_MODE=all`. A `dokdosta.*` label that comes from the image does not count (v3.13 item 10).
 - Never act on itself. In container mode, resolve the own container ID from `/proc/self/mountinfo` (the hostname can be overridden).
-- At startup, warn if whalenurse's own `NetworkMode` is `container:<id>`. **Never run whalenurse with `network_mode: service:<x>`**: it would become a dependent of a container it may heal.
+- At startup, warn if dokdosta's own `NetworkMode` is `container:<id>`. **Never run dokdosta with `network_mode: service:<x>`**: it would become a dependent of a container it may heal.
 - Rate limit, flap limit, cooldown backoff, `--dry-run` (log and notify only, with a dashboard banner).
 - Events-stream reconnect: resubscribe with `since=<last event time>`; the poll re-syncs state.
-- `/healthz` fails when the events stream has been down longer than a threshold, and when the Docker API has been failing for longer than 2 × `POLL_INTERVAL`; the main loop's Docker reads run under a 30 s timeout (v3.13 item 13). Use it as whalenurse's own healthcheck. On the TCP listener it says only `ok` or `not ok` (v3.9 item 12); the unix socket keeps the reason.
-- Optional uptime ping: `WHALENURSE_HEARTBEAT_URL` every `WHALENURSE_HEARTBEAT_INTERVAL` (default 5m), only while healthy (§3.12).
+- `/healthz` fails when the events stream has been down longer than a threshold, and when the Docker API has been failing for longer than 2 × `POLL_INTERVAL`; the main loop's Docker reads run under a 30 s timeout (v3.13 item 13). Use it as dokdosta's own healthcheck. On the TCP listener it says only `ok` or `not ok` (v3.9 item 12); the unix socket keeps the reason.
+- Optional uptime ping: `DOKDOSTA_HEARTBEAT_URL` every `DOKDOSTA_HEARTBEAT_INTERVAL` (default 5m), only while healthy (§3.12).
 - Structured JSON logs.
 
 ### 3.9 Security
@@ -575,19 +588,19 @@ Private registries (M7, v3.12 items 3 to 8). Without `WHALENURSE_REGISTRY_AUTH_D
 - **Base image: `gcr.io/distroless/static:nonroot`** (E7). The statically linked compose plugin runs in it (and in `alpine`). The image runs as uid 65532, which cannot reach the socket by default (`permission denied while trying to connect to the docker API`), so add `group_add` for the socket's group (`stat -c %g /var/run/docker.sock` on the host). There is no shell, so the image's own healthcheck must call the binary.
 - **Dashboard:**
   - Off by default, read-only, no write endpoints (so no CSRF surface).
-  - Never render env vars or full inspect output; show only `com.docker.compose.*` and `whalenurse.*` labels.
-  - Optional token (v3.9 items 4, 11): bearer, or the password of HTTP Basic for browsers, over TLS only. Constant-time compare; never taken from the URL. Wrong tokens: 10 per minute per IP, then 429 with backoff (v3.9 item 15; `X-Forwarded-For` is read only from `WHALENURSE_HTTP_TRUSTED_PROXIES`, v3.10 item 5). Without a token only loopback Host names and `WHALENURSE_HTTP_ALLOWED_HOSTS` are served (item 14).
+  - Never render env vars or full inspect output; show only `com.docker.compose.*` and `dokdosta.*` labels.
+  - Optional token (v3.9 items 4, 11): bearer, or the password of HTTP Basic for browsers, over TLS only. Constant-time compare; never taken from the URL. Wrong tokens: 10 per minute per IP, then 429 with backoff (v3.9 item 15; `X-Forwarded-For` is read only from `DOKDOSTA_HTTP_TRUSTED_PROXIES`, v3.10 item 5). Without a token only loopback Host names and `DOKDOSTA_HTTP_ALLOWED_HOSTS` are served (item 14).
   - Only GET and HEAD are served; strict security headers and a CSP without inline script or style (v3.9 item 5); labels, event attributes and error text are filtered at one boundary (v3.9 item 6).
   - Recommended exposure: `127.0.0.1:8484:8484`, a reverse proxy, or a Tailscale container on a **shared bridge network** forwarding with `tailscale serve`. Not `network_mode`.
 - A socket proxy is roadmap (R3). Compose needs broad API access, so it adds little in v1.
 
 ### 3.10 Store
-- SQLite via `modernc.org/sqlite` in `WHALENURSE_DATA_DIR` (default `/data`).
+- SQLite via `modernc.org/sqlite` in `DOKDOSTA_DATA_DIR` (default `/data`), file `dokdosta.db`. A `whalenurse.db` from before the rename is renamed to it once, with its `-wal` and `-shm`, under both locks (v3.15 item 6).
 - Tables: per-key state, incidents and flap history, events (`events`, schema 3, built in M5: the autoincrement ID doubles as the `since` cursor and is never reused), and notifications sent (`notified`, the dedupe ledger of §3.12; schema 2, built in M3).
-- Retention: `WHALENURSE_HISTORY_RETENTION` (default 30d) for closed incidents and events, hourly; the events of an incident that is still open are kept (v3.13 item 21); events are also capped at 100,000 rows (open incidents' events deleted last).
+- Retention: `DOKDOSTA_HISTORY_RETENTION` (default 30d) for closed incidents and events, hourly; the events of an incident that is still open are kept (v3.13 item 21); events are also capped at 100,000 rows (open incidents' events deleted last).
 
 ### 3.11 API and dashboard (read-only)
-- **API:** `/api/v1/status`, `/api/v1/containers`, `/api/v1/containers/{key}`, `/api/v1/events?since=<cursor>`, `/api/v1/incidents`, plus the SSE stream `/api/v1/stream` (built in M5; v3.9 items 1 to 3). Alongside it: `/healthz` and an optional Prometheus `/metrics` (`WHALENURSE_METRICS`).
+- **API:** `/api/v1/status`, `/api/v1/containers`, `/api/v1/containers/{key}`, `/api/v1/events?since=<cursor>`, `/api/v1/incidents`, plus the SSE stream `/api/v1/stream` (built in M5; v3.9 items 1 to 3). Alongside it: `/healthz` and an optional Prometheus `/metrics` (`DOKDOSTA_METRICS`).
 - The dashboard uses only this API, and the hub (R1) will reuse it as the agent contract.
 - **Pages:**
   - Overview: counts, healer status, compose binary and version, dry-run banner, rate-limit budget.
@@ -608,38 +621,38 @@ Private registries (M7, v3.12 items 3 to 8). Without `WHALENURSE_REGISTRY_AUTH_D
 | `ActionResult` | action taken: `restarted`, `recreated`, `started`, `pulled`, or `restart failed` with the error; says why it was started and the rung. Not sent for a pull with an outcome (`unchanged`, `upgraded`, `upgrade-failed`): the two rows below say it | routine |
 | `Recovered` | recovered | routine |
 | `Unsuspended` | unsuspended, with the reason (v3.7 item 13) | routine |
-| `Suspended`, reason `ladder` | giving up, SUSPENDED, with the cause (also "the pull found no newer image") and `whalenurse unsuspend <scope>` | important |
+| `Suspended`, reason `ladder` | giving up, SUSPENDED, with the cause (also "the pull found no newer image") and `dokdosta unsuspend <scope>` | important |
 | `Suspended`, reason `flapping` | flapping, SUSPENDED | important |
 | `Suspended`, reason `drift` | *not sent* when it directly follows its `DriftBlocked`, which says the same; a re-suspension later in the same incident is sent as giving up, the first one only (v3.13 items 18 and 19) | |
 | `TagMoved`, `Upgraded` | **upgraded during heal** (v3.8): the pull rung brought a newer image (`TagMoved`), or rung 2 of a `heal.pull=true` container took a tag that someone else moved (`Upgraded`): old → new, the sidecars recreated with it, a cuttable line that the rollback does not last while `heal.pull` stays on (v3.13 item 8), and the exact rollback commands (never cut; body up to 720) | important |
-| `DriftBlocked` | recreate blocked, with the guard's reason, a hint (compose upgraded or skewed, tag moved, file changed), who moved the tag if it was whalenurse's pull rung, and the unsuspend command | important |
-| `DriftWarned` | recreating despite drift (`WHALENURSE_DRIFT_GUARD=warn`) | routine |
+| `DriftBlocked` | recreate blocked, with the guard's reason, a hint (compose upgraded or skewed, tag moved, file changed), who moved the tag if it was dokdosta's pull rung, and the unsuspend command | important |
+| `DriftWarned` | recreating despite drift (`DOKDOSTA_DRIFT_GUARD=warn`) | routine |
 | `NotifyOnly` | needs attention, nothing was done: a `restart: "no"` parent left down by a host shutdown, **with the dependents that stay down with it** | important |
-| `NeedsRecreate` | needs a recreate that is not available (version gate, no usable compose inputs, `recreate` not in `whalenurse.actions`) | important |
+| `NeedsRecreate` | needs a recreate that is not available (version gate, no usable compose inputs, `recreate` not in `dokdosta.actions`) | important |
 | `RateLimited` | action rate limit reached, healing waits; at most once an hour per URL (v3.7 item 14) | important |
 | `RungsDisabled` | the version-gate warning: recreate and pull rungs disabled, and why | important |
 | `Paused`, `Resumed` | paused / resumed `<scope>` (including expiry) | routine |
 
 - **Shape.** Title: `[dry-run] host: container headline`. Body: the container key (or `host <id>`), then the cause and the next step. At most 72 runes of title and 360 of body (720 for a message with commands to copy, whose commands are never cut: v3.8 item 6); a long container name is cut, never the headline or the key line.
-- **Delivery never touches healing.** The engine publishes events under its lock, so the subscriber only queues (a full queue drops and counts). One dispatcher renders and deduplicates. **One worker and one Shoutrrr sender per URL** deliver in order, each attempt under `WHALENURSE_NOTIFY_TIMEOUT`, with two retries (after 2 s and 10 s). A hung URL delays nothing, not even another URL, and a panic inside a service is a failed delivery (whalenurse calls the located service itself under a `recover`, because Shoutrrr's router does not). A failure is logged and counted per URL; it is never published as a domain event. On a stop the queue is delivered for up to 5 s, then what is still in flight is aborted.
+- **Delivery never touches healing.** The engine publishes events under its lock, so the subscriber only queues (a full queue drops and counts). One dispatcher renders and deduplicates. **One worker and one Shoutrrr sender per URL** deliver in order, each attempt under `DOKDOSTA_NOTIFY_TIMEOUT`, with two retries (after 2 s and 10 s). A hung URL delays nothing, not even another URL, and a panic inside a service is a failed delivery (dokdosta calls the located service itself under a `recover`, because Shoutrrr's router does not). A failure is logged and counted per URL; it is never published as a domain event. On a stop the queue is delivered for up to 5 s, then what is still in flight is aborted.
 - **Secrets.** The URLs hold tokens (a Discord webhook id and token are the host and the path, a Telegram bot token is the user name, ntfy and Gotify tokens are a path or a query value). A URL is only ever shown as its position and scheme, `#2 discord`. Every error text goes through a redactor built from the configured URLs that masks the URL, its user info, host, path segments (of 6 runes or more) and query values (of 4 or more, except the boolean words `true`, `false`, `1`, `0`, `yes`, `no`, `on`, `off`: v3.13 item 20), in their escaped forms too; Shoutrrr redacts its own errors since v0.22.0 as well, and this is a second layer. `config` never quotes these variables in an error or a warning. `status`, `/healthz` and `notify test` show counts and redacted reasons only.
-- **Dedupe.** One message per (event type, container key, discriminator, incident); the discriminator is the action and rung for `ActionResult`, the reason for `Suspended`, the findings for the drift events. The incident is the `incident` attribute the engine puts on every event of a key with an open incident (the incident's opening time), so the same event within one incident is said once, a new incident is news again, and a restart of whalenurse does not mix them up. Events with no incident are deduplicated for 24 h. Deliberate commands (`Paused`, `Resumed`, an `unsuspend` command) are never deduplicated. `Suspended` and `Unsuspended` make each other news again, once per incident (v3.13 item 18). **The dedupe is persisted** in the store's `notified` table (§3.10) and survives a restart.
-- **Rate limit.** `WHALENURSE_NOTIFY_RATE_LIMIT` messages per hour per URL (default 20), a sliding window. Routine messages may use the first half, important ones all of it. Messages held back are counted (`status` shows them) and the next message that goes out says how many ("N earlier messages were held back by the rate limit").
+- **Dedupe.** One message per (event type, container key, discriminator, incident); the discriminator is the action and rung for `ActionResult`, the reason for `Suspended`, the findings for the drift events. The incident is the `incident` attribute the engine puts on every event of a key with an open incident (the incident's opening time), so the same event within one incident is said once, a new incident is news again, and a restart of dokdosta does not mix them up. Events with no incident are deduplicated for 24 h. Deliberate commands (`Paused`, `Resumed`, an `unsuspend` command) are never deduplicated. `Suspended` and `Unsuspended` make each other news again, once per incident (v3.13 item 18). **The dedupe is persisted** in the store's `notified` table (§3.10) and survives a restart.
+- **Rate limit.** `DOKDOSTA_NOTIFY_RATE_LIMIT` messages per hour per URL (default 20), a sliding window. Routine messages may use the first half, important ones all of it. Messages held back are counted (`status` shows them) and the next message that goes out says how many ("N earlier messages were held back by the rate limit").
 - **Dry-run sends notifications**, marked `[dry-run]` in the title and in the first line of the body: that is how the maintainer checks the setup.
-- **`whalenurse notify test`:** one test message to every URL, one attempt each, no dedupe, no rate limit; one line per URL, `ok (143ms)` or `FAILED <redacted reason>`; exit 1 if any failed or `WHALENURSE_NOTIFY_URLS` is empty. It reads the environment, so `docker exec whalenurse /whalenurse notify test` tests what the daemon has, and it needs no running daemon.
-- **Uptime ping.** `WHALENURSE_HEARTBEAT_URL` (healthchecks.io, Uptime Kuma push) gets a plain GET at once and then every `WHALENURSE_HEARTBEAT_INTERVAL`, with the same timeout, **only while the daemon is healthy** (the `/healthz` condition); otherwise the ping is skipped, so the monitor alarms by the missing ping. The URL is a secret and is redacted like the others.
-- **`WHALENURSE_NOTIFY_URLS`** holds several URLs separated by whitespace or by a comma that is followed by `scheme://`. A comma inside a URL (`tags=warning,skull`, `chats=a,b`) is part of it. A URL that Shoutrrr rejects is logged by position and scheme, shown as `INVALID` in `status` and skipped.
+- **`dokdosta notify test`:** one test message to every URL, one attempt each, no dedupe, no rate limit; one line per URL, `ok (143ms)` or `FAILED <redacted reason>`; exit 1 if any failed or `DOKDOSTA_NOTIFY_URLS` is empty. It reads the environment, so `docker exec dokdosta /dokdosta notify test` tests what the daemon has, and it needs no running daemon.
+- **Uptime ping.** `DOKDOSTA_HEARTBEAT_URL` (healthchecks.io, Uptime Kuma push) gets a plain GET at once and then every `DOKDOSTA_HEARTBEAT_INTERVAL`, with the same timeout, **only while the daemon is healthy** (the `/healthz` condition); otherwise the ping is skipped, so the monitor alarms by the missing ping. The URL is a secret and is redacted like the others.
+- **`DOKDOSTA_NOTIFY_URLS`** holds several URLs separated by whitespace or by a comma that is followed by `scheme://`. A comma inside a URL (`tags=warning,skull`, `chats=a,b`) is part of it. A URL that Shoutrrr rejects is logged by position and scheme, shown as `INVALID` in `status` and skipped.
 
 ### 3.13 Release and supply chain (M6, v3.10)
 
 The pipeline is described in the v3.10 list above (items 1 to 4); this section holds what to keep true.
 
 - **Only a `v*` tag publishes.** `release.yml` is the only workflow with `packages: write`, `id-token: write`, `contents: write` and `attestations: write`, in one job (`publish`) that needs the `test` job. `ci.yml` has `contents: read` and never logs in to a registry or reaches an OIDC token. The tag must be on `main` and have a dated `CHANGELOG.md` section.
-- **What a release holds:** `whalenurse_<version>_linux_{amd64,arm64}.tar.gz`, `<archive>.sbom.spdx.json`, `checksums.txt` (all four above are in it), `checksums.txt.sigstore.json`, and the image `ghcr.io/jackspiering/whalenurse` (index of two platforms, signed, with BuildKit's SBOM attestation, and a GitHub provenance attestation by digest). Tags: `vX.Y.Z` always, `vX.Y`, `vX` and `latest` only for a release that is not a pre-release.
-- **Identity.** A signature is accepted only from `https://github.com/jackspiering/whalenurse/.github/workflows/release.yml@refs/tags/<tag>` with the issuer `https://token.actions.githubusercontent.com`.
+- **What a release holds:** `dokdosta_<version>_linux_{amd64,arm64}.tar.gz`, `<archive>.sbom.spdx.json`, `checksums.txt` (all four above are in it), `checksums.txt.sigstore.json`, and the image `ghcr.io/jackspiering/dokdosta` (index of two platforms, signed, with BuildKit's SBOM attestation, and a GitHub provenance attestation by digest). Tags: `vX.Y.Z` always, `vX.Y`, `vX` and `latest` only for a release that is not a pre-release.
+- **Identity.** A signature is accepted only from `https://github.com/jackspiering/dokdosta/.github/workflows/release.yml@refs/tags/<tag>` with the issuer `https://token.actions.githubusercontent.com`.
 - **Pinned.** Actions by commit SHA, base images by digest, the bundled compose by sha256, GoReleaser, cosign and syft by exact version; the Dockerfile syntax frontend and the buildx BuildKit image by digest (v3.13 item 22).
 - **Gates (v3.13 item 22).** `govulncheck` in the `go` and release `test` jobs; the Go version of `go.mod` equals both Dockerfiles' `golang:` base; the publish job builds with an empty Go cache.
-- **The maintainer's steps** (public GHCR package, branch protection, tag rules, immutable releases, the release gate, the tag itself) are in [releasing.md](releasing.md). The release gate: **no `v0.1.0` tag until whalenurse has run for a few days in dry-run on a real host, and then live on a few test containers.**
+- **The maintainer's steps** (public GHCR package, branch protection, tag rules, immutable releases, the release gate, the tag itself) are in [releasing.md](releasing.md). The release gate: **no `v0.1.0` tag until dokdosta has run for a few days in dry-run on a real host, and then live on a few test containers.**
 
 ## 4. Configuration (v1)
 
@@ -649,55 +662,55 @@ Initial defaults; tune them after M0.
 
 | Variable | Default |
 |---|---|
-| `WHALENURSE_NOTIFY_URLS` | — (Shoutrrr URLs, separated by whitespace or a comma before `scheme://`; secret; from M3) |
-| `WHALENURSE_NOTIFY_TIMEOUT` | `10s` (one delivery attempt, per URL; from M3) |
-| `WHALENURSE_NOTIFY_RATE_LIMIT` | `20` (messages/hour per URL; from M3) |
-| `WHALENURSE_DRY_RUN` | `false` |
-| `WHALENURSE_MODE` | `label` (or `all`) |
-| `WHALENURSE_POLL_INTERVAL` | `60s` |
-| `WHALENURSE_GRACE` | `30s` |
-| `WHALENURSE_COOLDOWN` | `30s` (base; doubles per rung, capped at 5m) |
-| `WHALENURSE_RECOVERY_PERIOD` | `10m` |
-| `WHALENURSE_FLAP_LIMIT` | `3` |
-| `WHALENURSE_FLAP_WINDOW` | `24h` |
-| `WHALENURSE_CRASHLOOP_AFTER` | `5m` |
-| `WHALENURSE_RATE_LIMIT` | `10` (actions/hour) |
-| `WHALENURSE_STARTUP_SETTLE` | `2m` |
-| `WHALENURSE_DRIFT_GUARD` | `strict` (or `warn`; from M2b) |
-| `WHALENURSE_COMPOSE_BIN` | — (see §3.4; from M2b) |
-| `WHALENURSE_HOST_ID` | hostname (persisted keys are re-keyed to it at startup, v3.13 item 12) |
-| `WHALENURSE_DATA_DIR` | `/data` |
-| `WHALENURSE_HTTP_ADDR` | empty (dashboard, API and `/healthz` off; `127.0.0.1:8484` or `:8484` in examples; from M5 it serves the dashboard and the API) |
-| `WHALENURSE_CONTROL_SOCKET` | `/run/whalenurse.sock` (unix socket for `/healthz` and, from M2a, the CLI; added in M1) |
-| `WHALENURSE_HTTP_TOKEN` | — (secret; bearer or Basic password for the dashboard and API; `/healthz` stays open; from M5) |
-| `WHALENURSE_METRICS` | `false` (serve `/metrics` on the HTTP listener; from M5) |
-| `WHALENURSE_HTTP_ALLOWED_HOSTS` | — (extra Host names served when there is **no token**, besides localhost, 127.0.0.1 and [::1]; comma or space separated; from M5) |
-| `WHALENURSE_HTTP_TRUSTED_PROXIES` | — (CIDRs or addresses, comma or space separated, of reverse proxies whose `X-Forwarded-For` the wrong-token limit believes; ignored without a token; `/0` refused; from M6) |
-| `WHALENURSE_HISTORY_RETENTION` | `30d` |
-| `WHALENURSE_REGISTRY_AUTH_DIR` | — (directory holding a `config.json` with inline `auths` only, mounted read-only; passed to the pull rung's `compose pull` as `DOCKER_CONFIG`, to no other command; holds secrets; from M7) |
-| `WHALENURSE_HEARTBEAT_URL` | — (uptime ping, secret; from M3) |
-| `WHALENURSE_HEARTBEAT_INTERVAL` | `5m` (from M3) |
-| `WHALENURSE_LOG_LEVEL` | `info` |
+| `DOKDOSTA_NOTIFY_URLS` | — (Shoutrrr URLs, separated by whitespace or a comma before `scheme://`; secret; from M3) |
+| `DOKDOSTA_NOTIFY_TIMEOUT` | `10s` (one delivery attempt, per URL; from M3) |
+| `DOKDOSTA_NOTIFY_RATE_LIMIT` | `20` (messages/hour per URL; from M3) |
+| `DOKDOSTA_DRY_RUN` | `false` |
+| `DOKDOSTA_MODE` | `label` (or `all`) |
+| `DOKDOSTA_POLL_INTERVAL` | `60s` |
+| `DOKDOSTA_GRACE` | `30s` |
+| `DOKDOSTA_COOLDOWN` | `30s` (base; doubles per rung, capped at 5m) |
+| `DOKDOSTA_RECOVERY_PERIOD` | `10m` |
+| `DOKDOSTA_FLAP_LIMIT` | `3` |
+| `DOKDOSTA_FLAP_WINDOW` | `24h` |
+| `DOKDOSTA_CRASHLOOP_AFTER` | `5m` |
+| `DOKDOSTA_RATE_LIMIT` | `10` (actions/hour) |
+| `DOKDOSTA_STARTUP_SETTLE` | `2m` |
+| `DOKDOSTA_DRIFT_GUARD` | `strict` (or `warn`; from M2b) |
+| `DOKDOSTA_COMPOSE_BIN` | — (see §3.4; from M2b) |
+| `DOKDOSTA_HOST_ID` | hostname (persisted keys are re-keyed to it at startup, v3.13 item 12) |
+| `DOKDOSTA_DATA_DIR` | `/data` |
+| `DOKDOSTA_HTTP_ADDR` | empty (dashboard, API and `/healthz` off; `127.0.0.1:8484` or `:8484` in examples; from M5 it serves the dashboard and the API) |
+| `DOKDOSTA_CONTROL_SOCKET` | `/run/dokdosta.sock` (unix socket for `/healthz` and, from M2a, the CLI; added in M1) |
+| `DOKDOSTA_HTTP_TOKEN` | — (secret; bearer or Basic password for the dashboard and API; `/healthz` stays open; from M5) |
+| `DOKDOSTA_METRICS` | `false` (serve `/metrics` on the HTTP listener; from M5) |
+| `DOKDOSTA_HTTP_ALLOWED_HOSTS` | — (extra Host names served when there is **no token**, besides localhost, 127.0.0.1 and [::1]; comma or space separated; from M5) |
+| `DOKDOSTA_HTTP_TRUSTED_PROXIES` | — (CIDRs or addresses, comma or space separated, of reverse proxies whose `X-Forwarded-For` the wrong-token limit believes; ignored without a token; `/0` refused; from M6) |
+| `DOKDOSTA_HISTORY_RETENTION` | `30d` |
+| `DOKDOSTA_REGISTRY_AUTH_DIR` | — (directory holding a `config.json` with inline `auths` only, mounted read-only; passed to the pull rung's `compose pull` as `DOCKER_CONFIG`, to no other command; holds secrets; from M7) |
+| `DOKDOSTA_HEARTBEAT_URL` | — (uptime ping, secret; from M3) |
+| `DOKDOSTA_HEARTBEAT_INTERVAL` | `5m` (from M3) |
+| `DOKDOSTA_LOG_LEVEL` | `info` |
 
 **Labels:**
 
 | Label | Values / default |
 |---|---|
-| `whalenurse.enable` | `true` to opt in |
-| `whalenurse.actions` | default `restart,recreate` |
-| `whalenurse.heal-exited` | `crashed` \| `always` \| `never` |
-| `whalenurse.heal.pull` | `true` \| `false`; needs `recreate` in `actions`, else the pull stays off with a warning; never runs for `pull_policy: never\|build` |
-| `whalenurse.cooldown` | per-container override |
-| `whalenurse.flap-limit` | per-container override |
+| `dokdosta.enable` | `true` to opt in |
+| `dokdosta.actions` | default `restart,recreate` |
+| `dokdosta.heal-exited` | `crashed` \| `always` \| `never` |
+| `dokdosta.heal.pull` | `true` \| `false`; needs `recreate` in `actions`, else the pull stays off with a warning; never runs for `pull_policy: never\|build` |
+| `dokdosta.cooldown` | per-container override |
+| `dokdosta.flap-limit` | per-container override |
 
-**CLI:** `whalenurse run` (default), `pause`, `resume`, `unsuspend`, `status`, `notify test` (v3.7).
+**CLI:** `dokdosta run` (default), `pause`, `resume`, `unsuspend`, `status`, `notify test` (v3.7).
 
-**Version minimums (fixed, not configurable):** Engine v25 for rung 1 (restart). Rungs 2 and 3 and the drift guard need Engine ≥ 28.1 and Compose ≥ v5.2.0. whalenurse checks them at startup, logs one warning if either is lower, disables rungs 2 and 3, and ends the ladder with notify + SUSPENDED after rung 1 (§3.6). `WHALENURSE_DRIFT_GUARD=warn` does not bypass this: below the minimum there is no recreate to guard.
+**Version minimums (fixed, not configurable):** Engine v25 for rung 1 (restart). Rungs 2 and 3 and the drift guard need Engine ≥ 28.1 and Compose ≥ v5.2.0. dokdosta checks them at startup, logs one warning if either is lower, disables rungs 2 and 3, and ends the ladder with notify + SUSPENDED after rung 1 (§3.6). `DOKDOSTA_DRIFT_GUARD=warn` does not bypass this: below the minimum there is no recreate to guard.
 
 ## 5. Architecture and dependencies
 
 ```
-cmd/whalenurse/      main + subcommands
+cmd/dokdosta/      main + subcommands
 internal/docker/     interface over the moby client (events, inspect, restart, list) + fake
 internal/compose/    binary resolution, command builder, hash/dry-run helpers
 internal/engine/     incidents, ladder, flap limit, rules (pure, injected clock); emits domain events
@@ -716,7 +729,7 @@ internal/config/     env + label parsing
 - **`github.com/moby/moby/client` + `/api`.** The client was at v0.6.2 on 8 Oct 2026. It is pre-1.0, so minor versions can break; keep it behind `internal/docker`. API negotiation is the default (`WithAPIVersionNegotiation` is deprecated), and `Events()` returns a single `EventsResult`.
 - **Minimum Docker Engine v25** for rung 1 (restart). Engine v29 rejects API versions below 1.44. Rungs 2 and 3 and the drift guard require Engine ≥ 28.1 and Compose ≥ v5.2.0 (§3.6).
 - **`modernc.org/sqlite`.**
-- **`github.com/nicholas-fedor/shoutrrr`: vetted in M3 (18 Oct 2026), v0.22.0 (13 Oct 2026).** MIT. A maintained fork of `containrrr/shoutrrr`, whose last release is v0.8.0 (Aug 2023) and last commit May 2026; the fork has released weekly since Sep 2026 and commits daily, but is effectively one maintainer (30 contributors in all). It supports ntfy, Gotify, Discord, Telegram, Slack, Matrix, Mattermost, Rocket.Chat, Teams, Google Chat, Zulip, Signal, XMPP, Lark, WeCom, Pushover, Pushbullet, SignalGrid, IFTTT, Bark, Join, Home Assistant, MQTT, SMTP, Twilio, OpsGenie, PagerDuty, Notifiarr and a generic webhook (plus a logger). v0.22.0 has context-aware sends, a send budget per service and redacted errors and logs; whalenurse builds one router per URL with `CreateSenderWithOptions` and `SendContext` (the non-options constructors are deprecated). The root package registers every service, which costs about 8.5 MB of binary (v3.7 item 11).
+- **`github.com/nicholas-fedor/shoutrrr`: vetted in M3 (18 Oct 2026), v0.22.0 (13 Oct 2026).** MIT. A maintained fork of `containrrr/shoutrrr`, whose last release is v0.8.0 (Aug 2023) and last commit May 2026; the fork has released weekly since Sep 2026 and commits daily, but is effectively one maintainer (30 contributors in all). It supports ntfy, Gotify, Discord, Telegram, Slack, Matrix, Mattermost, Rocket.Chat, Teams, Google Chat, Zulip, Signal, XMPP, Lark, WeCom, Pushover, Pushbullet, SignalGrid, IFTTT, Bark, Join, Home Assistant, MQTT, SMTP, Twilio, OpsGenie, PagerDuty, Notifiarr and a generic webhook (plus a logger). v0.22.0 has context-aware sends, a send budget per service and redacted errors and logs; dokdosta builds one router per URL with `CreateSenderWithOptions` and `SendContext` (the non-options constructors are deprecated). The root package registers every service, which costs about 8.5 MB of binary (v3.7 item 11).
 - No cron library in v1. If R4 needs one, `robfig/cron` is unmaintained (last release Jan 2020); use `go-co-op/gocron/v2` or a cron-expression parser plus your own timer.
 
 ## 6. Testing
@@ -731,11 +744,11 @@ internal/config/     env + label parsing
 - shutdown kills (M0b fixtures `m0b-daemon-restart-shutdown` and `m0b-reboot-shutdown`):
   - markers created in the 30 s before an events-stream loss are discarded, and an older real manual stop survives;
   - a changed boot id drops all markers and opens a restore window;
-  - the heartbeat: whalenurse killed by the shutdown itself (no stream loss) and restarted with the same boot id discards the markers set in the 30 s before `last_seen`, an older real manual stop survives, a gap over `POLL_INTERVAL` opens the restore window, and a SUSPENDED container stays SUSPENDED through it;
+  - the heartbeat: dokdosta killed by the shutdown itself (no stream loss) and restarted with the same boot id discards the markers set in the 30 s before `last_seen`, an older real manual stop survives, a gap over `POLL_INTERVAL` opens the restore window, and a SUSPENDED container stays SUSPENDED through it;
   - the crash-loop rule: three quick restarts followed by a quiet are not a loop, restarts continuing to within `CRASHLOOP_AFTER` are, and the verdict does not depend on the poll interval or `GRACE`;
   - a `start` inside a restore window, or after a quarantined kill, does not clear SUSPENDED, and a SUSPENDED container killed by a shutdown and restored stays SUSPENDED;
   - negative test for the rejected burst rule: the same `kill[15]` burst with the events stream still up (`docker compose stop`) keeps its markers and the containers stay stopped;
-  - an app that exits 1 on SIGTERM with `restart: "no"`, stopped inside a shutdown window (after a stream loss, and after whalenurse itself was killed with the same boot id), stays down with one notification; the same app outside a window is started; `always`/`unless-stopped`/`on-failure` are left to Docker; `heal-exited=always` starts it; a window ends 5 minutes after `last_seen` within one boot and is open after a reboot;
+  - an app that exits 1 on SIGTERM with `restart: "no"`, stopped inside a shutdown window (after a stream loss, and after dokdosta itself was killed with the same boot id), stays down with one notification; the same app outside a window is started; `always`/`unless-stopped`/`on-failure` are left to Docker; `heal-exited=always` starts it; a window ends 5 minutes after `last_seen` within one boot and is open after a reboot;
   - a `restart: "no"` parent stopped by a shutdown and its dependents stay down with one notification, and `heal-exited=always` starts the parent and then the dependents;
 - `on-failure` + exit 0 is left alone;
 - oneoff containers and swarm tasks are skipped;
@@ -754,11 +767,11 @@ internal/config/     env + label parsing
 - **Store:** state survives a restart; retention pruning.
 - **API (built in M5):** golden JSON per endpoint (this is the future hub contract); every dashboard page renders against a real store through a real daemon; a test plants secrets (an environment variable, labels outside the allowed prefixes, notification and ping URLs, the HTTP token, an event attribute) and greps every page, endpoint, the event stream and `/metrics` (with positive controls and mutation-checked: without the redactor or the attribute allow-list it fails); every non-GET method is refused on every route, with and without the token; the token cases (bearer, Basic, wrong, prefix, query), the Host check (allowed, refused, exempt `/healthz`, ignored with a token), the wrong-token limiter (10 a minute, the doubling block up to 15 minutes, a right token refused while blocked, other clients and `/healthz` unaffected, no credentials not counted, `X-Forwarded-For` ignored, IPv6 /64, bounded table, strikes forgotten after an hour), `/healthz` saying only ok or not ok, the skipped-rung marker; SSE replay, resume, key filter, reset, shutdown and the stream bound; pages carry no inline script, handler or style; `internal/web` imports only `internal/api`.
 
-**M6 (v3.10):** `internal/api` (the trusted-proxy rules: only from a listed peer, the right-most untrusted entry, forged left entries, chains, several header lines, malformed and empty entries, IPv4-mapped and IPv6 /64, an untrusted peer that sends the header, one guessing client behind a trusted proxy not locking out another, and the unchanged shared budget without the option; mutation-checked), `internal/config` (the list's parsing and its errors; every variable and label documented and nothing documented that does not exist; every Markdown link and anchor resolves), `cmd/whalenurse` (the warning without a token); shell self-tests of `scripts/release/release-notes.sh` and `scripts/release/verify.sh` (stubbed `cosign`, `gh` and `curl`: the exact identity, a tampered archive, a missing file, a bad signature, a bad image signature, a failed attestation, a path in `checksums.txt`) and the checks of `scripts/ci/check-dockerfiles.sh` and `scripts/ci/check-pins.sh`.
+**M6 (v3.10):** `internal/api` (the trusted-proxy rules: only from a listed peer, the right-most untrusted entry, forged left entries, chains, several header lines, malformed and empty entries, IPv4-mapped and IPv6 /64, an untrusted peer that sends the header, one guessing client behind a trusted proxy not locking out another, and the unchanged shared budget without the option; mutation-checked), `internal/config` (the list's parsing and its errors; every variable and label documented and nothing documented that does not exist; every Markdown link and anchor resolves), `cmd/dokdosta` (the warning without a token); shell self-tests of `scripts/release/release-notes.sh` and `scripts/release/verify.sh` (stubbed `cosign`, `gh` and `curl`: the exact identity, a tampered archive, a missing file, a bad signature, a bad image signature, a failed attestation, a path in `checksums.txt`) and the checks of `scripts/ci/check-dockerfiles.sh` and `scripts/ci/check-pins.sh`.
 
-**Integration tests** (CI, real Docker, projects `whalenurse-test-*` only). The tag says which milestone owns the test:
+**Integration tests** (CI, real Docker, projects `dokdosta-test-*` only). The tag says which milestone owns the test:
 - **M2a:** toggled healthcheck → restart, then "needs recreate (M2b)", then SUSPENDED (rung 2 does not exist yet);
-- **M2a:** state survives a whalenurse restart (SUSPENDED and the flap history are still there, and the ladder does not start over);
+- **M2a:** state survives a dokdosta restart (SUSPENDED and the flap history are still there, and the ladder does not start over);
 - **M2a:** pause, resume and unsuspend over the control socket against a real daemon;
 - **M2a:** dry-run performs no actions;
 - **M2b (done):** toggled healthcheck → restart, then recreate, then SUSPENDED;
@@ -767,15 +780,15 @@ internal/config/     env + label parsing
 - **M2b:** the image-drift guard blocks a recreate after a re-tag, and does not block an unchanged container, on both image stores (the comparator of §3.6);
 - **M2b:** a ref-holding dependent skips the hash check and is recreated after its parent is;
 - **M3 (done; CI run 39121767631, all six legs):** notifications reach a local webhook receiver through Shoutrrr's generic service: the ladder ends in SUSPENDED (restart, recreate and one "giving up" with the cause, a dead URL beside the working one changing nothing), a recovery, and a dry run (marked, changes nothing);
-- **M5 (done; v3.9):** the image with `WHALENURSE_HTTP_ADDR` set and published on `127.0.0.1:<random port>`: `/api/v1/status` is 401 without the token (also with a wrong one and with the token in the query) and 200 with it (bearer, and Basic for the dashboard), the security headers are there, `/healthz` and nothing else needs no token, `/metrics` is behind the token, `/healthz` says only `ok`, a foreign Host is 403 without a token, ten wrong tokens earn a 429 (and the right token is refused while blocked), every other method is 405 on the API, the control-socket paths and the dashboard, the opted-in container is listed with allowed labels only, the token is not in the event history; and a second image run without a token is open on loopback and still read-only.
+- **M5 (done; v3.9):** the image with `DOKDOSTA_HTTP_ADDR` set and published on `127.0.0.1:<random port>`: `/api/v1/status` is 401 without the token (also with a wrong one and with the token in the query) and 200 with it (bearer, and Basic for the dashboard), the security headers are there, `/healthz` and nothing else needs no token, `/metrics` is behind the token, `/healthz` says only `ok`, a foreign Host is 403 without a token, ten wrong tokens earn a 429 (and the right token is refused while blocked), every other method is 405 on the API, the control-socket paths and the dashboard, the opted-in container is listed with allowed labels only, the token is not in the event history; and a second image run without a token is open on loopback and still read-only.
 - **M4 (done; v3.8 items 10 to 14):** the pull rung, against a local `registry:2`: the registry round trip (and the positive control that docker events reports a pull), no label means no pull, no newer image means SUSPENDED, a newer image means upgraded with the sidecar repaired and a notification whose rollback runs as pasted, a drift block on a shared tag names who moved it, dry-run does not pull, the version gate disables the rung; `pull_policy: never` is not pulled and `missing` is overridden; `heal.pull` without recreate keeps the rung off; rung 2 of a pull-enabled container takes a moved tag and says so (the rollback runs as pasted); a sidecar sharing the image takes its parent's moved tag (its rollback is in the message).
 
-**CI jobs added in M6:** `workflows` (actionlint and the SHA-pin check), `release-snapshot` (GoReleaser `check` and `release --snapshot --skip=sign`: archives, checksums, SBOMs, the amd64 image run and inspected, the arm64 image built), `examples` (`compose config -q`, `systemd-analyze verify`) and `demo` (the README's demo against the image from the commit, project `whalenurse-test-demo`).
+**CI jobs added in M6:** `workflows` (actionlint and the SHA-pin check), `release-snapshot` (GoReleaser `check` and `release --snapshot --skip=sign`: archives, checksums, SBOMs, the amd64 image run and inspected, the arm64 image built), `examples` (`compose config -q`, `systemd-analyze verify`) and `demo` (the README's demo against the image from the commit, project `dokdosta-test-demo`).
 
 **CI matrix (built in M2b: 2 stores × 3 compose releases = 6 integration jobs):** latest Docker Engine on both the classic and the containerd image store, crossed with three compose versions. The `image-drift` job (`test/m0/m0b/image-drift.sh`) runs on both stores today.
 
 - **From M2a** the integration tests run on Engine 29.x with compose v5.6.0 on both stores, installed the way the `image-drift` job installs them (the runner's Engine 28.0.4 has no `image inspect --platform`, and its compose 2.38.2 prints `null` for the dry-run oracle). M2a does not drive compose: it uses compose only to set up test stacks, so the other two versions add nothing there.
-- **From M2b** the full compose matrix applies, because whalenurse then runs compose itself and the oracle's output and the config hash are what the matrix pins:
+- **From M2b** the full compose matrix applies, because dokdosta then runs compose itself and the oracle's output and the config hash are what the matrix pins:
 - **v5.6.0**, the version M0 ran on;
 - **the latest release**, floating. It is v5.6.0 today, so the two jobs coincide until a newer release. While they coincide, the latest legs' shards stop early and stay green (maintainer decision, 20 Oct 2026: they would repeat the pinned leg exactly); the `scope` job of `ci.yml` resolves the release (`scripts/ci/compose-latest.sh`), and a failed lookup runs the legs in full;
 - **v5.2.0**, the only release with compose bug #13878. v5.3.0 (2 Jul 2026) contains the fix, and v5.2.0 (23 Jun) is the only release before the fix (29 Jun). It exercises recreate-on-every-`up` for sidecars, config-hash and dry-run output across versions, and the version-skew check (§3.6).
@@ -789,7 +802,7 @@ The image under test is built once per run (the `image` job) and loaded by the i
 ## 7. Milestones
 
 ### H — Repo housekeeping
-- [maintainer] Rename the repo to `whalenurse` (GitHub redirects the old URL), then run `git remote set-url origin https://github.com/jackspiering/whalenurse.git` in local clones.
+- [maintainer] Rename the repo to `dokdosta` (GitHub redirects the old URL), then run `git remote set-url origin https://github.com/jackspiering/dokdosta.git` in local clones.
 - [maintainer] Set the About text and topics (Appendix C).
 - Replace `README.md` with Appendix A.
 - Add the Appendix B lines to `.gitignore`.
@@ -807,7 +820,7 @@ The image under test is built once per run (the `image` job) and loaded by the i
   - `docker version`, `docker compose version` and `docker info --format '{{json .}}'` (image store).
 - `scripts/scrub-fixture`: the scrubber from §3.3.
 
-**Experiments:** throwaway stacks in `test/m0/` (projects `whalenurse-m0-*` only), plus `test/m0/run.sh`. The script runs each experiment, prints evidence and cleans up with `down -v` for its own projects only.
+**Experiments:** throwaway stacks in `test/m0/` (projects `dokdosta-m0-*` only), plus `test/m0/run.sh`. The script runs each experiment, prints evidence and cleans up with `down -v` for its own projects only.
 
 | # | Question |
 |---|---|
@@ -826,13 +839,13 @@ The image under test is built once per run (the `image` job) and loaded by the i
 - **Done when:** every row above has an answer with evidence, and §3.3, §3.5 and §3.6 are each marked "confirmed" or "needs change" in the findings.
 
 ### M1 — Heal MVP (restart only)
-- `go mod init github.com/jackspiering/whalenurse` with the latest stable Go.
+- `go mod init github.com/jackspiering/dokdosta` with the latest stable Go.
 - Config parsing for the M1 subset; `internal/docker` with a fake; events stream with reconnect.
 - Poll and startup sweep; rules from §3.3, with every heal action mapped to restart/start in M1. One exception: **never apply rung 1 to a dependent whose parent ID is gone** (§3.5: the restart fails and turns a running dependent into an exited one, E1). Log it as "needs recreate (M2)" and take no action. This covers a stale `NetworkMode` and the `No such container` stale-reference error.
 - Skips: own container, oneoff, swarm, not opted in. Also opt-in labels, the action-in-flight window, the state key, rate limit, dry-run, the domain event stream (in memory), `/healthz` and JSON logs.
 - Dockerfile: static binary, minimal image, read-only rootfs. Document socket access (group or root).
 - CI: build, vet, unit tests, integration test (unhealthy container gets restarted; dry-run does nothing).
-- **Done when:** the unit and integration tests pass, and `whalenurse run --dry-run` against a test stack logs the expected decisions.
+- **Done when:** the unit and integration tests pass, and `dokdosta run --dry-run` against a test stack logs the expected decisions.
 
 ### M0b — Scenarios M0 could not run (no app code; after M1, must finish before M2a)
 
@@ -856,8 +869,8 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 - The full ladder: cooldown backoff, recovery period, flap limit, SUSPENDED, PAUSED. Crash-loop detection by the §3.3 rule 3 definition (≥3 `RestartCount` increases, the first ≥ `CRASHLOOP_AFTER` ago, cleared after `RECOVERY_PERIOD` without one), independent of the inspect rate, with a test that varies the poll interval and `GRACE`. SUSPENDED clears as in §3.2.
 - SQLite store; control socket and CLI (pause/resume/unsuspend/status).
 - `State.Error` classification and the `heal-exited` modes; manual-stop markers.
-- Shutdown handling (§3.3, *Manual-stop markers*): quarantine on stream loss, persisted boot id, restore window, the `last_seen` heartbeat for whalenurse's own end (v3.5), the sweep after every reconnect, "daemon not ready" for API errors during a restore. M1's tracker still reads a shutdown as manual stops (pinned in `rules_test.go`, `multiKeyEventVerdicts`); M2a changes that expectation on purpose. The throwaway-VM check of this (whalenurse in a container, `systemctl restart docker`) is `test/m0/m0b/whalenurse-restart/`.
-- **Done when:** the M2a integration tests in §6 pass, state survives a whalenurse restart, and an unhealthy container goes restart → "needs recreate (M2b)" → SUSPENDED.
+- Shutdown handling (§3.3, *Manual-stop markers*): quarantine on stream loss, persisted boot id, restore window, the `last_seen` heartbeat for dokdosta's own end (v3.5), the sweep after every reconnect, "daemon not ready" for API errors during a restore. M1's tracker still reads a shutdown as manual stops (pinned in `rules_test.go`, `multiKeyEventVerdicts`); M2a changes that expectation on purpose. The throwaway-VM check of this (dokdosta in a container, `systemctl restart docker`) is `test/m0/m0b/dokdosta-restart/`.
+- **Done when:** the M2a integration tests in §6 pass, state survives a dokdosta restart, and an unhealthy container goes restart → "needs recreate (M2b)" → SUSPENDED.
 
 ### M2b — Compose recreate, the drift guard and dependents (done; v3.6)
 
@@ -871,7 +884,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 
 ### M3 — Notifications (done; v3.7)
 - Vet the Shoutrrr fork at the source: latest release, maintenance, licence. Done: §5.
-- `internal/notify` as a subscriber of the event stream (§3.12): templates for action taken, recovered, giving up (with the cause), flapping, drift blocked (with the reason and the compose-upgrade hint), `NotifyOnly` (including a `restart: "no"` parent left down with its dependents), the version-gate warning, paused and resumed. Dedupe per incident, a per-URL rate limit, the optional uptime ping, `whalenurse notify test`, secrets never shown.
+- `internal/notify` as a subscriber of the event stream (§3.12): templates for action taken, recovered, giving up (with the cause), flapping, drift blocked (with the reason and the compose-upgrade hint), `NotifyOnly` (including a `restart: "no"` parent left down with its dependents), the version-gate warning, paused and resumed. Dedupe per incident, a per-URL rate limit, the optional uptime ping, `dokdosta notify test`, secrets never shown.
 - Moved to M4 and done there: "upgraded during heal (with rollback command)" (§3.7), with `TagMoved`.
 - **Done when:** notifications are verified against a local webhook receiver in CI (§6).
 
@@ -894,7 +907,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 - [maintainer] The release gate, the GitHub settings, the first tag, the announcement ([releasing.md](releasing.md)).
 
 ### M7 — Private registries for the pull rung (R5; done, v3.12)
-- §3.7 private registries: `WHALENURSE_REGISTRY_AUTH_DIR`, the validation (only `auths`, inline credentials, checked at startup and before each pull), the pull-only `DOCKER_CONFIG`, the redactor, the registry hosts in `status`, the API and the home page (v3.12 items 3 to 8).
+- §3.7 private registries: `DOKDOSTA_REGISTRY_AUTH_DIR`, the validation (only `auths`, inline credentials, checked at startup and before each pull), the pull-only `DOCKER_CONFIG`, the redactor, the registry hosts in `status`, the API and the home page (v3.12 items 3 to 8).
 - Prerequisite, done separately: the compose child never reads a Docker config (v3.12 item 1, pull request #28).
 - The docs and examples of v3.12 item 10.
 - **Done when:**
@@ -905,7 +918,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 
 ## 8. Roadmap (post-v1)
 - **R1 — Multi-server hub:**
-  - One autonomous agent per host, plus `whalenurse hub`, which pulls each agent's `/api/v1` over the tailnet with per-agent tokens and a `since` cursor.
+  - One autonomous agent per host, plus `dokdosta hub`, which pulls each agent's `/api/v1` over the tailnet with per-agent tokens and a `since` cursor.
   - The hub never talks to Docker.
   - Rejected: a central controller driving remote Docker sockets.
 - **R2 — Dashboard controls:** unsuspend, pause/resume, heal now. Needs auth and CSRF protection; every action goes into the history.
@@ -923,7 +936,7 @@ Rung 2 does not exist yet. Where the ladder would recreate, it records "needs re
 5. ~~Does compose recreate dependents on a non-forced `up`?~~ **Answered:** yes after a parent recreate, no after a parent restart (E2). See [findings §5](m0-findings.md#5-answers-to-the-plans-open-questions-9).
 6. Final defaults for grace, cooldown, crash-loop and rate limits (after M0).
 7. ~~Confirm SQLite at the start of M2a.~~ **Answered (17 Oct 2026):** `modernc.org/sqlite` v1.60.1 (29 Sep 2026, `go 1.26.0`; pure Go, so the `CGO_ENABLED=0` build holds; about 19 MB binary). See [m2a-notes.md](m2a-notes.md).
-8. ~~Image drift on Engines older than 28.1, and compose versions older than the matrix?~~ **Answered (17 Oct 2026):** rung 1 keeps Engine v25 as the minimum. Rungs 2 and 3 and the drift guard require Engine ≥ 28.1 and Compose ≥ v5.2.0. whalenurse checks both at startup; below that it logs one warning, disables rungs 2 and 3, and the ladder ends with notify + SUSPENDED after rung 1. No store-guessing fallback. See §3.6, *Minimum versions per rung*.
+8. ~~Image drift on Engines older than 28.1, and compose versions older than the matrix?~~ **Answered (17 Oct 2026):** rung 1 keeps Engine v25 as the minimum. Rungs 2 and 3 and the drift guard require Engine ≥ 28.1 and Compose ≥ v5.2.0. dokdosta checks both at startup; below that it logs one warning, disables rungs 2 and 3, and the ladder ends with notify + SUSPENDED after rung 1. No store-guessing fallback. See §3.6, *Minimum versions per rung*.
 
 ---
 

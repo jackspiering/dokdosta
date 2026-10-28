@@ -57,7 +57,7 @@ func ProjectFromLabels(labels map[string]string) (Project, error) {
 		missing = append(missing, LabelConfigFiles)
 	}
 	if len(missing) > 0 {
-		return Project{}, fmt.Errorf("not a compose container whalenurse can recreate: label(s) %s missing", strings.Join(missing, ", "))
+		return Project{}, fmt.Errorf("not a compose container dokdosta can recreate: label(s) %s missing", strings.Join(missing, ", "))
 	}
 	if err := p.Validate(); err != nil {
 		return Project{}, err
@@ -78,14 +78,14 @@ func ValidService(s string) bool { return serviceName.MatchString(s) }
 // Validate checks that the project and the service are names compose could have written. Both come from container
 // labels, which an image can ship (Docker copies an image's labels onto its containers), and both go onto the compose
 // command line: a service of `--dry-run=false` after `up` would override the drift guard's --dry-run and run a real up
-// (WN-001). Such a container is not one whalenurse can recreate; rungs 2 and 3 are then unavailable for it.
+// (WN-001). Such a container is not one dokdosta can recreate; rungs 2 and 3 are then unavailable for it.
 func (p Project) Validate() error {
 	if !projectName.MatchString(p.Name) {
-		return fmt.Errorf("not a compose container whalenurse can recreate: label %s is %s, which is not a compose project name (lowercase letters, digits, '_' and '-', starting with a letter or digit)",
+		return fmt.Errorf("not a compose container dokdosta can recreate: label %s is %s, which is not a compose project name (lowercase letters, digits, '_' and '-', starting with a letter or digit)",
 			LabelProject, quoteLabel(p.Name))
 	}
 	if !serviceName.MatchString(p.Service) {
-		return fmt.Errorf("not a compose container whalenurse can recreate: label %s is %s, which is not a compose service name (letters, digits, '.', '_' and '-', not starting with '-')",
+		return fmt.Errorf("not a compose container dokdosta can recreate: label %s is %s, which is not a compose service name (letters, digits, '.', '_' and '-', not starting with '-')",
 			LabelService, quoteLabel(p.Service))
 	}
 	return nil
@@ -110,7 +110,7 @@ func splitList(s string) []string {
 }
 
 // Readable checks that the working directory and every file are there to be read. The usual cause of a failure is the
-// stacks root not mounted into whalenurse's container at the identical path (plan §3.4, *Mounts*), so the error says so.
+// stacks root not mounted into dokdosta's container at the identical path (plan §3.4, *Mounts*), so the error says so.
 func (p Project) Readable(stat func(string) (os.FileInfo, error)) error {
 	if stat == nil {
 		stat = os.Stat

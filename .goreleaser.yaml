@@ -1,9 +1,9 @@
-# GoReleaser configuration for whalenurse (plan v3.10, section 7 M6). Checked against GoReleaser v2.18.3; docs/m6-notes.md has
+# GoReleaser configuration for dokdosta (plan v3.10, section 7 M6). Checked against GoReleaser v2.18.3; docs/m6-notes.md has
 # the versions of everything the release pipeline uses. The release job (.github/workflows/release.yml) runs only on a v*
 # tag; pull requests and main run `goreleaser release --snapshot --skip=publish,sign` (ci.yml), which builds the same
 # archives, checksums and SBOMs and pushes and signs nothing.
 version: 2
-project_name: whalenurse
+project_name: dokdosta
 
 # The release workflow names the tag (GORELEASER_CURRENT_TAG). Without it (a local `make snapshot`) GoReleaser takes the first
 # tag on the commit, and this makes v0.2.0 sort before v0.2.0-rc.1 on the same commit.
@@ -15,9 +15,9 @@ before:
     - go mod verify
 
 builds:
-  - id: whalenurse
-    main: ./cmd/whalenurse
-    binary: whalenurse
+  - id: dokdosta
+    main: ./cmd/dokdosta
+    binary: dokdosta
     env:
       - CGO_ENABLED=0
     goos: [linux]
@@ -28,16 +28,16 @@ builds:
     mod_timestamp: "{{ .CommitTimestamp }}"
 
 archives:
-  - id: whalenurse
-    ids: [whalenurse]
+  - id: dokdosta
+    ids: [dokdosta]
     formats: [tar.gz]
-    name_template: "whalenurse_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "dokdosta_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - LICENSE
       - README.md
       - CHANGELOG.md
-      - src: examples/systemd/whalenurse.service
-        dst: systemd/whalenurse.service
+      - src: examples/systemd/dokdosta.service
+        dst: systemd/dokdosta.service
 
 checksum:
   name_template: checksums.txt
@@ -55,11 +55,11 @@ sboms:
 # copies them. The tags v0.1.0, v0.1, v0 and latest; a pre-release (v0.2.0-rc.1) gets its own tag only and never moves the
 # others. Docker's own SBOM and provenance attestations (BuildKit) stay on.
 dockers_v2:
-  - id: whalenurse
-    ids: [whalenurse]
+  - id: dokdosta
+    ids: [dokdosta]
     dockerfile: Dockerfile.release
     images:
-      - ghcr.io/jackspiering/whalenurse
+      - ghcr.io/jackspiering/dokdosta
     tags:
       - "v{{ .Version }}"
       - "{{ if not .Prerelease }}v{{ .Major }}.{{ .Minor }}{{ end }}"
@@ -69,11 +69,11 @@ dockers_v2:
       - linux/amd64
       - linux/arm64
     labels:
-      org.opencontainers.image.title: whalenurse
+      org.opencontainers.image.title: dokdosta
       org.opencontainers.image.description: "Compose-aware self-healing for Docker hosts"
-      org.opencontainers.image.source: "https://github.com/jackspiering/whalenurse"
-      org.opencontainers.image.url: "https://github.com/jackspiering/whalenurse"
-      org.opencontainers.image.documentation: "https://github.com/jackspiering/whalenurse/tree/main/docs"
+      org.opencontainers.image.source: "https://github.com/jackspiering/dokdosta"
+      org.opencontainers.image.url: "https://github.com/jackspiering/dokdosta"
+      org.opencontainers.image.documentation: "https://github.com/jackspiering/dokdosta/tree/main/docs"
       org.opencontainers.image.licenses: MIT
       org.opencontainers.image.version: "{{ .Version }}"
       org.opencontainers.image.revision: "{{ .FullCommit }}"
@@ -82,15 +82,15 @@ dockers_v2:
     # per platform, and BuildKit refuses index annotations for a single-platform export, so the index values are empty (and
     # GoReleaser ignores an empty value) in a snapshot.
     annotations:
-      "manifest:org.opencontainers.image.title": whalenurse
+      "manifest:org.opencontainers.image.title": dokdosta
       "manifest:org.opencontainers.image.description": "Compose-aware self-healing for Docker hosts"
-      "manifest:org.opencontainers.image.source": "https://github.com/jackspiering/whalenurse"
+      "manifest:org.opencontainers.image.source": "https://github.com/jackspiering/dokdosta"
       "manifest:org.opencontainers.image.licenses": MIT
       "manifest:org.opencontainers.image.version": "{{ .Version }}"
       "manifest:org.opencontainers.image.revision": "{{ .FullCommit }}"
-      "index:org.opencontainers.image.title": "{{ if not .IsSnapshot }}whalenurse{{ end }}"
+      "index:org.opencontainers.image.title": "{{ if not .IsSnapshot }}dokdosta{{ end }}"
       "index:org.opencontainers.image.description": "{{ if not .IsSnapshot }}Compose-aware self-healing for Docker hosts{{ end }}"
-      "index:org.opencontainers.image.source": "{{ if not .IsSnapshot }}https://github.com/jackspiering/whalenurse{{ end }}"
+      "index:org.opencontainers.image.source": "{{ if not .IsSnapshot }}https://github.com/jackspiering/dokdosta{{ end }}"
       "index:org.opencontainers.image.licenses": "{{ if not .IsSnapshot }}MIT{{ end }}"
       "index:org.opencontainers.image.version": "{{ if not .IsSnapshot }}{{ .Version }}{{ end }}"
       "index:org.opencontainers.image.revision": "{{ if not .IsSnapshot }}{{ .FullCommit }}{{ end }}"
@@ -131,7 +131,7 @@ changelog:
 release:
   github:
     owner: jackspiering
-    name: whalenurse
+    name: dokdosta
   prerelease: auto
   # A draft first would let the maintainer look before it goes public, but the published image is public the moment it is
   # pushed. The release gate (docs/releasing.md) is the place to stop, so the release is created published.

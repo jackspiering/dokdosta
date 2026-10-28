@@ -3,7 +3,7 @@
 # shellcheck shell=bash
 exp_e9() {
   begin E9 "docker event sequences"
-  local P=whalenurse-m0-e9 dir t0 t1 c
+  local P=dokdosta-m0-e9 dir t0 t1 c
   dir=$(stage e9 e9)
 
   scenario() { # scenario <name> <settle seconds> <command...>: run, capture the container events of the project

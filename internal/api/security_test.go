@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/engine"
 )
 
 // ---- /healthz says ok or not ok ---------------------------------------------------------------------------
@@ -304,7 +304,7 @@ func TestSkippedRungsComeFromTheOpenIncidentsEventsOnly(t *testing.T) {
 
 func TestFinalNameDropsComposesTemporaryPrefix(t *testing.T) {
 	for in, want := range map[string]string{
-		"9d766305bcec_whalenurse-test-demo-worker-1": "whalenurse-test-demo-worker-1",
+		"9d766305bcec_dokdosta-test-demo-worker-1": "dokdosta-test-demo-worker-1",
 		"media-vpn-1": "media-vpn-1", "abc_def": "abc_def", "9D766305BCEC_x": "9D766305BCEC_x", "0123456789ab_": "0123456789ab_", "": "",
 	} {
 		if got := finalName(in); got != want {
@@ -328,9 +328,9 @@ func TestFinalNameDropsComposesTemporaryPrefix(t *testing.T) {
 func TestNoiseIsHiddenOnRequestAndTheJSONAPIKeepsIt(t *testing.T) {
 	s := skippedFixture()
 	r := s.Events.(*engine.Ring)
-	r.Record(engineEvent(10, "EventAttributed", "docker event during a whalenurse action", map[string]string{"action": "die"}))
+	r.Record(engineEvent(10, "EventAttributed", "docker event during a dokdosta action", map[string]string{"action": "die"}))
 	r.Record(engineEvent(11, "ActionResult", "restart ok", nil))
-	r.Record(engineEvent(12, "EventAttributed", "docker event during a whalenurse action", nil))
+	r.Record(engineEvent(12, "EventAttributed", "docker event during a dokdosta action", nil))
 	all := s.EventsPage(EventsQuery{Newest: true, Limit: 100})
 	hidden := s.EventsPage(EventsQuery{Newest: true, Limit: 100, HideNoise: true})
 	count := func(d EventsDoc, typ string) (n int) {

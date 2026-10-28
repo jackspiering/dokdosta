@@ -11,12 +11,12 @@ import (
 // /containers/<id>/<file> when the data root is a filesystem of its own (the root is relative to that filesystem).
 var selfRootRe = regexp.MustCompile(`(?:^|/)containers/([0-9a-f]{64})/(?:hostname|hosts|resolv\.conf)$`)
 
-// SelfID finds whalenurse's own container ID in /proc/self/mountinfo. The
+// SelfID finds dokdosta's own container ID in /proc/self/mountinfo. The
 // hostname can be overridden, but Docker always bind-mounts /etc/hostname,
 // /etc/hosts and /etc/resolv.conf from <data-root>/containers/<id>/. Only those
 // three mount points count: on the host (under systemd) the mount table also
 // lists the mounts dockerd makes for other containers (a shareable container's
-// <data-root>/containers/<id>/mounts/shm), which are not whalenurse's. It
+// <data-root>/containers/<id>/mounts/shm), which are not dokdosta's. It
 // returns "" outside a container.
 func SelfID(mountinfo io.Reader) string {
 	sc := bufio.NewScanner(mountinfo)

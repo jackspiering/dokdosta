@@ -4,32 +4,32 @@
 # recreate that does, the sidecar recreated behind its parent, and the dashboard saying so.
 #   GITHUB_ACTIONS=true test/demo/run.sh <image>
 # SAFETY (fails closed): it refuses to run outside GitHub Actions (a throwaway runner), and it acts only on the compose
-# project whalenurse-test-demo (always passed with -p; the demo file's own name is overridden).
+# project dokdosta-test-demo (always passed with -p; the demo file's own name is overridden).
 set -euo pipefail
 
 [[ "${GITHUB_ACTIONS:-}" == "true" ]] || { echo "REFUSED: test/demo/run.sh runs only in GitHub Actions" >&2; exit 2; }
 image="${1:?usage: test/demo/run.sh <image>}"
-P=whalenurse-test-demo
-[[ "$P" =~ ^whalenurse-test-[a-z0-9][a-z0-9_-]*$ ]] || { echo "REFUSED: project $P" >&2; exit 2; }
+P=dokdosta-test-demo
+[[ "$P" =~ ^dokdosta-test-[a-z0-9][a-z0-9_-]*$ ]] || { echo "REFUSED: project $P" >&2; exit 2; }
 [[ -z "$(docker ps -aq --filter "label=com.docker.compose.project=$P")" ]] || { echo "project $P already exists" >&2; exit 2; }
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/whalenurse-demo.XXXXXX")"
-# mktemp makes the directory mode 0700, and whalenurse (uid 65532) must be able to read the stack it recreates from.
+dir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/dokdosta-demo.XXXXXX")"
+# mktemp makes the directory mode 0700, and dokdosta (uid 65532) must be able to read the stack it recreates from.
 chmod 0755 "$dir"
 cp "$root/examples/demo/compose.yaml" "$dir/compose.yaml"
 cd "$dir"
 {
   echo "DOCKER_GID=$(stat -c %g /var/run/docker.sock)"
   echo "DEMO_DIR=$dir"
-  echo "WHALENURSE_IMAGE=$image"
-  [[ -z "${WHALENURSE_COMPOSE_BIN:-}" ]] || echo "COMPOSE_PLUGIN=$WHALENURSE_COMPOSE_BIN"
+  echo "DOKDOSTA_IMAGE=$image"
+  [[ -z "${DOKDOSTA_COMPOSE_BIN:-}" ]] || echo "COMPOSE_PLUGIN=$DOKDOSTA_COMPOSE_BIN"
 } >.env
 dc() { docker compose -p "$P" "$@"; }
 cleanup() {
   local rc=$?
   if [[ $rc -ne 0 ]]; then
-    echo "---- whalenurse logs"; dc logs --no-color whalenurse 2>&1 | tail -n 80 || true
+    echo "---- dokdosta logs"; dc logs --no-color dokdosta 2>&1 | tail -n 80 || true
     echo "---- containers"; dc ps -a 2>&1 || true
   fi
   dc down -v --remove-orphans >/dev/null 2>&1 || true
@@ -60,7 +60,7 @@ dc config -q
 dc up -d
 wait_for 120 "bop is healthy" is_healthy bop
 wait_for 60 "the sidecar is healthy" is_healthy bop-sidecar
-wait_for 90 "whalenurse is healthy" is_healthy whalenurse
+wait_for 90 "dokdosta is healthy" is_healthy dokdosta
 wait_for 30 "the dashboard answers on localhost" curl -fsS -o /dev/null http://127.0.0.1:8484/
 api /api/v1/status | jq -e '.host == "demo"' >/dev/null
 listed() { curl -fsS http://127.0.0.1:8484/containers | grep -q bop; }
@@ -72,7 +72,7 @@ old_side=$(cid bop-sidecar)
 dc exec -T bop bop unhealthy sticky=true
 wait_for 60 "bop is unhealthy" bash -c "[[ \"\$(docker inspect -f '{{.State.Health.Status}}' $old_bop)\" == unhealthy ]]"
 
-step "whalenurse restarts it, then recreates it, and the sidecar follows"
+step "dokdosta restarts it, then recreates it, and the sidecar follows"
 recreated() { [[ "$(cid bop)" != "$old_bop" ]]; }
 wait_for 240 "bop was recreated (new container id)" recreated
 wait_for 120 "the new bop is healthy" is_healthy bop

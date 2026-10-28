@@ -47,7 +47,7 @@ func writeEvent(w http.ResponseWriter, action string) {
 
 // The moby client reports the end of the stream on Err only and never closes
 // Messages, so the adapter must end Events itself: otherwise a dropped stream
-// is never noticed and whalenurse runs without events until it is restarted.
+// is never noticed and dokdosta runs without events until it is restarted.
 func TestMobyEventsEndsWhenTheDaemonDropsTheStream(t *testing.T) {
 	m := fakeEngine(t, func(w http.ResponseWriter, r *http.Request) {
 		writeEvent(w, "die")
@@ -121,7 +121,7 @@ func TestMobyEventsEndsWhenTheContextIsCancelled(t *testing.T) {
 	}
 }
 
-// Only the actions whalenurse handles are asked for: the healthcheck exec_* events of every container would otherwise fill
+// Only the actions dokdosta handles are asked for: the healthcheck exec_* events of every container would otherwise fill
 // the subscription while an action runs, and dockerd drops what a slow subscriber does not take, a kill too.
 func TestMobyEventsFiltersOnTheHandledActions(t *testing.T) {
 	filters := make(chan string, 1)

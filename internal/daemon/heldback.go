@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jackspiering/whalenurse/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/docker"
 )
 
 // The depends_on conditions compose can hold a container back on (compose-go types.ServiceCondition). service_started holds

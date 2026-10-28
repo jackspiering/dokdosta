@@ -5,7 +5,7 @@ import "strings"
 // RollbackCommands are the two commands that undo a pull (plan §3.7): tag the old image back onto the reference, then
 // bring the service up from it without pulling or building (plan v3.13 item 7: with --no-build, a rollback whose tag line
 // failed or was skipped stops with an error instead of building something that is not the old image). They are written for a person at the host's shell, so they use the
-// host's `docker compose`, not the binary whalenurse itself runs, and carry the project, directory, files and env files
+// host's `docker compose`, not the binary dokdosta itself runs, and carry the project, directory, files and env files
 // the container was created with, so they are exact.
 //
 // alsoServices are sidecars of the same project that run the same image and were recreated with it (plan v3.8): the one
@@ -26,7 +26,7 @@ func RollbackCommands(p Project, ref, oldImage string, alsoServices ...string) (
 	return tag, strings.Join(args, " ")
 }
 
-// ShellWord quotes a word for a POSIX shell only when it needs it. Every command whalenurse tells a person to paste goes
+// ShellWord quotes a word for a POSIX shell only when it needs it. Every command dokdosta tells a person to paste goes
 // through it (the rollback here, the unsuspend and up commands of the notifications).
 func ShellWord(s string) string {
 	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_@%+=:,./-") == "" {

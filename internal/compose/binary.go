@@ -12,7 +12,7 @@ import (
 type Source string
 
 const (
-	SourceEnv     Source = "env"     // WHALENURSE_COMPOSE_BIN
+	SourceEnv     Source = "env"     // DOKDOSTA_COMPOSE_BIN
 	SourceHost    Source = "host"    // the host's plugin: mounted read-only at HostMountPath, or found in a plugin directory
 	SourceBundled Source = "bundled" // the copy in the image
 )
@@ -20,10 +20,10 @@ const (
 // Fixed paths (plan §3.4). The host plugin and the bundled copy are mounted at different paths on purpose.
 const (
 	HostMountPath = "/host/docker-compose"
-	BundledPath   = "/usr/libexec/whalenurse/docker-compose"
+	BundledPath   = "/usr/libexec/dokdosta/docker-compose"
 )
 
-// HostPluginDirs are where a host install keeps the compose plugin; they are searched last, for whalenurse under systemd
+// HostPluginDirs are where a host install keeps the compose plugin; they are searched last, for dokdosta under systemd
 // (plan §3.4: "In systemd mode, use the host's docker compose").
 var HostPluginDirs = []string{
 	"/usr/libexec/docker/cli-plugins/docker-compose",
@@ -50,7 +50,7 @@ func (b Binary) VersionString() string {
 
 // Lookup is the search order of plan §3.4. Zero fields take the defaults.
 type Lookup struct {
-	Env        string   // WHALENURSE_COMPOSE_BIN
+	Env        string   // DOKDOSTA_COMPOSE_BIN
 	HostMount  string   // default HostMountPath
 	Bundled    string   // default BundledPath
 	PluginDirs []string // default HostPluginDirs
@@ -58,9 +58,9 @@ type Lookup struct {
 	Stat       func(string) (os.FileInfo, error)
 }
 
-// Resolve returns the first binary that exists and answers `version --short`: WHALENURSE_COMPOSE_BIN, then the host
+// Resolve returns the first binary that exists and answers `version --short`: DOKDOSTA_COMPOSE_BIN, then the host
 // plugin mounted at HostMountPath, then the bundled copy, then the host's own plugin directories. An explicit
-// WHALENURSE_COMPOSE_BIN that does not work is an error, not a reason to use another binary than the one asked for.
+// DOKDOSTA_COMPOSE_BIN that does not work is an error, not a reason to use another binary than the one asked for.
 // The returned notes say what was tried, for the startup log.
 func Resolve(ctx context.Context, l Lookup) (*Binary, []string, error) {
 	if l.HostMount == "" {
@@ -96,7 +96,7 @@ func Resolve(ctx context.Context, l Lookup) (*Binary, []string, error) {
 		if b, ok := try(l.Env, SourceEnv); ok {
 			return b, notes, nil
 		}
-		return nil, notes, fmt.Errorf("WHALENURSE_COMPOSE_BIN=%s does not work: %s", l.Env, strings.Join(notes, "; "))
+		return nil, notes, fmt.Errorf("DOKDOSTA_COMPOSE_BIN=%s does not work: %s", l.Env, strings.Join(notes, "; "))
 	}
 	candidates := []struct {
 		path string

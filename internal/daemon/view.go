@@ -6,12 +6,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/rules"
+	"github.com/jackspiering/dokdosta/internal/api"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/rules"
 )
 
 // view is the read side of the daemon for the API and the dashboard. The loop goroutine writes it (the container list
@@ -173,7 +173,7 @@ func (d *Daemon) containerDocs() []api.ContainerDoc {
 		}
 		c.Labels = map[string]string{}
 		for k, v := range s.Labels {
-			if strings.HasPrefix(k, "com.docker.compose.") || strings.HasPrefix(k, "whalenurse.") {
+			if strings.HasPrefix(k, "com.docker.compose.") || strings.HasPrefix(k, "dokdosta.") {
 				c.Labels[k] = v
 			}
 		}

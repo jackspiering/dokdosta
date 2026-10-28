@@ -5,7 +5,7 @@
 # shellcheck shell=bash
 exp_e4() {
   begin E4 "config --hash vs config-hash label"
-  local P=whalenurse-m0-e4 dir svc c label h
+  local P=dokdosta-m0-e4 dir svc c label h
   dir=$(stage e4 e4)
   rec up.txt dcs "$P" "$dir" up -d --pull never --no-build
   wait_for 30 is_healthy "$(cid "$P" parent)" || say "WARN parent never became healthy"

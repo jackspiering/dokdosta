@@ -18,14 +18,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackspiering/whalenurse/internal/api"
-	"github.com/jackspiering/whalenurse/internal/compose"
-	"github.com/jackspiering/whalenurse/internal/config"
-	"github.com/jackspiering/whalenurse/internal/docker"
-	"github.com/jackspiering/whalenurse/internal/engine"
-	"github.com/jackspiering/whalenurse/internal/notify"
-	"github.com/jackspiering/whalenurse/internal/store"
-	"github.com/jackspiering/whalenurse/internal/web"
+	"github.com/jackspiering/dokdosta/internal/api"
+	"github.com/jackspiering/dokdosta/internal/compose"
+	"github.com/jackspiering/dokdosta/internal/config"
+	"github.com/jackspiering/dokdosta/internal/docker"
+	"github.com/jackspiering/dokdosta/internal/engine"
+	"github.com/jackspiering/dokdosta/internal/notify"
+	"github.com/jackspiering/dokdosta/internal/store"
+	"github.com/jackspiering/dokdosta/internal/web"
 )
 
 // Secrets planted where a leak could come from. None of them may appear in any page, any API response, the event
@@ -42,7 +42,7 @@ const (
 	secAttr     = "attr-SECRET-71121"
 
 	// The pull rung's registry credentials (M7): the user, the password, an identity token and the "auth" value (base64 of
-	// user:password) of a WHALENURSE_REGISTRY_AUTH_DIR file. The registry host is shown on purpose.
+	// user:password) of a DOKDOSTA_REGISTRY_AUTH_DIR file. The registry host is shown on purpose.
 	secRegUser  = "reguser-71122" // a user name is not a secret (it is often the image namespace), but status must not show it
 	secRegPass  = "regpass-SECRET-71123"
 	secRegToken = "regtoken-SECRET-71124"
@@ -101,7 +101,7 @@ type dashboardRig struct {
 
 func newRig(t *testing.T, token string) *dashboardRig {
 	t.Helper()
-	// usehtml=true: a boolean option is no secret, so whalenurse's own "ok": "true" must survive (plan v3.13 item 20).
+	// usehtml=true: a boolean option is no secret, so dokdosta's own "ok": "true" must survive (plan v3.13 item 20).
 	notifyURL := "generic://u:" + secUserinfo + "@127.0.0.1:9/hook/" + secPath + "?k=" + secQuery + "&usehtml=true"
 	ping := "http://127.0.0.1:9/ping/" + secPing
 	t.Setenv("DB_PASSWORD", secEnv) // an environment variable of the process: nothing may dump it
@@ -157,7 +157,7 @@ func (r *dashboardRig) drive() {
 	h.set(o.ID, func(c *docker.Container) {
 		delete(c.Labels, config.LabelEnable)
 		c.Labels["com.example.apikey"] = secLabelA
-		c.Labels["whalenurse.note"] = "visible-whalenurse-label"
+		c.Labels["dokdosta.note"] = "visible-dokdosta-label"
 	})
 	h.tick()
 	c := h.set(a.ID, unhealthy)
@@ -261,13 +261,13 @@ func TestNoSecretReachesAnyPageEndpointOrStream(t *testing.T) {
 	// The positive controls: the checks above are not vacuous. The secrets were fed through real paths, the redactor
 	// masked them, and what is allowed is shown.
 	all := strings.Join(mapValues(pages), "\n")
-	for _, want := range []string{"p-web-1", "p-side-1", "restart failed", "***", "whalenurse.note", "visible-whalenurse-label", "com.docker.compose.project", "SUSPENDED", "PAUSED", "NeedsRecreate", "failed to fulfil mount request", regHost, "ghcr.io", "Pull credentials"} {
+	for _, want := range []string{"p-web-1", "p-side-1", "restart failed", "***", "dokdosta.note", "visible-dokdosta-label", "com.docker.compose.project", "SUSPENDED", "PAUSED", "NeedsRecreate", "failed to fulfil mount request", regHost, "ghcr.io", "Pull credentials"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("expected %q somewhere in the output", want)
 		}
 	}
 	if strings.Contains(all, "com.example.apikey") || strings.Contains(all, "traefik.") {
-		t.Error("a label outside com.docker.compose.* and whalenurse.* came out")
+		t.Error("a label outside com.docker.compose.* and dokdosta.* came out")
 	}
 	// The attribute the engine never emits was dropped; the allowed one ("reason") stayed, redacted.
 	_, ev := r.fetch(t, "/api/v1/events?limit=1000", secHTTP)
@@ -338,7 +338,7 @@ func TestStoreWriteFailuresAreVisible(t *testing.T) {
 	if !regexp.MustCompile(`"errors": [1-9]`).MatchString(status) || !regexp.MustCompile(`"last_error_op": "(write pause|write event|read events)"`).MatchString(status) || !strings.Contains(status, `"last_error_at"`) {
 		t.Errorf("/api/v1/status:\n%s", status)
 	}
-	if !regexp.MustCompile(`(?m)^whalenurse_store_errors_total [1-9]`).MatchString(metrics) {
+	if !regexp.MustCompile(`(?m)^dokdosta_store_errors_total [1-9]`).MatchString(metrics) {
 		t.Errorf("/metrics has no store error count")
 	}
 	if strings.Contains(overview, "survives restarts") || !strings.Contains(overview, "may not survive a restart") {
@@ -520,8 +520,8 @@ func TestContainerDocsMergeListInspectAndEngine(t *testing.T) {
 	if other.Watched || other.Healer.Paused != nil {
 		t.Errorf("other: %+v", other)
 	}
-	if other.Labels["whalenurse.note"] == "" {
-		t.Error("whalenurse.* labels are shown")
+	if other.Labels["dokdosta.note"] == "" {
+		t.Error("dokdosta.* labels are shown")
 	}
 	st := r.svc.Status()
 	if st.Counts.Containers != 3 || st.Counts.Watched != 2 || st.Counts.Suspended != 1 || st.Version != "v-test" || st.Host != "nas" || st.LastEventID == 0 || st.RateLimit.Used == 0 {
@@ -764,7 +764,7 @@ func TestComposeErrorTextReachesNoPageOrStream(t *testing.T) {
 	const planted = "hunter2-planted-71125"
 	cf := compose.NewFake()
 	fail := func(verb string) error {
-		cmd := compose.Command{Bin: "/usr/libexec/whalenurse/docker-compose", Args: []string{"-p", "p", verb}}
+		cmd := compose.Command{Bin: "/usr/libexec/dokdosta/docker-compose", Args: []string{"-p", "p", verb}}
 		return compose.RunError(cmd, errors.New("exit status 15"), []byte("failed to read /srv/p/.env: line 3: unterminated quoted value \""+planted+"\n"))
 	}
 	cf.OracleFn = func(compose.Project, string) (compose.Oracle, error) { return compose.Oracle{}, fail("up") }
