@@ -159,12 +159,27 @@ func (l *attemptLimiter) blocked(key string) (time.Duration, bool) {
 	return 0, false
 }
 
-// fail records a wrong credential. It reports the block it caused, if any.
-func (l *attemptLimiter) fail(key string) (time.Duration, bool) {
+// reservation is what reserve took for one request, so that refund can give it back exactly.
+type reservation struct {
+	blockFor  time.Duration // the block this attempt set, if it was the one that reached the limit
+	until     time.Time
+	prevFails []time.Time // the attempts before it, kept only when it set a block (which empties the list)
+	prevUntil time.Time
+	strikes   int
+}
+
+// reserve counts one request that carries credentials before its token is compared, in one critical section with the
+// block check: a check and a later count would let every request of a burst pass the check before the tenth failure had
+// been recorded, and all of them would then be compared. It reports the block when the client is blocked (the attempt is
+// not counted). The attempt that reaches AttemptLimit sets the block, and is still answered; the reservation says so.
+func (l *attemptLimiter) reserve(key string) (time.Duration, bool, reservation) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
 	a, ok := l.ips[key]
+	if ok && now.Before(a.until) {
+		return a.until.Sub(now), true, reservation{}
+	}
 	if !ok {
 		if len(l.ips) >= maxTracked {
 			l.purge(now)
@@ -184,15 +199,37 @@ func (l *attemptLimiter) fail(key string) (time.Duration, bool) {
 	}
 	a.fails = append(kept, now)
 	if len(a.fails) < AttemptLimit {
-		return 0, false
+		return 0, false, reservation{}
 	}
+	res := reservation{prevFails: append([]time.Time(nil), a.fails[:len(a.fails)-1]...), prevUntil: a.until, strikes: a.strikes}
 	a.strikes++
 	d := AttemptWindow << (a.strikes - 1)
 	if d > maxBlock || d <= 0 {
 		d = maxBlock
 	}
 	a.until, a.fails = now.Add(d), nil
-	return d, true
+	res.blockFor, res.until = d, a.until
+	return 0, false, res
+}
+
+// refund gives back the attempt of a request whose token turned out right: only wrong credentials count. If that attempt
+// was the one that set a block, the block is undone (unless it has been replaced since).
+func (l *attemptLimiter) refund(key string, res reservation) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	a, ok := l.ips[key]
+	if !ok {
+		return
+	}
+	if res.blockFor > 0 {
+		if a.until.Equal(res.until) {
+			a.fails, a.until, a.strikes = res.prevFails, res.prevUntil, res.strikes
+		}
+		return
+	}
+	if n := len(a.fails); n > 0 {
+		a.fails = a.fails[:n-1]
+	}
 }
 
 // purge drops the clients with nothing to remember; if the table is still full it drops an arbitrary one.
