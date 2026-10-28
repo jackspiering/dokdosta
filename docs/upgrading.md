@@ -127,6 +127,7 @@ in place, one step per version:
 | 1 | per-key state, incidents, flap history, pauses, the action budget, the heartbeat | first stored state (development milestone M2a) |
 | 2 | `notified`: the notification dedupe, so a restart does not repeat a message | M3 |
 | 3 | `events`: the persisted event log, the API's `since` cursor and the timelines | M5 |
+| 4 | indexes `events (type, id)` and `incidents (closed_at)`: the overview's event queries and the history list | improvement cycle, B-027 |
 
 v0.1.0 is schema 3, so a v0.1.0 database needs no migration; the steps exist for stores written by development builds. Each step
 is a few `CREATE TABLE` statements and takes no time. Every release that changes the schema says so in the changelog and in this
