@@ -1,6 +1,14 @@
 package rules
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+// networkGone is moby's "network %s not found" (lower-cased). No fixture
+// exists for it yet: the pattern follows moby's message, and a real capture
+// is a maintainer step, not part of this change.
+var networkGone = regexp.MustCompile(`network [^\s:]+ not found`)
 
 // Cause is why a container failed to start, as read from State.Error. All
 // error-string matching lives in this file because the strings vary by Engine
@@ -34,7 +42,7 @@ func ClassifyStartError(msg string) Cause {
 		return CauseParentGone
 	case strings.Contains(m, "cannot join network namespace of a non running container"):
 		return CauseParentStopped
-	case strings.Contains(m, "network") && strings.Contains(m, "not found"):
+	case networkGone.MatchString(m):
 		return CauseNetworkGone
 	case strings.Contains(m, "failed to fulfil mount request"),
 		strings.Contains(m, "invalid mount config") && strings.Contains(m, "bind source path does not exist"):

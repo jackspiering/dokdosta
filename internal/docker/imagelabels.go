@@ -28,8 +28,11 @@ func isSteering(k string) bool {
 // daemon/commit.go, merge), so a container's merged labels hold both the operator's and the image publisher's. The filter
 // reads the image's labels by the container's image ID and removes, from the labels List and Inspect return:
 //
-//   - every com.docker.compose.* label, when one of them has the value the image carries for that key: the compose
-//     identity is the image's, the container was not made by compose, and it falls back to its name and rung 1;
+//   - every com.docker.compose.* label, when the compose identity is the image's (plan v3.16 item 1, identityFromImage):
+//     one of them has the value the image carries for that key, and compose cannot have made the container (a label it
+//     writes at create time is missing) or the shared key is none of project, service and version, the three compose
+//     writes into every image it builds. The container then was not made by compose, and it falls back to its name and
+//     rung 1;
 //   - the dokdosta.* rule below applies to the whalenurse.* labels from before the rename too (plan v3.15 item 5):
 //     a container that carries one is left alone, so one the image supplies must not count either;
 //   - on a compose container, every dokdosta.* label that the service's `labels:` in the compose file does not declare
@@ -87,6 +90,40 @@ func (f *ImageLabelFilter) cachedDrop(id string) ([]string, bool) {
 
 var _ Reader = (*ImageLabelFilter)(nil)
 
+// identityFromImage reports whether the compose labels shared with the image (the container's com.docker.compose.* labels
+// whose value is the image's) are the image's, and not compose's own. Verified against compose v5.2.0 and v5.6.1:
+//   - compose writes only project, service and version into an image it builds (getImageBuildLabels, pkg/compose/build.go),
+//     so a container it makes from that image shares exactly those three, and they prove nothing; any other shared key came
+//     from the image (a committed image, or a publisher's label), and the mistake in the other direction is fail-safe;
+//   - getCreateConfigs (pkg/compose/create.go) writes config-hash on every container (v5.6.x skips it only for hook
+//     runners), but container-number only `if number > 0`: `compose run` creates a one-off container with number -1
+//     (pkg/compose/run.go), so a real one-off has config-hash and oneoff=True and no container-number. A container without
+//     config-hash or oneoff, or without container-number while it is no one-off, was not made by compose;
+//   - project.environment_file is written only when --env-file was given, so a list of keys that compose always sets
+//     cannot stand for "compose made this": a shared key outside the three is evidence on its own.
+//
+// Residual case: the creator, not the image, sets config-hash, container-number and oneoff itself (its own --label flags)
+// while project and service come from the image; it looks like a compose container.
+func identityFromImage(labels map[string]string, shared []string) bool {
+	if len(shared) == 0 {
+		return false
+	}
+	_, hash := labels[composeLabelPrefix+"config-hash"]
+	_, oneoff := labels[LabelOneOff]
+	_, number := labels[LabelNumber]
+	if !hash || !oneoff || (!number && !IsOneOff(labels)) {
+		return true
+	}
+	for _, k := range shared {
+		switch k {
+		case LabelProject, LabelService, composeLabelPrefix + "version":
+		default:
+			return true
+		}
+	}
+	return false
+}
+
 // maxImagesCached bounds the cache of image labels; the images of a host are few, so a full cache is simply reset.
 const maxImagesCached = 512
 
@@ -136,29 +173,30 @@ func (f *ImageLabelFilter) resolve(ctx context.Context, id, name, imageID string
 		return nil, err
 	}
 	var drop []string
-	var identity, steering []string
+	var shared, steering []string
 	for k, v := range labels {
 		switch {
 		case strings.HasPrefix(k, composeLabelPrefix):
 			if iv, has := img[k]; has && iv == v {
-				identity = append(identity, k)
+				shared = append(shared, k)
 			}
 		case isSteering(k):
 			steering = append(steering, k)
 		}
 	}
-	slices.Sort(identity)
+	slices.Sort(shared)
 	slices.Sort(steering)
 	definitive, consulted := imageKnown, false
-	if len(identity) > 0 {
+	fromImage := identityFromImage(labels, shared)
+	if fromImage {
 		for k := range labels {
 			if strings.HasPrefix(k, composeLabelPrefix) {
 				drop = append(drop, k)
 			}
 		}
-		f.warn(name, "compose labels come from the image: the container is treated as not made by compose", identity)
+		f.warn(name, "compose labels come from the image: the container is treated as not made by compose", shared)
 	}
-	isCompose := len(identity) == 0 && labels[LabelProject] != "" && labels[LabelService] != ""
+	isCompose := !fromImage && labels[LabelProject] != "" && labels[LabelService] != ""
 	if len(steering) > 0 {
 		var declared map[string]bool
 		known := false

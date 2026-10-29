@@ -102,9 +102,13 @@ func TestBothStoresPresentIsAnError(t *testing.T) {
 	}
 }
 
-// A move cut short after the -wal file (the database still under its old name) is finished on the next start.
+// A move cut short after the -wal file (the database still under its old name) is finished on the next start. The
+// marker is what a move leaves behind when it is cut short, and what tells this from a stale -wal.
 func TestAMoveCutShortIsFinishedOnTheNextStart(t *testing.T) {
 	dir := legacyDir(t)
+	if err := os.WriteFile(filepath.Join(dir, movingMarkerName), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for _, suffix := range []string{"-wal", "-shm"} {
 		if err := os.Rename(filepath.Join(dir, legacyFileName+suffix), filepath.Join(dir, FileName+suffix)); err != nil {
 			t.Fatal(err)
@@ -117,6 +121,92 @@ func TestAMoveCutShortIsFinishedOnTheNextStart(t *testing.T) {
 	defer s.Close()
 	if v, ok, _ := s.Meta("before-the-rename"); !ok || v != "kept" {
 		t.Fatalf("lost what the -wal held: %q %v", v, ok)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, movingMarkerName)); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the marker is still there after the move was finished: %v", err)
+	}
+}
+
+// A move cut short before the first rename (the marker exists, nothing moved) is finished too.
+func TestAMoveCutShortBeforeAnyRenameIsFinished(t *testing.T) {
+	dir := legacyDir(t)
+	if err := os.WriteFile(filepath.Join(dir, movingMarkerName), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if v, ok, _ := s.Meta("before-the-rename"); !ok || v != "kept" {
+		t.Fatalf("lost what the -wal held: %q %v", v, ok)
+	}
+}
+
+// A move cut short after the last rename leaves only the marker: it is removed at the next start, so that it cannot
+// excuse a stale -wal later.
+func TestAMarkerLeftAfterTheLastRenameIsRemoved(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, movingMarkerName)
+	if err := os.WriteFile(marker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the marker is still there: %v", err)
+	}
+}
+
+// A -wal or -shm of a dokdosta.db that is not there, next to the old database and with no move in progress, is not
+// ours to replay into the moved database: the start is refused and nothing moves (R-014).
+func TestAStaleWALOrSHMIsRefusedWhenTheStoreWouldMove(t *testing.T) {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		t.Run(suffix, func(t *testing.T) {
+			dir := legacyDir(t)
+			// A database that was cleanly closed has no -wal of its own.
+			for _, s := range []string{"-wal", "-shm"} {
+				if err := os.Remove(filepath.Join(dir, legacyFileName+s)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stale := filepath.Join(dir, FileName+suffix)
+			if err := os.WriteFile(stale, []byte("foreign frames"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Open(dir, nil)
+			if err == nil || !strings.Contains(err.Error(), FileName+suffix) || !strings.Contains(err.Error(), "no move in progress") {
+				t.Fatalf("want the refusal naming %s, got %v", FileName+suffix, err)
+			}
+			if b, err := os.ReadFile(stale); err != nil || string(b) != "foreign frames" {
+				t.Errorf("the stale file was touched: %q %v", b, err)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, legacyFileName)); err != nil {
+				t.Errorf("the old database moved: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, FileName)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("a new database exists: %v", err)
+			}
+			if _, err := os.Lstat(filepath.Join(dir, movingMarkerName)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("a marker was made: %v", err)
+			}
+		})
+	}
+}
+
+// The marker is gone after a normal move.
+func TestTheMarkerIsGoneAfterAMove(t *testing.T) {
+	dir := legacyDir(t)
+	s, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if _, err := os.Lstat(filepath.Join(dir, movingMarkerName)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the marker is still there: %v", err)
 	}
 }
 

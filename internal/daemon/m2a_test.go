@@ -751,15 +751,17 @@ func TestFailedRetriesDuringAnOutageAreNotReconnects(t *testing.T) {
 	h.d.o.ReconnectBackoff = 5 * time.Millisecond
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	out := make(chan docker.Event, 8)
-	sig := make(chan streamSignal, 64)
-	go h.d.watchEvents(ctx, out, sig)
+	out := make(chan streamItem, 64)
+	go h.d.watchEvents(ctx, out)
 
 	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 1 })
-	h.fake.Emit(docker.Event{Action: "die", ID: "x", Time: time.Now()}) // establishes the stream
-	<-out
-	if s := <-sig; s.lost {
-		t.Fatalf("first signal must be 'connected': %+v", s)
+	// The first event establishes the stream: connected comes first, then the event.
+	h.fake.Emit(docker.Event{Action: "die", ID: "x", Time: time.Now()})
+	if it := <-out; it.sig == nil || it.sig.lost {
+		t.Fatalf("first signal must be 'connected': %+v", it)
+	}
+	if it := <-out; it.sig != nil {
+		t.Fatalf("second item must be the event: %+v", it)
 	}
 	for i := 0; i < 4; i++ { // the daemon is down: each retry fails at once
 		h.fake.BreakStream(fmt.Errorf("connection refused"))
@@ -768,8 +770,11 @@ func TestFailedRetriesDuringAnOutageAreNotReconnects(t *testing.T) {
 	var lost, connected int
 	for done := false; !done; {
 		select {
-		case s := <-sig:
-			if s.lost {
+		case it := <-out:
+			if it.sig == nil {
+				continue
+			}
+			if it.sig.lost {
 				lost++
 			} else {
 				connected++

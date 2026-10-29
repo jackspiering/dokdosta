@@ -18,6 +18,7 @@ type Hub struct {
 	mu      sync.Mutex
 	clients map[chan struct{}]struct{}
 	counts  map[string]uint64
+	refused uint64
 	closed  bool
 	done    chan struct{}
 }
@@ -44,7 +45,11 @@ func (h *Hub) Notify(e engine.Event) {
 func (h *Hub) Subscribe() (wake <-chan struct{}, cancel func(), ok bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.closed || len(h.clients) >= MaxStreams {
+	if h.closed {
+		return nil, nil, false
+	}
+	if len(h.clients) >= MaxStreams {
+		h.refused++
 		return nil, nil, false
 	}
 	c := make(chan struct{}, 1)
@@ -74,6 +79,13 @@ func (h *Hub) Clients() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.clients)
+}
+
+// Refused is how many streams were turned away because MaxStreams clients were connected, since the process started.
+func (h *Hub) Refused() uint64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.refused
 }
 
 // Counts returns how many events of each type were published since the process started.

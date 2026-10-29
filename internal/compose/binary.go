@@ -24,12 +24,13 @@ const (
 )
 
 // HostPluginDirs are where a host install keeps the compose plugin; they are searched last, for dokdosta under systemd
-// (plan §3.4: "In systemd mode, use the host's docker compose").
+// (plan §3.4: "In systemd mode, use the host's docker compose"). The order is the Docker CLI's, so dokdosta runs the
+// same compose as `docker compose` when two directories hold one.
 var HostPluginDirs = []string{
-	"/usr/libexec/docker/cli-plugins/docker-compose",
-	"/usr/lib/docker/cli-plugins/docker-compose",
-	"/usr/local/libexec/docker/cli-plugins/docker-compose",
 	"/usr/local/lib/docker/cli-plugins/docker-compose",
+	"/usr/local/libexec/docker/cli-plugins/docker-compose",
+	"/usr/lib/docker/cli-plugins/docker-compose",
+	"/usr/libexec/docker/cli-plugins/docker-compose",
 }
 
 // Binary is the compose binary in use.

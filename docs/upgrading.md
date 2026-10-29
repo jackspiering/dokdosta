@@ -43,7 +43,9 @@ that still carries a `whalenurse.*` label alone (it says why once in the log, an
    commands in these docs use `docker exec dokdosta /dokdosta ...`), then `docker compose up -d --remove-orphans` removes
    the old container. **Keep the volume line as it is** (for example `whalenurse-data:/data`): a new volume name would be a
    new, empty volume. At its first start dokdosta renames `whalenurse.db` (and its `-wal`/`-shm`) to `dokdosta.db` in
-   place; it refuses to if a whalenurse still holds the directory, or if both files are there.
+   place; it refuses to if a whalenurse still holds the directory, if both files are there, or if a `dokdosta.db-wal` or
+   `-shm` is there without a `dokdosta.db` (a leftover that SQLite would replay into the moved database: remove
+   `dokdosta.db*` or keep one store; dokdosta deletes nothing itself).
 4. **Overrides.** An `entrypoint:`, `command:` or `healthcheck:` that names `/whalenurse` becomes `/dokdosta`; a reference
    to the bundled compose becomes `/usr/libexec/dokdosta/docker-compose`; the default control socket is
    `/run/dokdosta.sock`.
@@ -125,10 +127,15 @@ in place, one step per version:
 | 1 | per-key state, incidents, flap history, pauses, the action budget, the heartbeat | first stored state (development milestone M2a) |
 | 2 | `notified`: the notification dedupe, so a restart does not repeat a message | M3 |
 | 3 | `events`: the persisted event log, the API's `since` cursor and the timelines | M5 |
+| 4 | indexes `events (type, id)` and `incidents (closed_at)`: the overview's event queries and the history list | improvement cycle, B-027 |
+| 5 | column `incidents.parent`: the parent a sidecar's repair was made against, kept across a restart | improvement cycle, B-028 |
 
-v0.1.0 is schema 3, so a v0.1.0 database needs no migration; the steps exist for stores written by development builds. Each step
-is a few `CREATE TABLE` statements and takes no time. Every release that changes the schema says so in the changelog and in this
-table.
+Every release up to v0.3.0-rc.1 (v0.1.x and v0.2.0, released as whalenurse) is schema 3. v0.3.0 is schema 5: its first
+start migrates a schema-3 database in two steps, adding the two indexes of schema 4 and the `parent` column of schema 5 (empty for
+the incidents already stored; such an incident learns its parent at its first decision). Steps 1 to 3 exist for stores written by
+development builds. Each step is one transaction of a few `CREATE` or `ALTER TABLE` statements and takes no noticeable time; back
+up `dokdosta.db*` first if you may go back (see *No downgrade* below). Every release that changes the schema says so in the
+changelog and in this table.
 
 - **No downgrade.** A database with a newer schema than the binary knows is refused at start with
   `database schema N is newer than this dokdosta understands (M)`. To go back, [restore the backup](#backing-up-and-restoring-the-store) you took before
@@ -154,6 +161,11 @@ dokdosta, with one effect to know: after you upgrade the host's compose plugin, 
 reported as drifted when a recreate is considered ("compose upgraded from X to Y since this container was created, so this may
 be a changed hash layout rather than an edit"). Recreate them once yourself (`docker compose up -d`) and the message goes
 away. See [troubleshooting.md](troubleshooting.md#drift-block-messages).
+
+From this release, a systemd install that keeps compose in two plugin directories uses the one the Docker CLI uses, which is
+searched first: `/usr/local/lib` before `/usr/libexec`. Earlier releases searched `/usr/libexec` first. Check which one
+`docker compose version` runs, and make sure the other is not a different version you did not intend. The compose dokdosta
+uses is reported in its startup log.
 
 ## Rolling back
 

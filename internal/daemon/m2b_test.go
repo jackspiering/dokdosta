@@ -86,10 +86,10 @@ func (h *cfH) svc(id, project, service string, extra ...string) docker.Container
 		compose.LabelWorkingDir, "/opt/stacks/" + project, compose.LabelConfigFiles, "/opt/stacks/" + project + "/compose.yaml",
 		compose.LabelConfigHash, "h-" + service, compose.LabelImage, imgLabel(service), compose.LabelVersion, "5.6.0"}
 	extra = append(defaults, extra...)
-	c := h.running(id, project, service, extra...)
+	h.running(id, project, service, extra...)
 	h.set(id, func(c *docker.Container) { c.Image = service + ":1" })
 	h.fake.SetImage(service+":1", imgLabel(service))
-	c, _ = h.fake.Inspect(h.ctx, id)
+	c, _ := h.fake.Inspect(h.ctx, id)
 	return c
 }
 
@@ -609,6 +609,36 @@ func TestExternalParentRecreateRecreatesTheDependent(t *testing.T) {
 	}
 }
 
+// The dependents sweep is asked for once and cleared when it runs; a List that fails then must not leave the stale
+// sidecar to the next poll (sweep() retries in the same situation). The poll is far off here, so only the retry can
+// repair it.
+func TestDependentsSweepIsRetriedAfterAFailedList(t *testing.T) {
+	h := newCompose(t, func(c *config.Global) { c.Grace, c.PollInterval = 5*time.Second, 10*time.Minute }, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	var newParent docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+		return nil
+	}
+	h.tick()
+	newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.event(newParent, "create", "")
+	h.event(newParent, "start", "")
+	h.fake.ListErr = errors.New("docker: connection reset")
+	h.advance(6 * time.Second) // the sweep runs at +5s and its List fails
+	if h.cf.Count("up") != 0 {
+		t.Fatalf("nothing can be repaired while the list fails: %s", h.verbs())
+	}
+	h.fake.ListErr = nil
+	h.advance(time.Minute) // far short of the 10 minute poll
+	if got := h.verbs(); got != "up dep" {
+		t.Fatalf("compose calls = %q, want the sidecar repaired by the retried sweep", got)
+	}
+	if h.current("p", "dep").ID == dep.ID {
+		t.Fatal("not recreated")
+	}
+}
+
 // The bundled compose recreating a sidecar that another compose release made cannot be verified: the dependents step is
 // blocked (also in warn mode, which overrides verified drift only), and nothing is deployed.
 func TestStaleSidecarMadeByAnotherComposeReleaseIsNotRecreatedByTheBundledOne(t *testing.T) {
@@ -1048,6 +1078,69 @@ func TestSidecarThatIsNotOptedInIsNotHealedForItsOwnFailures(t *testing.T) {
 	h.set(dep.ID, func(c *docker.Container) { c.Health = ""; c.Status, c.Running, c.ExitCode = "exited", false, 1 })
 	h.advance(10 * time.Minute)
 	h.wantCalls()
+}
+
+// A sidecar without an opt-in that dokdosta recreated with its parent, and that then exits, has no ladder of its own: its
+// incident ends SUSPENDED (one notification), not open for ever.
+func TestSidecarThatFailsAfterItsRepairIsSuspendedOnce(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	h.noOptIn(dep.ID)
+	var newParent docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) {
+			c.NetworkMode = "container:" + newParent.ID
+		})
+		return nil
+	}
+	h.tick()
+	newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.advance(3 * time.Minute)
+	// The repaired sidecar dies while its incident is still recovering.
+	h.set(h.current("p", "dep").ID, func(c *docker.Container) { c.Health, c.Status, c.Running, c.ExitCode = "", "exited", false, 1 })
+	h.advance(6 * time.Hour)
+	if got := h.verbs(); got != "up dep" {
+		t.Fatalf("%q", got)
+	}
+	if open, suspended := h.d.Engine().IncidentOpen(key("p", "dep")); !open || !suspended {
+		t.Fatalf("open=%v suspended=%v / %v", open, suspended, h.rec.Types())
+	}
+	if h.count(engine.Suspended) != 1 || h.count(engine.IncidentClosed) != 0 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+}
+
+// Waiting is not refusing (WN-024): a repaired sidecar that is down while its parent is down too is not suspended; it is
+// once the parent runs again and nothing would start it.
+func TestSidecarWaitingForItsParentIsNotSuspendedUntilTheParentRuns(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	h.noOptIn(dep.ID)
+	var newParent docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+		return nil
+	}
+	h.tick()
+	newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.advance(3 * time.Minute)
+	// The parent is stopped by hand and the sidecar goes down with it.
+	h.event(newParent, "kill", "")
+	h.set(newParent.ID, func(c *docker.Container) { c.Health, c.Status, c.Running, c.ExitCode = "", "exited", false, 137 })
+	h.event(newParent, "die", "")
+	h.set(h.current("p", "dep").ID, func(c *docker.Container) { c.Status, c.Running, c.ExitCode = "exited", false, 1 })
+	h.advance(time.Hour)
+	if open, _ := h.d.Engine().IncidentOpen(key("p", "dep")); !open || h.count(engine.Suspended) != 0 {
+		t.Fatalf("a sidecar waiting for its parent must not be suspended: open=%v / %v", open, h.rec.Types())
+	}
+	newParent = h.set(newParent.ID, func(c *docker.Container) {
+		c.Status, c.Running, c.ExitCode, c.StartedAt = "running", true, 0, h.clk.Now()
+	})
+	h.event(newParent, "start", "")
+	h.advance(5 * time.Minute)
+	if open, suspended := h.d.Engine().IncidentOpen(key("p", "dep")); !open || !suspended || h.count(engine.Suspended) != 1 {
+		t.Fatalf("open=%v suspended=%v / %v", open, suspended, h.rec.Types())
+	}
 }
 
 func TestSidecarOfAParentThatIsNotOptedInIsNotTouched(t *testing.T) {
@@ -1851,5 +1944,67 @@ func TestReferenceHolderWithoutCurrentReferencesIsNotAskedToTheOracle(t *testing
 	d3, _ := h.fake.Inspect(h.ctx, dep.ID)
 	if h.d.refsCurrent(d3) {
 		t.Fatal("a container compose did not make cannot be judged")
+	}
+}
+
+// A compose service with depends_on that is not opted in never gets engine state, but its parents: row is learned at the
+// first sweep. It is scheduled once it leaves the list, so the hour that forgets it starts (B-018, R-015); so are its
+// label warnings.
+func TestLearnedParentsOfAnUntrackedContainerAreForgotten(t *testing.T) {
+	st := openStore(t)
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.restartWithStore(st)
+	h.svc(hexID("c1"), "p", "parent")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true", config.LabelCooldown, "not-a-duration")
+	h.noOptIn(dep.ID)
+	k := key("p", "dep")
+	h.tick()
+	h.advance(2 * time.Minute)
+	if _, ok, _ := st.Meta(metaParents + k); !ok {
+		t.Fatal("the parents of a service that is not opted in are learned")
+	}
+	if slices.Contains(h.d.eng.Keys(), k) {
+		t.Fatalf("the test needs a key the engine does not track: %v", h.d.eng.Keys())
+	}
+	warned := func() (n int) {
+		for id := range h.d.warned {
+			if strings.HasPrefix(id, k+"|") {
+				n++
+			}
+		}
+		return n
+	}
+	if warned() == 0 {
+		t.Fatal("the test needs a label warning for the key")
+	}
+	h.fake.Remove(dep.ID)
+	h.advance(63 * time.Minute) // GRACE, then the hour, then a poll
+	if v, ok, _ := st.Meta(metaParents + k); ok || len(h.d.knownParents(k)) != 0 {
+		t.Errorf("the removed container's parents row should be deleted: %q %v", v, ok)
+	}
+	if n := warned(); n != 0 {
+		t.Errorf("%d label warning entries remain for a key that is gone", n)
+	}
+}
+
+// A container that drops its network_mode: container: reference keeps no namespace parent, which would decide the opt-in
+// of a later sidecar (plan v3.13 item 3; B-018).
+func TestNSParentRowIsDroppedWhenTheContainerDropsItsNetworkMode(t *testing.T) {
+	st := openStore(t)
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.restartWithStore(st)
+	parent := h.svc(hexID("c1"), "p", "parent")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+	k := key("p", "dep")
+	h.tick()
+	h.advance(time.Minute)
+	if v, _, _ := st.Meta(metaNSParent + k); v != "network:parent" {
+		t.Fatalf("the namespace parent is learned: %q", v)
+	}
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "bridge" })
+	h.advance(time.Minute)
+	if v, ok, _ := st.Meta(metaNSParent + k); ok || len(h.d.namespaceParents(k)) != 0 {
+		t.Errorf("the namespace parent should be dropped with the reference: %q %v %v", v, ok, h.d.namespaceParents(k))
 	}
 }

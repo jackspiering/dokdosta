@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -258,7 +259,12 @@ func FromEnv(environ []string) (Global, []string, error) {
 		}
 	}
 	if v, ok := take("DOKDOSTA_COMPOSE_BIN"); ok {
-		g.ComposeBin = v
+		// The probe Stats the path in the working directory but compose runs from "/", so a relative path is refused here.
+		if !filepath.IsAbs(v) {
+			errs = append(errs, "DOKDOSTA_COMPOSE_BIN must be an absolute path")
+		} else {
+			g.ComposeBin = v
+		}
 	}
 	// The notification variables hold tokens, so an error about them never quotes the value.
 	if v, ok := take("DOKDOSTA_NOTIFY_URLS"); ok {

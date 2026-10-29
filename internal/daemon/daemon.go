@@ -107,6 +107,10 @@ type Options struct {
 
 	// ReconnectBackoff is the first wait before resubscribing to events (doubles up to 30s).
 	ReconnectBackoff time.Duration
+
+	// StreamStable is how long a subscription stays open, without an event, before it counts as established
+	// (default streamStable; tests shorten it).
+	StreamStable time.Duration
 }
 
 type pending struct {
@@ -169,6 +173,9 @@ func New(o Options) *Daemon {
 	}
 	if o.ReconnectBackoff == 0 {
 		o.ReconnectBackoff = time.Second
+	}
+	if o.StreamStable == 0 {
+		o.StreamStable = streamStable
 	}
 	g := o.Config
 	d := &Daemon{
@@ -330,11 +337,18 @@ type streamSignal struct {
 	at   time.Time
 }
 
+// streamItem is what watchEvents hands the loop: an event or a stream signal, exactly one of them. They share one
+// channel so the loop sees them in the order the stream produced them: a kill that follows a loss and a reconnect is
+// handled after them, whatever the loop was busy with.
+type streamItem struct {
+	ev  docker.Event
+	sig *streamSignal
+}
+
 // Run blocks until ctx ends: it subscribes to events (reconnecting) and ticks.
 func (d *Daemon) Run(ctx context.Context) error {
-	evCh := make(chan docker.Event, 256)
-	sigCh := make(chan streamSignal, 16)
-	go d.watchEvents(ctx, evCh, sigCh)
+	itemCh := make(chan streamItem, 256)
+	go d.watchEvents(ctx, itemCh)
 
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -347,29 +361,17 @@ func (d *Daemon) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			d.heartbeat(true) // the clean end: the next run quarantines markers from just before it
 			return ctx.Err()
-		case ev := <-evCh:
-			d.HandleEvent(ctx, ev)
-		case sig := <-sigCh:
-			// Events are delivered before the signal that follows them: drain what is queued.
-			d.drain(ctx, evCh)
-			if sig.lost {
-				d.StreamLost(sig.at)
-			} else {
+		case it := <-itemCh:
+			switch {
+			case it.sig == nil:
+				d.HandleEvent(ctx, it.ev)
+			case it.sig.lost:
+				d.StreamLost(it.sig.at)
+			default:
 				d.StreamConnected()
 			}
 		case <-tick.C:
 			d.Tick(ctx)
-		}
-	}
-}
-
-func (d *Daemon) drain(ctx context.Context, evCh chan docker.Event) {
-	for {
-		select {
-		case ev := <-evCh:
-			d.HandleEvent(ctx, ev)
-		default:
-			return
 		}
 	}
 }
@@ -384,12 +386,12 @@ const streamStable = 2 * time.Second
 // event time> after an error and tells the loop when the stream was lost and
 // when it is back; a stream that ends because ctx ended is not a loss, and a
 // retry that fails before the stream is established is not a reconnect.
-func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig chan<- streamSignal) {
+func (d *Daemon) watchEvents(ctx context.Context, out chan<- streamItem) {
 	var since time.Time
 	backoff := d.o.ReconnectBackoff
-	send := func(s streamSignal) bool {
+	send := func(it streamItem) bool {
 		select {
-		case sig <- s:
+		case out <- it:
 			return true
 		case <-ctx.Done():
 			return false
@@ -409,14 +411,16 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig c
 			if backoff > d.o.ReconnectBackoff {
 				d.log.Info("docker events stream reconnected")
 			}
-			return send(streamSignal{})
+			return send(streamItem{sig: &streamSignal{}})
 		}
-		stable := time.NewTimer(streamStable)
-		got := false
+		stable := time.NewTimer(d.o.StreamStable)
 	read:
 		for {
 			select {
 			case <-stable.C:
+				if since.IsZero() {
+					since = d.clk.Now() // a quiet host: a zero since sends no Since filter, so the next subscription would skip the gap
+				}
 				if !establish() {
 					cancel()
 					return
@@ -429,13 +433,10 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig c
 					cancel()
 					return
 				}
-				got = true
 				if ev.Time.After(since) {
 					since = ev.Time
 				}
-				select {
-				case out <- ev:
-				case <-ctx.Done():
+				if !send(streamItem{ev: ev}) {
 					cancel()
 					return
 				}
@@ -456,7 +457,7 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig c
 			return
 		}
 		if established {
-			if !send(streamSignal{lost: true, at: d.clk.Now()}) {
+			if !send(streamItem{sig: &streamSignal{lost: true, at: d.clk.Now()}}) {
 				return
 			}
 		}
@@ -466,8 +467,8 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- docker.Event, sig c
 		case <-ctx.Done():
 			return
 		}
-		if got {
-			backoff = d.o.ReconnectBackoff
+		if established {
+			backoff = d.o.ReconnectBackoff // a stream that was up is not a failing subscription, with events or without
 		} else if backoff < 30*time.Second {
 			backoff *= 2
 		}
@@ -657,10 +658,14 @@ func (d *Daemon) scheduleAbsent(at time.Time) {
 			d.schedule(k, at)
 		}
 	}
+	for _, k := range d.absentRemembered() {
+		d.schedule(k, at)
+	}
 }
 
 func (d *Daemon) sweepDependents(ctx context.Context) {
 	if err := d.refresh(ctx); err != nil {
+		d.requestDependentSweep(d.clk.Now().Add(d.cfg.Grace)) // Tick cleared the request; a stale sidecar must not wait for the next poll
 		return
 	}
 	for _, s := range d.idx.all {
@@ -767,6 +772,12 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	}
 	dec := rules.Classify(in)
 	if dec.Class == rules.ClassSkip {
+		// A sidecar repaired as a dependent that now fails again has no ladder of its own (no opt-in), and the skip keeps
+		// the engine from seeing it: end the incident here, SUSPENDED, or it would stay open for ever. Not while a parent is
+		// down or busy: that decision was a wait, and waiting is not refusing (WN-024).
+		if dec.Skip == rules.SkipNotOptedIn && incidentOpen && in.DependentOfOptedIn && !cfg.Disabled && !parentDownOrBusy(in.Parents) {
+			d.eng.EndUnrepaired(t, "repaired with its parent, then failed again; it has no opt-in of its own")
+		}
 		d.view.observe(key, c, dec, now)
 		d.log.Debug("classified", "key", key, "container", c.Name, "class", dec.Class, "skip", dec.Skip)
 		return
@@ -911,6 +922,16 @@ type index struct {
 
 func (d *Daemon) keyOf(s docker.Summary) string {
 	return docker.StateKey(d.cfg.HostID, s.Name, s.Labels)
+}
+
+// parentDownOrBusy reports whether a resolved parent is not running or is being healed: the rules wait for it then.
+func parentDownOrBusy(parents []rules.Parent) bool {
+	for _, p := range parents {
+		if p.Found && (!p.Running || p.Busy) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasRef(s docker.Summary) bool { return docker.ContainerRef(s.NetworkMode) != "" }

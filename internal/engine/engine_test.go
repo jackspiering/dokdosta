@@ -627,6 +627,55 @@ func TestRealEventSequencesAndTheInFlightWindow(t *testing.T) {
 	}
 }
 
+func TestAttributedStartClearsTheManualStopMarker(t *testing.T) {
+	// A hand `docker stop` sets the marker. dokdosta's own start, attributed to
+	// its action, must still clear it (v3.15 B-011): otherwise the next crash
+	// (a die with no kill before it) is read as a manual stop and never healed.
+	e, clk, rec := newEngine(t, 0)
+	e.ObserveDockerEvent(tgt, docker.Event{Action: "kill"})
+	if !e.Evidence(tgt.Key).ManualStop {
+		t.Fatal("a kill outside any action should set the marker")
+	}
+	p := Plan{Act: rules.ActionRestart, Rung: "restart"}
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	e.Begin(tgt, p, bad)
+	if attributed := e.ObserveDockerEvent(tgt, docker.Event{Action: "start"}); !attributed {
+		t.Fatal("a start inside the action's window should be attributed")
+	}
+	e.End(tgt, p, Result{}, cfg)
+	if rec.Count(ManualStopCleared) != 1 {
+		t.Fatalf("the attributed start should clear the marker: %v", rec.Types())
+	}
+	clk.Advance(time.Minute) // well past the in-flight tail
+	e.ObserveDockerEvent(tgt, docker.Event{Action: "die"})
+	if ev := e.Evidence(tgt.Key); ev.ManualStop || !ev.Crashed {
+		t.Fatalf("the die after the start is a crash, not a manual stop: %+v", ev)
+	}
+}
+
+func TestOwnEventsAfterALongBacklogAreStillAttributed(t *testing.T) {
+	// The engine handles a due key's queued events only after its action has
+	// returned, so a recreate that took minutes is still followed by its own
+	// create/start events long after End. They are matched on their own time,
+	// so the window must outlast that backlog, not one minute.
+	e, clk, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	p := Plan{Act: rules.ActionRecreate, Rung: "recreate"}
+	e.Begin(tgt, p, bad)
+	started := clk.Now()
+	e.End(tgt, p, Result{}, cfg)
+	clk.Advance(70 * time.Second)
+	attributed := e.ObserveDockerEvent(tgt, docker.Event{Action: "create", Time: started.Add(time.Second)})
+	if !attributed || rec.Count(EventAttributed) != 1 {
+		t.Fatalf("a create 1 s into the action, seen 70 s after it ended, is not attributed: %v", rec.Types())
+	}
+	if rec.Count(IncidentClosed) != 0 {
+		t.Fatalf("the action's own create closed the incident: %v", rec.Types())
+	}
+	if open, _ := e.IncidentOpen(tgt.Key); !open {
+		t.Fatalf("the incident is not open after the action's own create: %v", rec.Types())
+	}
+}
 func TestRefuseDoesNotConsumeTheRung(t *testing.T) {
 	e, _, rec := newEngine(t, 0)
 	p := e.Evaluate(tgt, bad, cfg, hcObs)
@@ -636,6 +685,75 @@ func TestRefuseDoesNotConsumeTheRung(t *testing.T) {
 	}
 	if p2 := e.Evaluate(tgt, bad, cfg, hcObs); p2.Act != p.Act {
 		t.Fatalf("the rung must still be available after a refusal: %+v", p2)
+	}
+}
+
+// A refusal that cannot clear (a pre-action check that fails the same way every GRACE) must end the incident in a
+// notified SUSPENDED instead of repeating for ever (B-004).
+func TestRepeatedIdenticalRefusalsSuspend(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	for i := 0; i < maxRefusals+1; i++ {
+		e.Refuse(tgt, bad, "cannot pull: nothing to do")
+	}
+	if rec.Count(Suspended) != 1 || !e.Suspended(tgt.Key) {
+		t.Fatalf("want exactly one Suspended: %v", rec.Types())
+	}
+	for _, ev := range rec.Events() {
+		if ev.Type == Suspended && !strings.HasPrefix(ev.Message, "refused 10 times: cannot pull: nothing to do") {
+			t.Fatalf("message %q", ev.Message)
+		}
+	}
+}
+
+func TestADifferentRefusalRestartsTheCount(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	for i := 0; i < maxRefusals-1; i++ {
+		e.Refuse(tgt, bad, "reason A")
+	}
+	e.Refuse(tgt, bad, "reason B")
+	for i := 0; i < maxRefusals-2; i++ {
+		e.Refuse(tgt, bad, "reason B")
+	}
+	if rec.Count(Suspended) != 0 {
+		t.Fatalf("suspended before %d identical refusals: %v", maxRefusals, rec.Types())
+	}
+	e.Refuse(tgt, bad, "reason B")
+	if rec.Count(Suspended) != 1 {
+		t.Fatalf("%v", rec.Types())
+	}
+}
+
+func TestAnActionClearsTheRefusalCount(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	p := e.Evaluate(tgt, bad, cfg, hcObs)
+	for i := 0; i < maxRefusals-1; i++ {
+		e.Refuse(tgt, bad, "same")
+	}
+	e.Begin(tgt, p, bad)
+	e.End(tgt, p, Result{}, cfg)
+	for i := 0; i < maxRefusals-1; i++ {
+		e.Refuse(tgt, bad, "same")
+	}
+	if rec.Count(Suspended) != 0 {
+		t.Fatalf("an action in between did not restart the count: %v", rec.Types())
+	}
+}
+
+func TestWaitingIsNotARefusal(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	for i := 0; i < maxRefusals-1; i++ {
+		e.Refuse(tgt, bad, "same")
+	}
+	e.Wait(tgt, bad, "web is starting")
+	e.Refuse(tgt, bad, "same")
+	for i := 0; i < 3*maxRefusals; i++ {
+		e.Wait(tgt, bad, "web is starting")
+	}
+	if rec.Count(Suspended) != 0 {
+		t.Fatalf("%v", rec.Types())
 	}
 }
 

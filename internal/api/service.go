@@ -23,6 +23,11 @@ type History interface {
 	History(key string) ([]engine.ClosedIncident, error)
 }
 
+// limitedHistory is the optional second method of a History: the store cuts the rows in SQL.
+type limitedHistory interface {
+	HistoryLimit(key string, limit int) ([]engine.ClosedIncident, error)
+}
+
 // Service builds the documents of the API. The JSON handlers encode them and the dashboard (internal/web) renders
 // them, so the pages show exactly what the API says. Everything that leaves dokdosta passes through it: that is where
 // the output rules of plan §3.9 are enforced (label allow-list, attribute allow-list, redaction, length caps).
@@ -177,13 +182,17 @@ func (s *Service) Status() StatusDoc {
 // Containers lists the watched containers, or every container with all set, sorted by key.
 func (s *Service) Containers(all bool) []ContainerDoc {
 	out := []ContainerDoc{}
-	skipped := s.skippedRungs()
+	var cs []ContainerDoc
 	for _, c := range s.Source.Containers() {
 		if all || c.Watched {
-			c = s.clean(c)
-			c.Healer.SkippedRungs = skipped.of(c)
-			out = append(out, c)
+			cs = append(cs, c)
 		}
+	}
+	skipped := s.skippedRungs(cs)
+	for _, c := range cs {
+		c = s.clean(c)
+		c.Healer.SkippedRungs = skipped.of(c)
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 	return out
@@ -201,25 +210,31 @@ func (k skipped) of(c ContainerDoc) []SkippedDoc {
 }
 
 // skippedRungs reads the RungUnavailable events of the log, which say which rung of which incident did not run. The
-// engine counts a skipped rung as passed, so without this the page would show it as done.
-func (s *Service) skippedRungs() skipped {
+// engine counts a skipped rung as passed, so without this the page would show it as done. It is read per container
+// with an open incident: one host-wide query would lose a long incident once other containers' events filled it.
+func (s *Service) skippedRungs(cs []ContainerDoc) skipped {
 	out := skipped{}
 	if s.Events == nil {
 		return out
 	}
-	evs, err := s.Events.Query(engine.EventQuery{Types: []engine.EventType{engine.RungUnavailable}, Newest: true, Limit: 500})
-	if err != nil {
-		return out
-	}
-	seen := map[string]bool{}
-	for i := len(evs) - 1; i >= 0; i-- { // oldest first
-		e := s.EventDoc(evs[i])
-		rung, inc := e.Attrs["rung"], e.Attrs["incident"]
-		if rung == "" || inc == "" || seen[e.Key+"|"+inc+"|"+rung] {
+	for _, c := range cs {
+		if c.Healer.IncidentOpened.IsZero() {
 			continue
 		}
-		seen[e.Key+"|"+inc+"|"+rung] = true
-		out[e.Key+"|"+inc] = append(out[e.Key+"|"+inc], SkippedDoc{Rung: rung, Reason: e.Message})
+		evs, err := s.Events.Query(engine.EventQuery{Key: c.Key, Types: []engine.EventType{engine.RungUnavailable}, Newest: true, Limit: 100})
+		if err != nil {
+			continue
+		}
+		seen := map[string]bool{}
+		for i := len(evs) - 1; i >= 0; i-- { // oldest first
+			e := s.EventDoc(evs[i])
+			rung, inc := e.Attrs["rung"], e.Attrs["incident"]
+			if rung == "" || inc == "" || seen[e.Key+"|"+inc+"|"+rung] {
+				continue
+			}
+			seen[e.Key+"|"+inc+"|"+rung] = true
+			out[e.Key+"|"+inc] = append(out[e.Key+"|"+inc], SkippedDoc{Rung: rung, Reason: e.Message})
+		}
 	}
 	return out
 }
@@ -242,7 +257,7 @@ func (s *Service) ContainerOpts(key string, debug bool) (ContainerDetailDoc, boo
 	if !found {
 		return d, false
 	}
-	d.Healer.SkippedRungs = s.skippedRungs().of(d.ContainerDoc)
+	d.Healer.SkippedRungs = s.skippedRungs([]ContainerDoc{d.ContainerDoc}).of(d.ContainerDoc)
 	d.Timeline, d.Incidents = []EventDoc{}, []IncidentDoc{}
 	if s.Events != nil {
 		q := engine.EventQuery{Key: key, Newest: true, Limit: timelineLimit}
@@ -344,8 +359,15 @@ func (s *Service) incidents(key string, limit int) []IncidentDoc {
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Opened.After(out[j].Opened) })
-	if s.History != nil {
-		if closed, err := s.History.History(key); err == nil {
+	if room := limit - len(out); s.History != nil && room > 0 {
+		var closed []engine.ClosedIncident
+		var err error
+		if lh, ok := s.History.(limitedHistory); ok {
+			closed, err = lh.HistoryLimit(key, room)
+		} else {
+			closed, err = s.History.History(key)
+		}
+		if err == nil {
 			for _, c := range closed {
 				if len(out) >= limit {
 					break
