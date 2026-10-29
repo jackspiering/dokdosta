@@ -8,8 +8,10 @@
 // act unless the compose project of its target matches ^dokdosta-test-...$:
 //
 //	Compose   docker compose, always with -p <project>; refuses -p, --project-name, down, rm, build and --build
-//	ComposeBuild  `docker compose build -- <one service>` of a matching project, whose Dockerfile in the stack directory
-//	          has only base images in its FROM lines (the one place a compose build can run)
+//	ComposeBuild  `docker compose build -- <one service>` of a matching project, from a compose file of its own that holds
+//	          only the context, the Dockerfile and a test tag; the Dockerfile has only base images in its FROM lines
+//	          (Compose refuses build and --build; `up` without --no-build still builds a missing image, so stacks bring
+//	          images that already exist)
 //	Down      the ONLY place that runs `down -v`, and only for matching projects
 //	Ctr       stop/start/restart/kill/exec on a container whose project label matches
 //	PullBase  pulls only the base images in BaseImages
@@ -148,10 +150,14 @@ func (g *Guard) Compose(ctx context.Context, project string, args ...string) (st
 	return g.R.Run(ctx, "docker", append([]string{"compose", "-p", project}, args...)...)
 }
 
-// ComposeBuild runs `docker compose build -- <service>` for the stack in dir (compose.yaml and Dockerfile), after
-// checking that every FROM of its Dockerfile is a base image: the build must pull nothing else. It builds the one
-// service and pushes nothing.
-func (g *Guard) ComposeBuild(ctx context.Context, project, dir, service string) (string, error) {
+// ComposeBuild runs `docker compose build -- <service>` for the Dockerfile in dir, after checking that every FROM of
+// it is a base image: the build must pull nothing else. It does not build from the stack's compose.yaml (which could
+// name any image, cache or Dockerfile): it writes a compose file of its own in a temporary directory that holds only
+// the service, the test tag, the context dir and "Dockerfile". It builds the one service and pushes nothing.
+func (g *Guard) ComposeBuild(ctx context.Context, project, dir, service, tag string) (string, error) {
+	if err := requireTag(tag); err != nil {
+		return "", err
+	}
 	if err := RequireProject(project); err != nil {
 		return "", err
 	}
@@ -165,9 +171,22 @@ func (g *Guard) ComposeBuild(ctx context.Context, project, dir, service string) 
 	if err := requireBaseFroms(string(dockerfile)); err != nil {
 		return "", err
 	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	tmp, err := os.MkdirTemp("", "dokdosta-test-build-")
+	if err != nil {
+		return "", err
+	}
+	defer os.RemoveAll(tmp)
+	file := filepath.Join(tmp, "compose.yaml")
+	body := fmt.Sprintf("services:\n  %q:\n    image: %q\n    build:\n      context: %q\n      dockerfile: Dockerfile\n", service, tag, abs)
+	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+		return "", err
+	}
 	g.touch(project)
-	return g.R.Run(ctx, "docker", "compose", "-p", project, "--project-directory", dir,
-		"-f", filepath.Join(dir, "compose.yaml"), "build", "--", service)
+	return g.R.Run(ctx, "docker", "compose", "-p", project, "-f", file, "build", "--", service)
 }
 
 // Down is the only `down -v` in the harness.

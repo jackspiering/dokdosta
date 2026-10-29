@@ -75,7 +75,7 @@ func TestBuiltServiceKeepsItsComposeIdentity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(s.dir, "Dockerfile"), []byte("FROM busybox:1.37\nRUN echo built > /built\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.ComposeBuild(ctx, s.project, s.dir, "app"); err != nil {
+	if _, err := g.ComposeBuild(ctx, s.project, s.dir, "app", tag); err != nil {
 		t.Fatal(err)
 	}
 

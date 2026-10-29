@@ -468,29 +468,35 @@ func TestComposeBuildOnlyBuildsOneServiceFromBaseImages(t *testing.T) {
 	s := &stub{}
 	g := &Guard{R: s}
 	for _, p := range badProjects {
-		_, err := g.ComposeBuild(ctx, p, good, "app")
+		_, err := g.ComposeBuild(ctx, p, good, "app", "dokdosta-test/x:1")
 		refused(t, err)
 	}
 	for _, svc := range []string{"", "--push", "-q", "a b", "a;b", "../x", "a/b"} {
-		_, err := g.ComposeBuild(ctx, "dokdosta-test-a", good, svc)
+		_, err := g.ComposeBuild(ctx, "dokdosta-test-a", good, svc, "dokdosta-test/x:1")
+		refused(t, err)
+	}
+	for _, tag := range []string{"busybox:1.37", "prod/x:1", ""} {
+		_, err := g.ComposeBuild(ctx, "dokdosta-test-a", good, "app", tag)
 		refused(t, err)
 	}
 	for _, df := range []string{"FROM alpine:3.22\n", "FROM busybox:1.37\nFROM prod/app:1\n", "RUN true\n"} {
-		_, err := g.ComposeBuild(ctx, "dokdosta-test-a", stack(df), "app")
+		_, err := g.ComposeBuild(ctx, "dokdosta-test-a", stack(df), "app", "dokdosta-test/x:1")
 		refused(t, err)
 	}
-	if _, err := g.ComposeBuild(ctx, "dokdosta-test-a", t.TempDir(), "app"); err == nil {
+	if _, err := g.ComposeBuild(ctx, "dokdosta-test-a", t.TempDir(), "app", "dokdosta-test/x:1"); err == nil {
 		t.Fatal("a stack without a Dockerfile was built")
 	}
 	if len(s.mutations()) != 0 {
 		t.Fatalf("a refused build ran: %v", s.mutations())
 	}
-	if _, err := g.ComposeBuild(ctx, "dokdosta-test-a", good, "app"); err != nil {
+	if _, err := g.ComposeBuild(ctx, "dokdosta-test-a", good, "app", "dokdosta-test/x:1"); err != nil {
 		t.Fatal(err)
 	}
-	want := "docker compose -p dokdosta-test-a --project-directory " + good + " -f " + good + "/compose.yaml build -- app"
-	if got := s.mutations(); len(got) != 1 || got[0] != want {
-		t.Fatalf("%v, want %s", got, want)
+	// The temporary compose file is gone by now, so check the command line.
+	got := s.mutations()
+	if len(got) != 1 || !strings.HasPrefix(got[0], "docker compose -p dokdosta-test-a -f ") ||
+		!strings.HasSuffix(got[0], "/compose.yaml build -- app") || strings.Contains(got[0], "--project-directory") {
+		t.Fatalf("%v", got)
 	}
 }
 
