@@ -30,6 +30,11 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A container Docker restores after a Docker daemon restart is no longer taken for a hand start.** When dokdosta
+  reconnected to the events stream, the `start` events the new subscription replays could be handled before the
+  restore window was open, so a `restart: always` container that had been stopped by hand and was SUSPENDED was
+  unsuspended and its ladder started over. The reconnect and the events behind it are now handled in the order they
+  arrived, and those replayed starts and kills fall inside the restore window.
 - **dokdosta's own start clears a manual-stop marker.** A hand `docker start` that failed left a manual-stop marker; the start dokdosta made to heal the container was attributed to its action and did not clear it, so a later crash was read as a manual stop and, with `restart: "no"`, was never healed. An attributed `start` now clears the marker (`kill` and `die` stay ignored). (B-011)
 - A dependent whose parent was replaced, and whose own ladder reaches the pull rung, is now suspended once with a
   notification instead of being refused every few minutes for ever. It is still recreated with its parent, and never
