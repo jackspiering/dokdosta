@@ -18,7 +18,8 @@ type IncidentRecord struct {
 	SuspendedAt   time.Time
 	Recovering    bool // recovered, waiting out RECOVERY_PERIOD
 	RecoverySince time.Time
-	RecoveryCount int // RestartCount when the recovery period began
+	RecoveryCount int    // RestartCount when the recovery period began
+	Parent        string // the parent (Obs.Parent) a dependents-step repair was planned against; empty when not known
 }
 
 // LoopRecord is the crash-loop tracker's state (rule 3).
