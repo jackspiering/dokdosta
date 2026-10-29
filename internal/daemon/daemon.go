@@ -761,9 +761,10 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	dec := rules.Classify(in)
 	if dec.Class == rules.ClassSkip {
 		// A sidecar repaired as a dependent that now fails again has no ladder of its own (no opt-in), and the skip keeps
-		// the engine from seeing it: end the incident here, SUSPENDED, or it would stay open for ever.
-		if dec.Skip == rules.SkipNotOptedIn && incidentOpen && in.DependentOfOptedIn && !cfg.Disabled {
-			d.eng.EndUnrepaired(t, "repaired with its parent but not running; it has no opt-in of its own")
+		// the engine from seeing it: end the incident here, SUSPENDED, or it would stay open for ever. Not while a parent is
+		// down or busy: that decision was a wait, and waiting is not refusing (WN-024).
+		if dec.Skip == rules.SkipNotOptedIn && incidentOpen && in.DependentOfOptedIn && !cfg.Disabled && !parentDownOrBusy(in.Parents) {
+			d.eng.EndUnrepaired(t, "repaired with its parent, then failed again; it has no opt-in of its own")
 		}
 		d.view.observe(key, c, dec, now)
 		d.log.Debug("classified", "key", key, "container", c.Name, "class", dec.Class, "skip", dec.Skip)
@@ -909,6 +910,16 @@ type index struct {
 
 func (d *Daemon) keyOf(s docker.Summary) string {
 	return docker.StateKey(d.cfg.HostID, s.Name, s.Labels)
+}
+
+// parentDownOrBusy reports whether a resolved parent is not running or is being healed: the rules wait for it then.
+func parentDownOrBusy(parents []rules.Parent) bool {
+	for _, p := range parents {
+		if p.Found && (!p.Running || p.Busy) {
+			return true
+		}
+	}
+	return false
 }
 
 func hasRef(s docker.Summary) bool { return docker.ContainerRef(s.NetworkMode) != "" }
