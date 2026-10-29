@@ -19,13 +19,17 @@ workflow refuses an undated section.
 
 ### Changed
 
+- **A sidecar's repair remembers its parent across a restart of dokdosta.** The parent identity (container ID and start
+  time) the dependents step planned a repair against is now stored with the incident, so the first parent change after a
+  restart opens a fresh incident at rung 0 instead of being taken for the parent being learned. An incident stored by an
+  older release learns its parent at its first decision, as before.
 - **The host's compose plugin is searched in the Docker CLI's order**: `/usr/local/lib`, `/usr/local/libexec`, `/usr/lib`,
   then `/usr/libexec`. A systemd install with a compose in two of these directories now uses the one `docker compose` uses,
   which may be a different version than before ([docs/upgrading.md](docs/upgrading.md#docker-engine-and-compose),
   [docs/deployment.md](docs/deployment.md)).
-- **The store is schema 4.** Two indexes, `events (type, id)` and `incidents (closed_at)`, so the overview's per-type event
+- **The store is schema 5.** Schema 4 adds two indexes, `events (type, id)` and `incidents (closed_at)`, so the overview's per-type event
   queries and the history list no longer read the whole table at the 100,000-row cap; the incidents list asks the store
-  for only the rows it shows. The first start adds them in place; an older dokdosta refuses the database (back it up
+  for only the rows it shows; schema 5 adds a `parent` column to `incidents`. The first start adds them in place; an older dokdosta refuses the database (back it up
   first, [docs/upgrading.md](docs/upgrading.md#the-store-sqlite-schema)).
 
 ### Fixed
@@ -34,6 +38,16 @@ workflow refuses an undated section.
   that dokdosta recreated or restarted with its parent, and that then exits or turns unhealthy, kept its incident open
   for ever with no message. It is now suspended once ("repaired with its parent, then failed again; it has no opt-in of
   its own"), but not while its parent is down or being healed; run `dokdosta unsuspend` once it is fixed. (B-008)
+- **A container Docker restores after a Docker daemon restart is no longer taken for a hand start.** When dokdosta
+  reconnected to the events stream, the `start` events the new subscription replays could be handled before the
+  restore window was open, so a `restart: always` container that had been stopped by hand and was SUSPENDED was
+  unsuspended and its ladder started over. The reconnect and the events behind it are now handled in the order they
+  arrived, and those replayed starts and kills fall inside the restore window. (B-005; B-006 adds a regression test)
+- A service built from a `build:` section in your compose file is no longer treated as not made by compose. Compose puts
+  the project, service and version labels into the image it builds, and dokdosta took them for labels from the image: the
+  container got a restart only, no recreate or pull, and a failed `docker compose run` task lost its one-off mark. The
+  labels that only compose writes when it creates a container decide, and a `docker compose run` task keeps its one-off
+  mark (plan v3.16).
 - **A refusal that never clears now ends in SUSPENDED.** When a pre-action check fails the same way ten times in a row
   (for example "cannot recreate: ..."), dokdosta suspends the container with the reason "refused 10 times: ..." and sends
   the usual SUSPENDED notification, instead of refusing every few seconds for ever. Any action, or a wait for a parent,
@@ -46,6 +60,7 @@ workflow refuses an undated section.
 - **A relative `DOKDOSTA_COMPOSE_BIN` is refused at startup.** dokdosta now stops with "DOKDOSTA_COMPOSE_BIN must be an
   absolute path" instead of checking the path in one directory and running it from another. Set the full path, for
   example `/usr/local/bin/docker-compose`.
+- **What dokdosta remembers about a removed sidecar is forgotten, whether or not it was opted in.** The parents learned for a compose service with `depends_on` that is not opted in, and its label warnings, were kept for ever once the container was removed; they are now dropped an hour after it leaves the list, like those of an opted-in one. A container that drops its `network_mode: container:` reference no longer keeps a stale namespace parent. Known gap: rows of containers removed while dokdosta was down are never loaded again and stay in the store. (B-018)
 - `dokdosta pause --for` now refuses a duration longer than 100 years (use `--for 0` for no expiry). Before, a longer pause was accepted, its expiry overflowed and it ended at the next restart.
 
 ## [0.3.0] - YYYY-MM-DD

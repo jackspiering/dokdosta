@@ -650,6 +650,9 @@ func (d *Daemon) scheduleAbsent(at time.Time) {
 			d.schedule(k, at)
 		}
 	}
+	for _, k := range d.absentRemembered() {
+		d.schedule(k, at)
+	}
 }
 
 func (d *Daemon) sweepDependents(ctx context.Context) {

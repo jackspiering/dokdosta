@@ -296,6 +296,39 @@ func TestSameParentKeepsTheOnePassRuleAndUnknownParentChangesNothing(t *testing.
 	}
 }
 
+// The parent a repair was planned against is persisted, so the first parent change after a restart of dokdosta is a
+// change too and not the learning of a parent.
+func TestParentChangeAfterARestartOpensANewIncident(t *testing.T) {
+	ms := newMemStore()
+	e, clk, _ := newEngineWith(t, nil, func(p *Params) { p.Persist = ms })
+	if p := run(e, staleGone, cfg, Obs{Parent: "gone:A"}); p.Act != rules.ActionRecreateStale {
+		t.Fatalf("%+v", p)
+	}
+	flaps := len(ms.keys[tgt.Key].Flaps)
+
+	e2, _, rec2 := newEngineWith(t, clk, func(p *Params) { p.Persist = ms })
+	e2.Restore(ms.snapshot())
+	clk.Advance(5 * time.Second) // inside the cooldown; the parent changed while dokdosta was down
+	if p := run(e2, staleGone, cfg, Obs{Parent: "gone:B"}); p.Act != rules.ActionRecreateStale {
+		t.Fatalf("a new parent is repaired at once, not held by the cooldown of the repair before: %+v / %v", p, rec2.Types())
+	}
+	closed := 0
+	for _, ev := range rec2.Events() {
+		if ev.Type == IncidentClosed && ev.Attrs["reason"] == "parent_changed" {
+			closed++
+		}
+	}
+	if closed != 1 || rec2.Count(IncidentOpened) != 1 || rec2.Count(Suspended) != 0 {
+		t.Fatalf("%v", rec2.Types())
+	}
+	if got := len(ms.keys[tgt.Key].Flaps); got != flaps {
+		t.Fatalf("a dependents-step incident is not counted toward the flap limit: %d flaps, was %d", got, flaps)
+	}
+	if got := ms.keys[tgt.Key].Incident.Parent; got != "gone:B" {
+		t.Fatalf("the new incident persists the new parent: %q", got)
+	}
+}
+
 func TestParentChangeAfterSuspensionUnsuspendsAndRepairsAfresh(t *testing.T) {
 	e, clk, rec := newEngine(t, 0)
 	run(e, staleGone, cfg, Obs{Parent: "gone:A"})
