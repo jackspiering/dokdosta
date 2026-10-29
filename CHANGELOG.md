@@ -35,6 +35,10 @@ workflow refuses an undated section.
   container got a restart only, no recreate or pull, and a failed `docker compose run` task lost its one-off mark. The
   labels that only compose writes when it creates a container decide, and a `docker compose run` task keeps its one-off
   mark (plan v3.16).
+- **A refusal that never clears now ends in SUSPENDED.** When a pre-action check fails the same way ten times in a row
+  (for example "cannot recreate: ..."), dokdosta suspends the container with the reason "refused 10 times: ..." and sends
+  the usual SUSPENDED notification, instead of refusing every few seconds for ever. Any action, or a wait for a parent,
+  restarts the count. (B-004)
 - **dokdosta's own start clears a manual-stop marker.** A hand `docker start` that failed left a manual-stop marker; the start dokdosta made to heal the container was attributed to its action and did not clear it, so a later crash was read as a manual stop and, with `restart: "no"`, was never healed. An attributed `start` now clears the marker (`kill` and `die` stay ignored). (B-011)
 - A dependent whose parent was replaced, and whose own ladder reaches the pull rung, is now suspended once with a
   notification instead of being refused every few minutes for ever. It is still recreated with its parent, and never

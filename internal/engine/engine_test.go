@@ -688,6 +688,75 @@ func TestRefuseDoesNotConsumeTheRung(t *testing.T) {
 	}
 }
 
+// A refusal that cannot clear (a pre-action check that fails the same way every GRACE) must end the incident in a
+// notified SUSPENDED instead of repeating for ever (B-004).
+func TestRepeatedIdenticalRefusalsSuspend(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	for i := 0; i < maxRefusals+1; i++ {
+		e.Refuse(tgt, bad, "cannot pull: nothing to do")
+	}
+	if rec.Count(Suspended) != 1 || !e.Suspended(tgt.Key) {
+		t.Fatalf("want exactly one Suspended: %v", rec.Types())
+	}
+	for _, ev := range rec.Events() {
+		if ev.Type == Suspended && !strings.HasPrefix(ev.Message, "refused 10 times: cannot pull: nothing to do") {
+			t.Fatalf("message %q", ev.Message)
+		}
+	}
+}
+
+func TestADifferentRefusalRestartsTheCount(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	for i := 0; i < maxRefusals-1; i++ {
+		e.Refuse(tgt, bad, "reason A")
+	}
+	e.Refuse(tgt, bad, "reason B")
+	for i := 0; i < maxRefusals-2; i++ {
+		e.Refuse(tgt, bad, "reason B")
+	}
+	if rec.Count(Suspended) != 0 {
+		t.Fatalf("suspended before %d identical refusals: %v", maxRefusals, rec.Types())
+	}
+	e.Refuse(tgt, bad, "reason B")
+	if rec.Count(Suspended) != 1 {
+		t.Fatalf("%v", rec.Types())
+	}
+}
+
+func TestAnActionClearsTheRefusalCount(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	p := e.Evaluate(tgt, bad, cfg, hcObs)
+	for i := 0; i < maxRefusals-1; i++ {
+		e.Refuse(tgt, bad, "same")
+	}
+	e.Begin(tgt, p, bad)
+	e.End(tgt, p, Result{}, cfg)
+	for i := 0; i < maxRefusals-1; i++ {
+		e.Refuse(tgt, bad, "same")
+	}
+	if rec.Count(Suspended) != 0 {
+		t.Fatalf("an action in between did not restart the count: %v", rec.Types())
+	}
+}
+
+func TestWaitingIsNotARefusal(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	e.Evaluate(tgt, bad, cfg, hcObs)
+	for i := 0; i < maxRefusals-1; i++ {
+		e.Refuse(tgt, bad, "same")
+	}
+	e.Wait(tgt, bad, "web is starting")
+	e.Refuse(tgt, bad, "same")
+	for i := 0; i < 3*maxRefusals; i++ {
+		e.Wait(tgt, bad, "web is starting")
+	}
+	if rec.Count(Suspended) != 0 {
+		t.Fatalf("%v", rec.Types())
+	}
+}
+
 // Plan v3.13 item 15 (DQ8): a kill that carries a reload signal (docker kill -s HUP, docker-gen's -notify-sighup) is not a
 // stop: it sets no manual-stop marker. Docker writes the signal as a number (moby daemon/kill.go: strconv.Itoa).
 func TestReloadSignalSetsNoManualStopMarker(t *testing.T) {
