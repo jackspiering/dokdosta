@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -483,6 +484,15 @@ func TestComposeBuildOnlyBuildsOneServiceFromBaseImages(t *testing.T) {
 		_, err := g.ComposeBuild(ctx, "dokdosta-test-a", stack(df), "app", "dokdosta-test/x:1")
 		refused(t, err)
 	}
+	dollar := filepath.Join(t.TempDir(), "${HOME}")
+	if err := os.Mkdir(dollar, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dollar, "Dockerfile"), []byte("FROM busybox:1.37\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := g.ComposeBuild(ctx, "dokdosta-test-a", dollar, "app", "dokdosta-test/x:1")
+	refused(t, err)
 	if _, err := g.ComposeBuild(ctx, "dokdosta-test-a", t.TempDir(), "app", "dokdosta-test/x:1"); err == nil {
 		t.Fatal("a stack without a Dockerfile was built")
 	}

@@ -175,6 +175,10 @@ func (g *Guard) ComposeBuild(ctx context.Context, project, dir, service, tag str
 	if err != nil {
 		return "", err
 	}
+	// Compose interpolates $ inside quoted values too, so the context could become another directory than the one checked.
+	if strings.Contains(abs, "$") {
+		return "", refuse("build context %q has a $", abs)
+	}
 	tmp, err := os.MkdirTemp("", "dokdosta-test-build-")
 	if err != nil {
 		return "", err
