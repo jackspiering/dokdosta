@@ -10,7 +10,20 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-29
+
+**whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
+
+This is the first release under the name dokdosta, and it also carries the fixes of the code review that followed the rename (28 Oct 2026):
+a compose-built image no longer makes its container non-compose (plan v3.16), several event-ordering and restart gaps are closed, and the store is schema 5.
+
 ### Added
+
+- **Guards for a host upgraded from whalenurse.** dokdosta refuses to start while a `WHALENURSE_*` variable is set (the
+  error names the variables, never a value); it leaves alone every container that carries a `whalenurse.*` label, so a
+  `whalenurse.enable=false` is never healed under `DOKDOSTA_MODE=all`, and says why once; and it renames `whalenurse.db`
+  (with its `-wal` and `-shm`) to `dokdosta.db` once, in place, refusing while a whalenurse still holds the directory or
+  when both files are there.
 
 - **`/metrics` shows notification drops, rate-limit holds and refused streams.** `dokdosta_notifications_rate_limited_total`
   counts the notifications held back by the per-URL rate limit, `dokdosta_notifications_dropped_total` those dropped
@@ -18,6 +31,13 @@ workflow refuses an undated section.
   limit. All URLs are counted together, and no URL appears in them.
 
 ### Changed
+
+- **Every name changed, and the old names are not read** ([docs/upgrading.md](docs/upgrading.md#from-whalenurse-020-and-earlier)):
+  the image `ghcr.io/jackspiering/dokdosta`, the binary `dokdosta`, the variables `DOKDOSTA_*`, the labels `dokdosta.*`,
+  the metrics `dokdosta_*`, the store `dokdosta.db`, the control socket `/run/dokdosta.sock`, the bundled compose at
+  `/usr/libexec/dokdosta/docker-compose`, the systemd unit `dokdosta.service` (user, state directory, socket and
+  environment file), the repository `github.com/jackspiering/dokdosta` and the Go module path. Releases up to 0.2.0
+  verify with `make verify-release TAG=v0.2.0 REPO=jackspiering/whalenurse`.
 
 - **A sidecar's repair remembers its parent across a restart of dokdosta.** The parent identity (container ID and start
   time) the dependents step planned a repair against is now stored with the incident, so the first parent change after a
@@ -63,32 +83,11 @@ workflow refuses an undated section.
 - **What dokdosta remembers about a removed sidecar is forgotten, whether or not it was opted in.** The parents learned for a compose service with `depends_on` that is not opted in, and its label warnings, were kept for ever once the container was removed; they are now dropped an hour after it leaves the list, like those of an opted-in one. A container that drops its `network_mode: container:` reference no longer keeps a stale namespace parent. Known gap: rows of containers removed while dokdosta was down are never loaded again and stay in the store. (B-018)
 - `dokdosta pause --for` now refuses a duration longer than 100 years (use `--for 0` for no expiry). Before, a longer pause was accepted, its expiry overflowed and it ended at the next restart.
 
-## [0.3.0] - YYYY-MM-DD
-
-**whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
-
-### Changed
-
-- **Every name changed, and the old names are not read** ([docs/upgrading.md](docs/upgrading.md#from-whalenurse-020-and-earlier)):
-  the image `ghcr.io/jackspiering/dokdosta`, the binary `dokdosta`, the variables `DOKDOSTA_*`, the labels `dokdosta.*`,
-  the metrics `dokdosta_*`, the store `dokdosta.db`, the control socket `/run/dokdosta.sock`, the bundled compose at
-  `/usr/libexec/dokdosta/docker-compose`, the systemd unit `dokdosta.service` (user, state directory, socket and
-  environment file), the repository `github.com/jackspiering/dokdosta` and the Go module path. Releases up to 0.2.0
-  verify with `make verify-release TAG=v0.2.0 REPO=jackspiering/whalenurse`.
-
-### Added
-
-- **Guards for a host upgraded from whalenurse.** dokdosta refuses to start while a `WHALENURSE_*` variable is set (the
-  error names the variables, never a value); it leaves alone every container that carries a `whalenurse.*` label, so a
-  `whalenurse.enable=false` is never healed under `DOKDOSTA_MODE=all`, and says why once; and it renames `whalenurse.db`
-  (with its `-wal` and `-shm`) to `dokdosta.db` once, in place, refusing while a whalenurse still holds the directory or
-  when both files are there.
-
 ## [0.3.0-rc.1] - 2026-10-28
 
 The first release candidate of 0.3.0, the first release under the name dokdosta. It rehearses the release pipeline for the
 new repository name and the new image `ghcr.io/jackspiering/dokdosta`, whose signatures and provenance name
-`jackspiering/dokdosta`. It contains what 0.3.0 will contain; see the 0.3.0 section above for the full list, and
+`jackspiering/dokdosta`. It contains the rename and its guards (not the review fixes that came after it); see the 0.3.0 section above for the full list, and
 [docs/upgrading.md](docs/upgrading.md#from-whalenurse-020-and-earlier) before upgrading from whalenurse. A pre-release: it
 never moves `latest`, `v0.3` or `v0`, and it is not meant for production.
 
@@ -478,7 +477,7 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-[Unreleased]: https://github.com/jackspiering/dokdosta/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jackspiering/dokdosta/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.0
 [0.3.0-rc.1]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.0-rc.1
 [0.2.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.2.0
