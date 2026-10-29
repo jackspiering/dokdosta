@@ -107,6 +107,10 @@ type Options struct {
 
 	// ReconnectBackoff is the first wait before resubscribing to events (doubles up to 30s).
 	ReconnectBackoff time.Duration
+
+	// StreamStable is how long a subscription stays open, without an event, before it counts as established
+	// (default streamStable; tests shorten it).
+	StreamStable time.Duration
 }
 
 type pending struct {
@@ -169,6 +173,9 @@ func New(o Options) *Daemon {
 	}
 	if o.ReconnectBackoff == 0 {
 		o.ReconnectBackoff = time.Second
+	}
+	if o.StreamStable == 0 {
+		o.StreamStable = streamStable
 	}
 	g := o.Config
 	d := &Daemon{
@@ -406,12 +413,14 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- streamItem) {
 			}
 			return send(streamItem{sig: &streamSignal{}})
 		}
-		stable := time.NewTimer(streamStable)
-		got := false
+		stable := time.NewTimer(d.o.StreamStable)
 	read:
 		for {
 			select {
 			case <-stable.C:
+				if since.IsZero() {
+					since = d.clk.Now() // a quiet host: a zero since sends no Since filter, so the next subscription would skip the gap
+				}
 				if !establish() {
 					cancel()
 					return
@@ -424,7 +433,6 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- streamItem) {
 					cancel()
 					return
 				}
-				got = true
 				if ev.Time.After(since) {
 					since = ev.Time
 				}
@@ -459,8 +467,8 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- streamItem) {
 		case <-ctx.Done():
 			return
 		}
-		if got {
-			backoff = d.o.ReconnectBackoff
+		if established {
+			backoff = d.o.ReconnectBackoff // a stream that was up is not a failing subscription, with events or without
 		} else if backoff < 30*time.Second {
 			backoff *= 2
 		}
@@ -657,6 +665,7 @@ func (d *Daemon) scheduleAbsent(at time.Time) {
 
 func (d *Daemon) sweepDependents(ctx context.Context) {
 	if err := d.refresh(ctx); err != nil {
+		d.requestDependentSweep(d.clk.Now().Add(d.cfg.Grace)) // Tick cleared the request; a stale sidecar must not wait for the next poll
 		return
 	}
 	for _, s := range d.idx.all {
