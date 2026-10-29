@@ -419,7 +419,7 @@ func (d *Daemon) watchEvents(ctx context.Context, out chan<- streamItem) {
 			select {
 			case <-stable.C:
 				if since.IsZero() {
-					since = d.clk.Now() // a quiet host: resubscribing with a zero since would replay the daemon's old events and lose the gap
+					since = d.clk.Now() // a quiet host: a zero since sends no Since filter, so the next subscription would skip the gap
 				}
 				if !establish() {
 					cancel()

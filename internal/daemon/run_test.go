@@ -80,7 +80,7 @@ func TestRunKeepsEventsAndSignalsInOrder(t *testing.T) {
 }
 
 // A host with no events since dokdosta started: the stream drops (a socket proxy's idle timeout) after it was up. The
-// next subscription must not ask for since=0, which replays the old daemon's events and loses the gap, and a stream that
+// next subscription must not ask for since=0, which sends no Since filter and so skips the gap, and a stream that
 // was up is not a failing subscription, so the wait stays at the base value instead of doubling.
 func TestQuietStreamResubscribesWithSinceNotZero(t *testing.T) {
 	h := newHarness(t, nil, nil)
