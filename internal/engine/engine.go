@@ -305,6 +305,27 @@ func (e *Engine) RungNotApplicable(t Target, rung, why string, cfg config.Contai
 	}
 }
 
+// EndUnrepaired suspends the open incident of a container that dokdosta repaired as a dependent but that is failing
+// again, and that has no opt-in of its own to run a ladder for: the daemon skips it before the engine sees it, so
+// nothing else would ever end the incident. Idempotent; it waits for an action in flight.
+func (e *Engine) EndUnrepaired(t Target, why string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	st, ok := e.keys[t.Key]
+	if !ok || st.incident == nil || st.incident.suspended {
+		return
+	}
+	for _, w := range st.windows {
+		if w.end.IsZero() {
+			return
+		}
+	}
+	defer e.flush(t.Key, st)
+	inc := st.incident
+	inc.spent, inc.spentReason = true, ReasonLadder
+	e.suspend(t, st, why, rules.Decision{Class: inc.class})
+}
+
 // IncidentOpen reports whether the key has an incident, and whether it is SUSPENDED.
 func (e *Engine) IncidentOpen(key string) (open, suspended bool) {
 	e.mu.Lock()

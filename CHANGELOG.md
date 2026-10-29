@@ -34,6 +34,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A sidecar left down after its repair is now SUSPENDED, with a notification.** A sidecar without an opt-in of its own
+  that dokdosta recreated or restarted with its parent, and that then exits or turns unhealthy, kept its incident open
+  for ever with no message. It is now suspended once ("repaired with its parent, then failed again; it has no opt-in of
+  its own"), but not while its parent is down or being healed; run `dokdosta unsuspend` once it is fixed. (B-008)
 - **A container Docker restores after a Docker daemon restart is no longer taken for a hand start.** When dokdosta
   reconnected to the events stream, the `start` events the new subscription replays could be handled before the
   restore window was open, so a `restart: always` container that had been stopped by hand and was SUSPENDED was
