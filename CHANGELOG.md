@@ -56,6 +56,7 @@ workflow refuses an undated section.
 - **A relative `DOKDOSTA_COMPOSE_BIN` is refused at startup.** dokdosta now stops with "DOKDOSTA_COMPOSE_BIN must be an
   absolute path" instead of checking the path in one directory and running it from another. Set the full path, for
   example `/usr/local/bin/docker-compose`.
+- **What dokdosta remembers about a removed sidecar is forgotten, whether or not it was opted in.** The parents learned for a compose service with `depends_on` that is not opted in, and its label warnings, were kept for ever once the container was removed; they are now dropped an hour after it leaves the list, like those of an opted-in one. A container that drops its `network_mode: container:` reference no longer keeps a stale namespace parent. Known gap: rows of containers removed while dokdosta was down are never loaded again and stay in the store. (B-018)
 - `dokdosta pause --for` now refuses a duration longer than 100 years (use `--for 0` for no expiry). Before, a longer pause was accepted, its expiry overflowed and it ended at the next restart.
 
 ## [0.3.0] - YYYY-MM-DD

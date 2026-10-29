@@ -1853,3 +1853,65 @@ func TestReferenceHolderWithoutCurrentReferencesIsNotAskedToTheOracle(t *testing
 		t.Fatal("a container compose did not make cannot be judged")
 	}
 }
+
+// A compose service with depends_on that is not opted in never gets engine state, but its parents: row is learned at the
+// first sweep. It is scheduled once it leaves the list, so the hour that forgets it starts (B-018, R-015); so are its
+// label warnings.
+func TestLearnedParentsOfAnUntrackedContainerAreForgotten(t *testing.T) {
+	st := openStore(t)
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.restartWithStore(st)
+	h.svc(hexID("c1"), "p", "parent")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true", config.LabelCooldown, "not-a-duration")
+	h.noOptIn(dep.ID)
+	k := key("p", "dep")
+	h.tick()
+	h.advance(2 * time.Minute)
+	if _, ok, _ := st.Meta(metaParents + k); !ok {
+		t.Fatal("the parents of a service that is not opted in are learned")
+	}
+	if slices.Contains(h.d.eng.Keys(), k) {
+		t.Fatalf("the test needs a key the engine does not track: %v", h.d.eng.Keys())
+	}
+	warned := func() (n int) {
+		for id := range h.d.warned {
+			if strings.HasPrefix(id, k+"|") {
+				n++
+			}
+		}
+		return n
+	}
+	if warned() == 0 {
+		t.Fatal("the test needs a label warning for the key")
+	}
+	h.fake.Remove(dep.ID)
+	h.advance(63 * time.Minute) // GRACE, then the hour, then a poll
+	if v, ok, _ := st.Meta(metaParents + k); ok || len(h.d.knownParents(k)) != 0 {
+		t.Errorf("the removed container's parents row should be deleted: %q %v", v, ok)
+	}
+	if n := warned(); n != 0 {
+		t.Errorf("%d label warning entries remain for a key that is gone", n)
+	}
+}
+
+// A container that drops its network_mode: container: reference keeps no namespace parent, which would decide the opt-in
+// of a later sidecar (plan v3.13 item 3; B-018).
+func TestNSParentRowIsDroppedWhenTheContainerDropsItsNetworkMode(t *testing.T) {
+	st := openStore(t)
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.restartWithStore(st)
+	parent := h.svc(hexID("c1"), "p", "parent")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true")
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
+	k := key("p", "dep")
+	h.tick()
+	h.advance(time.Minute)
+	if v, _, _ := st.Meta(metaNSParent + k); v != "network:parent" {
+		t.Fatalf("the namespace parent is learned: %q", v)
+	}
+	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "bridge" })
+	h.advance(time.Minute)
+	if v, ok, _ := st.Meta(metaNSParent + k); ok || len(h.d.namespaceParents(k)) != 0 {
+		t.Errorf("the namespace parent should be dropped with the reference: %q %v %v", v, ok, h.d.namespaceParents(k))
+	}
+}
