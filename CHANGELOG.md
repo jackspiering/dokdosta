@@ -19,13 +19,17 @@ workflow refuses an undated section.
 
 ### Changed
 
+- **A sidecar's repair remembers its parent across a restart of dokdosta.** The parent identity (container ID and start
+  time) the dependents step planned a repair against is now stored with the incident, so the first parent change after a
+  restart opens a fresh incident at rung 0 instead of being taken for the parent being learned. An incident stored by an
+  older release learns its parent at its first decision, as before.
 - **The host's compose plugin is searched in the Docker CLI's order**: `/usr/local/lib`, `/usr/local/libexec`, `/usr/lib`,
   then `/usr/libexec`. A systemd install with a compose in two of these directories now uses the one `docker compose` uses,
   which may be a different version than before ([docs/upgrading.md](docs/upgrading.md#docker-engine-and-compose),
   [docs/deployment.md](docs/deployment.md)).
-- **The store is schema 4.** Two indexes, `events (type, id)` and `incidents (closed_at)`, so the overview's per-type event
+- **The store is schema 5.** Schema 4 adds two indexes, `events (type, id)` and `incidents (closed_at)`, so the overview's per-type event
   queries and the history list no longer read the whole table at the 100,000-row cap; the incidents list asks the store
-  for only the rows it shows. The first start adds them in place; an older dokdosta refuses the database (back it up
+  for only the rows it shows; schema 5 adds a `parent` column to `incidents`. The first start adds them in place; an older dokdosta refuses the database (back it up
   first, [docs/upgrading.md](docs/upgrading.md#the-store-sqlite-schema)).
 
 ### Fixed
@@ -34,7 +38,16 @@ workflow refuses an undated section.
   reconnected to the events stream, the `start` events the new subscription replays could be handled before the
   restore window was open, so a `restart: always` container that had been stopped by hand and was SUSPENDED was
   unsuspended and its ladder started over. The reconnect and the events behind it are now handled in the order they
-  arrived, and those replayed starts and kills fall inside the restore window.
+  arrived, and those replayed starts and kills fall inside the restore window. (B-005; B-006 adds a regression test)
+- A service built from a `build:` section in your compose file is no longer treated as not made by compose. Compose puts
+  the project, service and version labels into the image it builds, and dokdosta took them for labels from the image: the
+  container got a restart only, no recreate or pull, and a failed `docker compose run` task lost its one-off mark. The
+  labels that only compose writes when it creates a container decide, and a `docker compose run` task keeps its one-off
+  mark (plan v3.16).
+- **A refusal that never clears now ends in SUSPENDED.** When a pre-action check fails the same way ten times in a row
+  (for example "cannot recreate: ..."), dokdosta suspends the container with the reason "refused 10 times: ..." and sends
+  the usual SUSPENDED notification, instead of refusing every few seconds for ever. Any action, or a wait for a parent,
+  restarts the count. (B-004)
 - **dokdosta's own start clears a manual-stop marker.** A hand `docker start` that failed left a manual-stop marker; the start dokdosta made to heal the container was attributed to its action and did not clear it, so a later crash was read as a manual stop and, with `restart: "no"`, was never healed. An attributed `start` now clears the marker (`kill` and `die` stay ignored). (B-011)
 - A dependent whose parent was replaced, and whose own ladder reaches the pull rung, is now suspended once with a
   notification instead of being refused every few minutes for ever. It is still recreated with its parent, and never

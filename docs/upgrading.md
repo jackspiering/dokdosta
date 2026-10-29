@@ -128,10 +128,14 @@ in place, one step per version:
 | 2 | `notified`: the notification dedupe, so a restart does not repeat a message | M3 |
 | 3 | `events`: the persisted event log, the API's `since` cursor and the timelines | M5 |
 | 4 | indexes `events (type, id)` and `incidents (closed_at)`: the overview's event queries and the history list | improvement cycle, B-027 |
+| 5 | column `incidents.parent`: the parent a sidecar's repair was made against, kept across a restart | improvement cycle, B-028 |
 
-v0.1.0 is schema 3, so a v0.1.0 database needs no migration; the steps exist for stores written by development builds. Each step
-is a few `CREATE TABLE` statements and takes no time. Every release that changes the schema says so in the changelog and in this
-table.
+Every release up to v0.3.0-rc.1 (v0.1.x and v0.2.0, released as whalenurse) is schema 3. v0.3.0 is schema 5: its first
+start migrates a schema-3 database in two steps, adding the two indexes of schema 4 and the `parent` column of schema 5 (empty for
+the incidents already stored; such an incident learns its parent at its first decision). Steps 1 to 3 exist for stores written by
+development builds. Each step is one transaction of a few `CREATE` or `ALTER TABLE` statements and takes no noticeable time; back
+up `dokdosta.db*` first if you may go back (see *No downgrade* below). Every release that changes the schema says so in the
+changelog and in this table.
 
 - **No downgrade.** A database with a newer schema than the binary knows is refused at start with
   `database schema N is newer than this dokdosta understands (M)`. To go back, [restore the backup](#backing-up-and-restoring-the-store) you took before
