@@ -156,12 +156,43 @@ func (d *Daemon) learnParents(key string, c docker.Container) {
 	nextNS = append(nextNS, liveNS...)
 	slices.Sort(nextNS)
 	nextNS = slices.Compact(nextNS)
-	if len(nextNS) > 0 && !slices.Equal(nextNS, oldNS) {
+	switch {
+	case len(nextNS) > 0 && !slices.Equal(nextNS, oldNS):
 		d.nsParents[key] = nextNS
 		if d.o.Meta != nil {
 			d.o.Meta.SetMeta(metaNSParent+key, strings.Join(nextNS, ","))
 		}
+	case len(nextNS) == 0 && len(oldNS) > 0:
+		// Every reference was dropped: a stale entry must not decide a later sidecar's opt-in.
+		delete(d.nsParents, key)
+		if d.o.Meta != nil {
+			d.o.Meta.DeleteMeta(metaNSParent + key)
+		}
 	}
+}
+
+// absentRemembered are the keys dokdosta remembers something about outside the engine (learned parents, label warnings)
+// whose container is not in the list. A container that is not opted in has no engine state, so the engine's own keys do not
+// cover it; scheduling them lets process note that they are gone, which starts the clock forgetParents runs on (B-018).
+func (d *Daemon) absentRemembered() []string {
+	var out []string
+	add := func(k string) {
+		if _, ok := d.idx.byKey[k]; !ok && !slices.Contains(out, k) {
+			out = append(out, k)
+		}
+	}
+	for k := range d.parents {
+		add(k)
+	}
+	for k := range d.nsParents {
+		add(k)
+	}
+	for id := range d.warned {
+		if k, _, ok := strings.Cut(id, "|"); ok { // a "|" in the host ID or a label cuts a wrong prefix: a warning logged again, never a row lost
+			add(k)
+		}
+	}
+	return out
 }
 
 // forgetParents drops what is remembered about keys that have been gone from the container list for a while.
@@ -175,6 +206,11 @@ func (d *Daemon) forgetParents(now time.Time) {
 		delete(d.parents, key)
 		delete(d.nsParents, key)
 		delete(d.parentsGone, key)
+		for id := range d.warned {
+			if strings.HasPrefix(id, key+"|") {
+				delete(d.warned, id)
+			}
+		}
 		if d.o.Meta != nil && learned {
 			d.o.Meta.DeleteMeta(metaParents + key)
 		}

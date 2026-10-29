@@ -112,3 +112,41 @@ func TestQuietStreamResubscribesWithSinceNotZero(t *testing.T) {
 		t.Fatalf("a stream that was up must resubscribe after the base backoff each time:\n%s", logs)
 	}
 }
+
+// A restart: always container stopped by hand and SUSPENDED is restored by Docker after a dockerd restart; the start
+// that the new subscription replays comes right behind the reconnect, so it must meet an open restore window. Read as
+// a hand start it would unsuspend the container and start its ladder over. (The engine still clears the manual-stop
+// marker of a container that is running again; that is not asserted here.)
+func TestRunReplayedRestoreStartAfterReconnectIsARestore(t *testing.T) {
+	h := newHarness(t, func(c *config.Global) { c.StartupSettle = time.Minute }, nil)
+	h.d.o.ReconnectBackoff = 5 * time.Millisecond
+	a := h.running(hexID("a1"), "p", "web")
+	h.set(a.ID, func(c *docker.Container) { c.RestartPolicy = "always" })
+	h.advance(time.Minute) // past the startup settle: the sweep ran
+	h.set(a.ID, unhealthy)
+	h.advance(10 * time.Minute)
+	if h.count(engine.Suspended) != 1 {
+		t.Fatalf("setup: want the container SUSPENDED: %v", h.rec.Types())
+	}
+	h.set(a.ID, func(c *docker.Container) { c.Status, c.Running, c.ExitCode, c.Health = "exited", false, 137, "" })
+	h.event(a, "kill", "")
+	h.event(a, "die", "")
+	if h.count(engine.ManualStopMarked) != 1 {
+		t.Fatalf("setup: want a manual-stop marker: %v", h.rec.Types())
+	}
+	h.advance(time.Minute) // the marker is older than the 30 s a stream loss discards
+
+	runDaemon(t, h)
+	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 1 })
+	// Any event establishes the first subscription; this one is for a container dokdosta does not know.
+	h.fake.Emit(docker.Event{Action: "start", ID: hexID("ff"), Name: "other", Time: h.clk.Now()})
+	waitFor(t, func() bool { return h.d.eventsUp.Load() })
+	h.fake.BreakStream(fmt.Errorf("connection reset"))
+	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 2 })
+	h.fake.Emit(docker.Event{Action: "start", ID: a.ID, Name: a.Name, Labels: a.Labels, Time: h.clk.Now()})
+
+	waitFor(t, func() bool { return h.rec.Count(engine.RestoreEvent)+h.rec.Count(engine.ManualStopCleared) > 0 })
+	if h.rec.Count(engine.RestoreEvent) != 1 || h.rec.Count(engine.Unsuspended) != 0 {
+		t.Fatalf("a replayed restore start must be a restore, not a hand start: %v", h.rec.Types())
+	}
+}
