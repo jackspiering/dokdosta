@@ -31,7 +31,7 @@ import (
 const FileName = "dokdosta.db"
 
 // schemaVersion is stored in PRAGMA user_version. Bump it with a migration step in migrate.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // Store is an open database.
 type Store struct {
@@ -243,10 +243,20 @@ func (s *Store) migrate() error {
 	if v < 4 {
 		// The overview asks for events of a few types on every refresh and the history page lists closed incidents
 		// newest first; without these both read the whole table at the 100,000-row cap.
-		return s.exec([]string{
+		if err := s.exec([]string{
 			`CREATE INDEX events_type ON events (type, id)`,
 			`CREATE INDEX incidents_closed ON incidents (closed_at)`,
 			"PRAGMA user_version = 4",
+		}); err != nil {
+			return err
+		}
+	}
+	if v < 5 {
+		// The parent a dependents-step repair was planned against, so the first parent change after a restart of
+		// dokdosta is seen as a change. Container IDs and start times only: a re-key leaves it alone.
+		return s.exec([]string{
+			`ALTER TABLE incidents ADD COLUMN parent TEXT NOT NULL DEFAULT ''`,
+			"PRAGMA user_version = 5",
 		})
 	}
 	return nil
@@ -371,14 +381,15 @@ func (s *Store) SaveKey(r engine.KeyRecord) {
 			return err
 		}
 		if i := r.Incident; i != nil {
-			_, err := tx.Exec(`INSERT INTO incidents (key, opened_at, class, rung, cooldown_until, spent, spent_reason, suspended, suspended_at, recovering, recovery_since, recovery_count)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			_, err := tx.Exec(`INSERT INTO incidents (key, opened_at, class, rung, cooldown_until, spent, spent_reason, suspended, suspended_at, recovering, recovery_since, recovery_count, parent)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 				ON CONFLICT(key, opened_at) DO UPDATE SET class = excluded.class, rung = excluded.rung, cooldown_until = excluded.cooldown_until,
 					spent = excluded.spent, spent_reason = excluded.spent_reason, suspended = excluded.suspended, suspended_at = excluded.suspended_at,
-					recovering = excluded.recovering, recovery_since = excluded.recovery_since, recovery_count = excluded.recovery_count
+					recovering = excluded.recovering, recovery_since = excluded.recovery_since, recovery_count = excluded.recovery_count,
+					parent = excluded.parent
 				WHERE incidents.closed_at IS NULL`,
 				r.Key, tn(i.Opened), i.Class, i.Rung, tn(i.CooldownUntil), b2i(i.Spent), i.SpentReason, b2i(i.Suspended), tn(i.SuspendedAt),
-				b2i(i.Recovering), tn(i.RecoverySince), i.RecoveryCount)
+				b2i(i.Recovering), tn(i.RecoverySince), i.RecoveryCount, i.Parent)
 			return err
 		}
 		return nil
@@ -505,7 +516,7 @@ func (s *Store) Load(now time.Time) (engine.Snapshot, error) {
 	}
 
 	incs := map[string]*engine.IncidentRecord{}
-	rows, err = s.db.Query(`SELECT key, opened_at, class, rung, cooldown_until, spent, spent_reason, suspended, suspended_at, recovering, recovery_since, recovery_count
+	rows, err = s.db.Query(`SELECT key, opened_at, class, rung, cooldown_until, spent, spent_reason, suspended, suspended_at, recovering, recovery_since, recovery_count, parent
 		FROM incidents WHERE closed_at IS NULL`)
 	if err != nil {
 		return snap, err
@@ -515,7 +526,7 @@ func (s *Store) Load(now time.Time) (engine.Snapshot, error) {
 		var opened, cool, susAt, recSince int64
 		var spent, sus, rec int
 		r := &engine.IncidentRecord{}
-		if err := rows.Scan(&k, &opened, &r.Class, &r.Rung, &cool, &spent, &r.SpentReason, &sus, &susAt, &rec, &recSince, &r.RecoveryCount); err != nil {
+		if err := rows.Scan(&k, &opened, &r.Class, &r.Rung, &cool, &spent, &r.SpentReason, &sus, &susAt, &rec, &recSince, &r.RecoveryCount, &r.Parent); err != nil {
 			rows.Close()
 			return snap, err
 		}

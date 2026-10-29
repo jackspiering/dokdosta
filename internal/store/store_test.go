@@ -31,6 +31,7 @@ func sampleKey() engine.KeyRecord {
 		Incident: &engine.IncidentRecord{
 			Opened: t0, Class: "unhealthy", Rung: 2, CooldownUntil: t0.Add(time.Minute), Spent: true, SpentReason: "ladder",
 			Suspended: true, SuspendedAt: t0.Add(30 * time.Second), Recovering: true, RecoverySince: t0.Add(time.Hour), RecoveryCount: 7,
+			Parent: "abc123@2026-10-17T12:00:00Z",
 		},
 	}
 }
@@ -246,6 +247,7 @@ func TestSchemaOneDatabaseIsMigrated(t *testing.T) {
 	s.db.Exec(`DROP TABLE notified`)
 	s.db.Exec(`DROP TABLE events`)
 	s.db.Exec(`DROP INDEX incidents_closed`)
+	s.db.Exec(`ALTER TABLE incidents DROP COLUMN parent`) // a database of that schema has no such column
 	s.db.Exec("PRAGMA user_version = 1")
 	s.Close()
 
@@ -269,6 +271,7 @@ func TestSchemaTwoDatabaseIsMigratedToEvents(t *testing.T) {
 	s.SaveNotified("x", "T", "k", t0)
 	s.db.Exec(`DROP TABLE events`)
 	s.db.Exec(`DROP INDEX incidents_closed`)
+	s.db.Exec(`ALTER TABLE incidents DROP COLUMN parent`) // a database of that schema has no such column
 	s.db.Exec("PRAGMA user_version = 2")
 	s.Close()
 
@@ -485,13 +488,14 @@ func TestSchemaThreeDatabaseIsMigratedToTheTypeIndex(t *testing.T) {
 	s.CloseIncident(engine.ClosedIncident{Key: "h/p/web/1", Opened: t0, Closed: t0.Add(time.Minute), Class: "unhealthy", Outcome: "recovered"})
 	s.db.Exec(`DROP INDEX events_type`)
 	s.db.Exec(`DROP INDEX incidents_closed`)
+	s.db.Exec(`ALTER TABLE incidents DROP COLUMN parent`) // a database of that schema has no such column
 	s.db.Exec("PRAGMA user_version = 3")
 	s.Close()
 
 	s = open(t, dir)
 	defer s.Close()
-	if v, err := userVersion(s); err != nil || v != 4 {
-		t.Fatalf("user_version %d %v, want 4", v, err)
+	if v, err := userVersion(s); err != nil || v != schemaVersion {
+		t.Fatalf("user_version %d %v, want %d", v, err, schemaVersion)
 	}
 	snap, err := s.Load(t0)
 	if err != nil || len(snap.Keys) != 1 {
@@ -548,5 +552,38 @@ func TestHistoryLimitKeepsTheNewestClosedIncidents(t *testing.T) {
 	}
 	if all, _ := s.HistoryLimit("", 0); len(all) != 5 {
 		t.Fatalf("limit 0 must mean no limit, got %d", len(all))
+	}
+}
+
+// A schema-4 database (no parent column on incidents) gets the column, keeps its open incident, and the parent can then
+// be stored and read.
+func TestSchemaFourDatabaseIsMigratedToTheIncidentParent(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	k := sampleKey()
+	k.Incident.Parent = ""
+	s.SaveKey(k)
+	if _, err := s.db.Exec(`ALTER TABLE incidents DROP COLUMN parent`); err != nil {
+		t.Fatal(err)
+	}
+	s.db.Exec("PRAGMA user_version = 4")
+	s.Close()
+
+	s = open(t, dir)
+	defer s.Close()
+	if v, err := userVersion(s); err != nil || v != schemaVersion {
+		t.Fatalf("user_version %d %v, want %d", v, err, schemaVersion)
+	}
+	snap, err := s.Load(t0)
+	if err != nil || len(snap.Keys) != 1 || snap.Keys[0].Incident == nil {
+		t.Fatalf("%v %v", snap.Keys, err)
+	}
+	if got := snap.Keys[0].Incident.Parent; got != "" {
+		t.Fatalf("an incident from before the column has no parent: %q", got)
+	}
+	k.Incident.Parent = "gone:A"
+	s.SaveKey(k)
+	if snap, err = s.Load(t0); err != nil || snap.Keys[0].Incident.Parent != "gone:A" {
+		t.Fatalf("%+v %v", snap.Keys, err)
 	}
 }

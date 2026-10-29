@@ -103,16 +103,24 @@ type incident struct {
 	parent        string // the parent (Obs.Parent) that the dependents step planned its repair against; not persisted
 }
 
+// maxRefusals is how many identical refusals in a row end an incident in SUSPENDED: a pre-action check that fails the same
+// way every GRACE cannot clear by waiting (the maintainer's decision Q3, 28 Oct 2026).
+const maxRefusals = 10
+
 type keyState struct {
 	incident *incident
 	windows  []window
 	tracker  rules.Tracker
 	advisory string // dedupe key of the last advisory event
 	waiting  string // why the dependents step is waiting for a service (Wait); cleared when it acts or no longer applies
-	name     string
-	flaps    []time.Time
-	loop     LoopRecord
-	dirty    bool
+	// refusedWhy is the pre-action refusal that repeats and refusals how many times in a row; cleared by an action, a Wait
+	// or the incident ending, so only an unbroken run of the same refusal counts toward maxRefusals.
+	refusedWhy string
+	refusals   int
+	name       string
+	flaps      []time.Time
+	loop       LoopRecord
+	dirty      bool
 }
 
 type pause struct {
@@ -176,7 +184,7 @@ func (e *Engine) Restore(s Snapshot) {
 			st.incident = &incident{
 				opened: r.Opened, class: rules.Class(r.Class), rung: r.Rung, cooldownUntil: r.CooldownUntil,
 				spent: r.Spent, spentReason: r.SpentReason, suspended: r.Suspended, suspendedAt: r.SuspendedAt,
-				recovering: r.Recovering, recoverySince: r.RecoverySince, recoveryCount: r.RecoveryCount,
+				recovering: r.Recovering, recoverySince: r.RecoverySince, recoveryCount: r.RecoveryCount, parent: r.Parent,
 			}
 		}
 		e.keys[k.Key] = st
@@ -224,7 +232,7 @@ func (e *Engine) flush(key string, st *keyState) {
 		rec.Incident = &IncidentRecord{
 			Opened: inc.opened, Class: string(inc.class), Rung: inc.rung, CooldownUntil: inc.cooldownUntil,
 			Spent: inc.spent, SpentReason: inc.spentReason, Suspended: inc.suspended, SuspendedAt: inc.suspendedAt,
-			Recovering: inc.recovering, RecoverySince: inc.recoverySince, RecoveryCount: inc.recoveryCount,
+			Recovering: inc.recovering, RecoverySince: inc.recoverySince, RecoveryCount: inc.recoveryCount, Parent: inc.parent,
 		}
 	}
 	e.p.Persist.SaveKey(rec)
@@ -237,6 +245,7 @@ func (e *Engine) closeIncident(t Target, st *keyState, outcome string) {
 		return
 	}
 	st.incident = nil
+	st.refusedWhy, st.refusals = "", 0
 	st.dirty = true
 	if e.p.Persist != nil {
 		e.p.Persist.CloseIncident(ClosedIncident{Key: t.Key, Opened: inc.opened, Closed: e.clk.Now(), Class: string(inc.class), Outcome: outcome})
@@ -662,8 +671,9 @@ func (e *Engine) settle(t Target, st *keyState, d rules.Decision, cfg config.Con
 // healthy"); the incident closes only after the container has stayed recovered
 // for RECOVERY_PERIOD.
 func (e *Engine) recovering(t Target, st *keyState, inc *incident, o Obs, now time.Time) Plan {
-	if inc.parent == "" {
-		inc.parent = o.Parent // an incident restored after a restart, or opened by the sidecar's own ladder, learns it here
+	if inc.parent == "" && o.Parent != "" {
+		inc.parent = o.Parent // an incident opened by the sidecar's own ladder, or stored by a release before this one, learns it here
+		st.dirty = true
 	}
 	if !inc.recovering || o.RestartCount != inc.recoveryCount {
 		inc.recovering, inc.recoverySince, inc.recoveryCount = true, now, o.RestartCount
@@ -719,6 +729,7 @@ func (e *Engine) parentChanged(t Target, st *keyState, d rules.Decision, o Obs) 
 	}
 	if inc.parent == "" {
 		inc.parent = o.Parent
+		st.dirty = true
 		return
 	}
 	if inc.parent == o.Parent {
@@ -900,6 +911,7 @@ func (e *Engine) Begin(t Target, plan Plan, d rules.Decision) {
 	st := e.state(t.Key)
 	st.windows = append(st.windows, window{start: now})
 	st.waiting = ""
+	st.refusedWhy, st.refusals = "", 0
 	e.spent = append(e.spent, now)
 	if e.p.Persist != nil && !e.p.DryRun {
 		e.p.Persist.SaveAction(now)
@@ -972,11 +984,24 @@ func (e *Engine) Interrupt(t Target, plan Plan, err error) {
 }
 
 // Refuse cancels a planned action whose pre-action check failed. The rung is
-// not consumed and no rate-limit slot is spent (Begin was never called).
+// not consumed and no rate-limit slot is spent (Begin was never called). The same refusal maxRefusals times in a row
+// SUSPENDS the incident, because the daemon asks again every GRACE and a check that fails identically does not clear.
 func (e *Engine) Refuse(t Target, d rules.Decision, why string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	st := e.state(t.Key)
+	defer e.flush(t.Key, st)
 	e.emit(t, ActionRefused, why, map[string]string{"class": string(d.Class)})
+	if why == st.refusedWhy {
+		st.refusals++
+	} else {
+		st.refusedWhy, st.refusals = why, 1
+	}
+	inc := st.incident
+	if st.refusals >= maxRefusals && inc != nil && !inc.suspended {
+		inc.spent, inc.spentReason = true, ReasonLadder
+		e.suspend(t, st, fmt.Sprintf("refused %d times: %s", st.refusals, why), d)
+	}
 }
 
 // Wait records that a planned dependents-step recreate cannot go ahead yet because a service the dependent depends on is
@@ -986,6 +1011,7 @@ func (e *Engine) Wait(t Target, d rules.Decision, why string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	st := e.state(t.Key)
+	st.refusedWhy, st.refusals = "", 0
 	if st.waiting == why {
 		return
 	}
