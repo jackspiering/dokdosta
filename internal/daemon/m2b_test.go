@@ -86,10 +86,10 @@ func (h *cfH) svc(id, project, service string, extra ...string) docker.Container
 		compose.LabelWorkingDir, "/opt/stacks/" + project, compose.LabelConfigFiles, "/opt/stacks/" + project + "/compose.yaml",
 		compose.LabelConfigHash, "h-" + service, compose.LabelImage, imgLabel(service), compose.LabelVersion, "5.6.0"}
 	extra = append(defaults, extra...)
-	c := h.running(id, project, service, extra...)
+	h.running(id, project, service, extra...)
 	h.set(id, func(c *docker.Container) { c.Image = service + ":1" })
 	h.fake.SetImage(service+":1", imgLabel(service))
-	c, _ = h.fake.Inspect(h.ctx, id)
+	c, _ := h.fake.Inspect(h.ctx, id)
 	return c
 }
 

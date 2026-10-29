@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/netip"
@@ -156,6 +157,8 @@ type SecureOptions struct {
 	Now func() time.Time
 	// OnBlock is called when a client IP has been blocked for presenting too many wrong tokens (it logs, once per block).
 	OnBlock func(client string, d time.Duration)
+	// authorize replaces the token comparison; a test seam.
+	authorize func(r *http.Request, want [sha256.Size]byte) bool
 }
 
 // Secure wraps the handler with the headers on every response, the method filter, the Host check (without a token), the
@@ -167,6 +170,10 @@ func Secure(o SecureOptions, next http.Handler) http.Handler {
 		now = time.Now
 	}
 	lim := newAttemptLimiter(now)
+	authorize := o.authorize
+	if authorize == nil {
+		authorize = authorized
+	}
 	allowed := NormalizeHosts(o.AllowedHosts)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
@@ -197,25 +204,36 @@ func Secure(o SecureOptions, next http.Handler) http.Handler {
 			return
 		}
 		client := clientKey(r, o.TrustedProxies)
-		if d, blocked := lim.blocked(client); blocked {
+		// A request that sent no credentials at all (a browser before its prompt) is not a wrong guess, so it is not counted;
+		// while the client is blocked it is refused like any other.
+		counted := r.Header.Get("Authorization") != ""
+		var res reservation
+		if counted {
+			d, blocked, rs := lim.reserve(client)
+			if blocked {
+				tooMany(w, d)
+				return
+			}
+			res = rs
+		} else if d, blocked := lim.blocked(client); blocked {
 			tooMany(w, d)
 			return
 		}
-		if !authorized(r, want) {
-			// A request that sent no credentials at all (a browser before its prompt) is not a wrong guess.
-			if r.Header.Get("Authorization") != "" {
-				if d, blocked := lim.fail(client); blocked {
-					if o.OnBlock != nil {
-						o.OnBlock(client, d)
-					}
-					tooMany(w, d)
-					return
+		if !authorize(r, want) {
+			if res.blockFor > 0 {
+				if o.OnBlock != nil {
+					o.OnBlock(client, res.blockFor)
 				}
+				tooMany(w, res.blockFor)
+				return
 			}
 			h.Add("WWW-Authenticate", `Bearer realm="dokdosta"`)
 			h.Add("WWW-Authenticate", `Basic realm="dokdosta", charset="UTF-8"`)
 			writeError(w, http.StatusUnauthorized, "a token is required")
 			return
+		}
+		if counted {
+			lim.refund(client, res)
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -262,11 +280,16 @@ const (
 	streamPage      = 200
 )
 
+// streamWriteTimeout bounds each write and flush to a stream client. A client that stops reading (a zero receive window
+// that still ACKs keepalives) would otherwise block the loop in Write for ever and hold one of the MaxStreams slots; the
+// server has no WriteTimeout, because that would end every stream. A variable, so a test can shorten it.
+var streamWriteTimeout = 30 * time.Second
+
 // stream serves GET /api/v1/stream: a server-sent events stream of the domain events. The ID of each message is the
 // event's ID, so a client that reconnects with Last-Event-ID (the browser does it by itself) or ?since= continues
 // where it was, from the event log. Without either, the stream starts now. ?key= narrows it to one container.
 func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
-	fl, ok := w.(http.Flusher)
+	_, ok := w.(http.Flusher)
 	if !ok || s.Hub == nil || s.Events == nil {
 		writeError(w, http.StatusNotImplemented, "streaming is not available")
 		return
@@ -300,14 +323,35 @@ func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	key := r.URL.Query().Get("key")
 
-	fmt.Fprint(w, "retry: 3000\n: connected\n\n")
-	fl.Flush()
+	// Every batch of writes arms the deadline again (it is absolute), and a failed write or flush ends the stream.
+	rc := http.NewResponseController(w)
+	armWrite := func() error {
+		err := rc.SetWriteDeadline(time.Now().Add(streamWriteTimeout))
+		if errors.Is(err, http.ErrNotSupported) {
+			return nil
+		}
+		return err
+	}
+	if err := armWrite(); err != nil {
+		return
+	}
+	if _, err := fmt.Fprint(w, "retry: 3000\n: connected\n\n"); err != nil {
+		return
+	}
+	if err := rc.Flush(); err != nil {
+		return
+	}
 
 	tick := time.NewTicker(streamKeepalive)
 	defer tick.Stop()
 	for {
+		if err := armWrite(); err != nil {
+			return
+		}
 		if last := s.Events.LastID(); cursor > last {
-			fmt.Fprintf(w, "event: reset\ndata: {\"last_id\":%d}\n\n", last)
+			if _, err := fmt.Fprintf(w, "event: reset\ndata: {\"last_id\":%d}\n\n", last); err != nil {
+				return
+			}
 			cursor = 0
 		}
 		for {
@@ -317,19 +361,30 @@ func (s *Service) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			for _, e := range evs {
 				b, _ := json.Marshal(s.EventDoc(e))
-				fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Type, b)
+				if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", e.ID, e.Type, b); err != nil {
+					return
+				}
 				cursor = e.ID
 			}
 			if len(evs) < streamPage {
 				break
 			}
 		}
-		fl.Flush()
+		if err := rc.Flush(); err != nil {
+			return
+		}
 		select {
 		case <-wake:
 		case <-tick.C:
-			fmt.Fprint(w, ": keepalive\n\n")
-			fl.Flush()
+			if err := armWrite(); err != nil {
+				return
+			}
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				return
+			}
 		case <-r.Context().Done():
 			return
 		case <-s.Hub.Done():

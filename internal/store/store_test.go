@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -244,6 +245,7 @@ func TestSchemaOneDatabaseIsMigrated(t *testing.T) {
 	s.SaveKey(sampleKey())
 	s.db.Exec(`DROP TABLE notified`)
 	s.db.Exec(`DROP TABLE events`)
+	s.db.Exec(`DROP INDEX incidents_closed`)
 	s.db.Exec("PRAGMA user_version = 1")
 	s.Close()
 
@@ -266,6 +268,7 @@ func TestSchemaTwoDatabaseIsMigratedToEvents(t *testing.T) {
 	s.SaveKey(sampleKey())
 	s.SaveNotified("x", "T", "k", t0)
 	s.db.Exec(`DROP TABLE events`)
+	s.db.Exec(`DROP INDEX incidents_closed`)
 	s.db.Exec("PRAGMA user_version = 2")
 	s.Close()
 
@@ -450,4 +453,100 @@ func userVersion(s *Store) (int, error) {
 	var v int
 	err := s.db.QueryRow("PRAGMA user_version").Scan(&v)
 	return v, err
+}
+
+// A pause that ends in 2200 must come back as the same instant: tn stores UnixNano, which holds only until 2262.
+func TestPauseExpiryFarInTheFutureSurvivesReopening(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	until := time.Date(2200, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.SavePause(engine.Pause{Scope: "p/web", Until: until, Created: t0})
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s = open(t, dir)
+	defer s.Close()
+	snap, err := s.Load(t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Pauses) != 1 || !snap.Pauses[0].Until.Equal(until) {
+		t.Fatalf("expiry in 2200 did not survive: %+v", snap.Pauses)
+	}
+}
+
+// A schema-3 database (v0.1.0 to v0.3.0) gets the indexes of schema 4 and keeps its rows.
+func TestSchemaThreeDatabaseIsMigratedToTheTypeIndex(t *testing.T) {
+	dir := t.TempDir()
+	s := open(t, dir)
+	s.SaveKey(sampleKey())
+	s.RecordEvent(ev(1, t0, "h/p/web/1", engine.IncidentOpened, nil))
+	s.CloseIncident(engine.ClosedIncident{Key: "h/p/web/1", Opened: t0, Closed: t0.Add(time.Minute), Class: "unhealthy", Outcome: "recovered"})
+	s.db.Exec(`DROP INDEX events_type`)
+	s.db.Exec(`DROP INDEX incidents_closed`)
+	s.db.Exec("PRAGMA user_version = 3")
+	s.Close()
+
+	s = open(t, dir)
+	defer s.Close()
+	if v, err := userVersion(s); err != nil || v != 4 {
+		t.Fatalf("user_version %d %v, want 4", v, err)
+	}
+	snap, err := s.Load(t0)
+	if err != nil || len(snap.Keys) != 1 {
+		t.Fatalf("%v %v", snap.Keys, err)
+	}
+	if got, err := s.Query(engine.EventQuery{}); err != nil || len(got) != 1 || s.LastID() != 1 {
+		t.Fatalf("%v %v %d", got, err, s.LastID())
+	}
+	if h, err := s.History(""); err != nil || len(h) != 1 {
+		t.Fatalf("%v %v", h, err)
+	}
+	for _, idx := range []string{"events_type", "incidents_closed"} {
+		var n int
+		s.db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = ?`, idx).Scan(&n)
+		if n != 1 {
+			t.Errorf("index %s missing after the migration", idx)
+		}
+	}
+}
+
+// The overview asks for events by type on every refresh; the query must use the type index, not scan the table.
+func TestTypeQueryUsesTheTypeIndex(t *testing.T) {
+	s := open(t, t.TempDir())
+	defer s.Close()
+	rows, err := s.rdb.Query(`EXPLAIN QUERY PLAN SELECT id FROM events WHERE id > ? AND type IN (?) ORDER BY id DESC LIMIT ?`, 0, "RungUnavailable", 500)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var plan strings.Builder
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatal(err)
+		}
+		plan.WriteString(detail + "\n")
+	}
+	if !strings.Contains(plan.String(), "events_type") {
+		t.Fatalf("the type query does not use events_type:\n%s", plan.String())
+	}
+}
+
+func TestHistoryLimitKeepsTheNewestClosedIncidents(t *testing.T) {
+	s := open(t, t.TempDir())
+	defer s.Close()
+	for i := 0; i < 5; i++ {
+		at := t0.Add(time.Duration(i) * time.Hour)
+		s.CloseIncident(engine.ClosedIncident{Key: "h/p/web/1", Opened: at, Closed: at.Add(time.Minute), Class: "unhealthy", Outcome: "recovered"})
+	}
+	got, err := s.HistoryLimit("", 2)
+	if err != nil || len(got) != 2 || !got[0].Closed.After(got[1].Closed) || !got[0].Opened.Equal(t0.Add(4*time.Hour)) {
+		t.Fatalf("%v %v", got, err)
+	}
+	if all, _ := s.HistoryLimit("", 0); len(all) != 5 {
+		t.Fatalf("limit 0 must mean no limit, got %d", len(all))
+	}
 }

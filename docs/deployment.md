@@ -137,9 +137,10 @@ shared bridge network in front ([examples/full](../examples/full/compose.yaml)).
 Differences from the container:
 
 - There is no mount to get right: dokdosta sees the host's paths. The compose lookup order ends with the host's plugin
-  directories, searched in this order: `/usr/libexec/docker/cli-plugins/docker-compose`, `/usr/lib/docker/cli-plugins/docker-compose`,
-  `/usr/local/libexec/docker/cli-plugins/docker-compose` and `/usr/local/lib/docker/cli-plugins/docker-compose` (anything else:
-  set `DOKDOSTA_COMPOSE_BIN`).
+  directories, searched in the Docker CLI's order: `/usr/local/lib/docker/cli-plugins/docker-compose`,
+  `/usr/local/libexec/docker/cli-plugins/docker-compose`, `/usr/lib/docker/cli-plugins/docker-compose` and
+  `/usr/libexec/docker/cli-plugins/docker-compose` (anything else: set `DOKDOSTA_COMPOSE_BIN`). When two of them hold a
+  compose, dokdosta uses the first one, the one the Docker CLI picks from the system directories.
   The stacks must be readable by the `dokdosta` user (`ProtectHome=read-only` lets it read under `/home`).
 - The CLI needs the control socket, which the unit puts at `/run/dokdosta/dokdosta.sock` (the CLI's default is
   `/run/dokdosta.sock`), and which only the service user can open:
