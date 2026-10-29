@@ -203,7 +203,8 @@ type daemonOpts struct {
 	Reader      docker.Reader                       // default: the real client
 	WrapCompose func(compose.Reader) compose.Reader // wraps the compose Reader (to disable the oracle, say)
 	Tweak       func(*config.Global)
-	NotifyURLs  []string // Shoutrrr URLs: a real notifier is subscribed to the event stream
+	NotifyURLs  []string     // Shoutrrr URLs: a real notifier is subscribed to the event stream
+	Log         *slog.Logger // the healer's log; default: discarded
 }
 
 // composeBin finds the compose binary the way dokdosta does (DOKDOSTA_COMPOSE_BIN, then the host plugin) and logs
@@ -264,7 +265,7 @@ func startDaemonOpts(t *testing.T, g *Guard, cli *docker.Moby, o daemonOpts) *ru
 		bus.Subscribe(nt.Handle)
 		t.Cleanup(func() { nt.Shutdown(5 * time.Second) })
 	}
-	d := daemon.New(daemon.Options{Config: cfg, Reader: rd, Actor: actor, Clock: clock.Real{}, Bus: bus, Compose: reader, ComposeActor: cactor})
+	d := daemon.New(daemon.Options{Config: cfg, Reader: rd, Actor: actor, Clock: clock.Real{}, Bus: bus, Compose: reader, ComposeActor: cactor, Log: o.Log})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { defer close(done); _ = d.Run(ctx) }()

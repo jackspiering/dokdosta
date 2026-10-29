@@ -7,7 +7,9 @@
 // package that changes anything goes through Guard, and each method refuses to
 // act unless the compose project of its target matches ^dokdosta-test-...$:
 //
-//	Compose   docker compose, always with -p <project>; refuses -p, --project-name, down and rm
+//	Compose   docker compose, always with -p <project>; refuses -p, --project-name, down, rm, build and --build
+//	ComposeBuild  `docker compose build -- <one service>` of a matching project, whose Dockerfile in the stack directory
+//	          has only base images in its FROM lines (the one place a compose build can run)
 //	Down      the ONLY place that runs `down -v`, and only for matching projects
 //	Ctr       stop/start/restart/kill/exec on a container whose project label matches
 //	PullBase  pulls only the base images in BaseImages
@@ -135,6 +137,8 @@ func (g *Guard) Compose(ctx context.Context, project string, args ...string) (st
 		switch {
 		case a == "down" || a == "rm":
 			return "", refuse("compose %q is only allowed through Down", a)
+		case a == "build" || a == "--build":
+			return "", refuse("compose %q is only allowed through ComposeBuild", a)
 		case strings.HasPrefix(a, "-p") || a == "--project-name" || strings.HasPrefix(a, "--project-name="):
 			// -p* also catches the attached form (-pother); --pull and --progress start with two dashes.
 			return "", refuse("caller-supplied project name (%s)", a)
@@ -142,6 +146,28 @@ func (g *Guard) Compose(ctx context.Context, project string, args ...string) (st
 	}
 	g.touch(project)
 	return g.R.Run(ctx, "docker", append([]string{"compose", "-p", project}, args...)...)
+}
+
+// ComposeBuild runs `docker compose build -- <service>` for the stack in dir (compose.yaml and Dockerfile), after
+// checking that every FROM of its Dockerfile is a base image: the build must pull nothing else. It builds the one
+// service and pushes nothing.
+func (g *Guard) ComposeBuild(ctx context.Context, project, dir, service string) (string, error) {
+	if err := RequireProject(project); err != nil {
+		return "", err
+	}
+	if service == "" || strings.HasPrefix(service, "-") || strings.ContainsAny(service, " \t\n;&|$`/") {
+		return "", refuse("build service %q is not a service name", service)
+	}
+	dockerfile, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
+	if err != nil {
+		return "", err
+	}
+	if err := requireBaseFroms(string(dockerfile)); err != nil {
+		return "", err
+	}
+	g.touch(project)
+	return g.R.Run(ctx, "docker", "compose", "-p", project, "--project-directory", dir,
+		"-f", filepath.Join(dir, "compose.yaml"), "build", "--", service)
 }
 
 // Down is the only `down -v` in the harness.
@@ -392,11 +418,8 @@ func (g *Guard) Untag(ctx context.Context, tag string) error {
 
 var fromRE = regexp.MustCompile(`(?im)^\s*FROM\s+(\S+)`)
 
-// Build builds a dokdosta-test/ image from a Dockerfile held in memory, whose every FROM is a base image.
-func (g *Guard) Build(ctx context.Context, tag, dockerfile string) error {
-	if err := requireTag(tag); err != nil {
-		return err
-	}
+// requireBaseFroms refuses a Dockerfile that has no FROM or whose FROM is not a base image.
+func requireBaseFroms(dockerfile string) error {
 	froms := fromRE.FindAllStringSubmatch(dockerfile, -1)
 	if len(froms) == 0 {
 		return refuse("the Dockerfile has no FROM")
@@ -409,6 +432,17 @@ func (g *Guard) Build(ctx context.Context, tag, dockerfile string) error {
 		if !allowed {
 			return refuse("FROM %q is not a base image", m[1])
 		}
+	}
+	return nil
+}
+
+// Build builds a dokdosta-test/ image from a Dockerfile held in memory, whose every FROM is a base image.
+func (g *Guard) Build(ctx context.Context, tag, dockerfile string) error {
+	if err := requireTag(tag); err != nil {
+		return err
+	}
+	if err := requireBaseFroms(dockerfile); err != nil {
+		return err
 	}
 	dir, err := os.MkdirTemp("", "dokdosta-test-build-")
 	if err != nil {

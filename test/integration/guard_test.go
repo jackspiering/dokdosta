@@ -134,6 +134,7 @@ func TestComposeRefusesBadProjectsAndSmuggling(t *testing.T) {
 	for _, args := range [][]string{
 		{"-p", "prod", "ps"}, {"-pprod", "ps"}, {"--project-name", "prod"}, {"--project-name=prod", "ps"},
 		{"down"}, {"-f", "x.yml", "down", "-v"}, {"rm", "-f"}, {"up", "-d", "rm"},
+		{"build", "app"}, {"up", "-d", "--build"},
 	} {
 		s := &stub{}
 		g := &Guard{R: s}
@@ -451,6 +452,45 @@ func TestImageHelpersStayInTheirNamespace(t *testing.T) {
 	}
 	if len(s.mutations()) != 4 {
 		t.Fatalf("%v", s.mutations())
+	}
+}
+
+func TestComposeBuildOnlyBuildsOneServiceFromBaseImages(t *testing.T) {
+	ctx := context.Background()
+	stack := func(dockerfile string) string {
+		dir := t.TempDir()
+		if err := os.WriteFile(dir+"/Dockerfile", []byte(dockerfile), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	good := stack("FROM busybox:1.37\nRUN touch /x\n")
+	s := &stub{}
+	g := &Guard{R: s}
+	for _, p := range badProjects {
+		_, err := g.ComposeBuild(ctx, p, good, "app")
+		refused(t, err)
+	}
+	for _, svc := range []string{"", "--push", "-q", "a b", "a;b", "../x", "a/b"} {
+		_, err := g.ComposeBuild(ctx, "dokdosta-test-a", good, svc)
+		refused(t, err)
+	}
+	for _, df := range []string{"FROM alpine:3.22\n", "FROM busybox:1.37\nFROM prod/app:1\n", "RUN true\n"} {
+		_, err := g.ComposeBuild(ctx, "dokdosta-test-a", stack(df), "app")
+		refused(t, err)
+	}
+	if _, err := g.ComposeBuild(ctx, "dokdosta-test-a", t.TempDir(), "app"); err == nil {
+		t.Fatal("a stack without a Dockerfile was built")
+	}
+	if len(s.mutations()) != 0 {
+		t.Fatalf("a refused build ran: %v", s.mutations())
+	}
+	if _, err := g.ComposeBuild(ctx, "dokdosta-test-a", good, "app"); err != nil {
+		t.Fatal(err)
+	}
+	want := "docker compose -p dokdosta-test-a --project-directory " + good + " -f " + good + "/compose.yaml build -- app"
+	if got := s.mutations(); len(got) != 1 || got[0] != want {
+		t.Fatalf("%v, want %s", got, want)
 	}
 }
 
