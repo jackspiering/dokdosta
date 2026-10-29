@@ -1,8 +1,11 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -73,5 +76,39 @@ func TestRunKeepsEventsAndSignalsInOrder(t *testing.T) {
 	want := []engine.EventType{engine.RestoreWindowOpened, engine.RestoreEvent}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("engine events %v, want %v: the kill must be handled after the loss and the reconnect", got, want)
+	}
+}
+
+// A host with no events since dokdosta started: the stream drops (a socket proxy's idle timeout) after it was up. The
+// next subscription must not ask for since=0, which replays the old daemon's events and loses the gap, and a stream that
+// was up is not a failing subscription, so the wait stays at the base value instead of doubling.
+func TestQuietStreamResubscribesWithSinceNotZero(t *testing.T) {
+	h := newHarness(t, nil, nil)
+	h.clk.Advance(time.Hour) // the fake clock starts at the zero time
+	h.d.o.ReconnectBackoff = 5 * time.Millisecond
+	h.d.o.StreamStable = 10 * time.Millisecond
+	logs := &bytes.Buffer{}
+	h.d.log = slog.New(slog.NewTextHandler(logs, nil))
+	established := h.clk.Now()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan streamItem, 8)
+	go h.d.watchEvents(ctx, out)
+
+	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 1 })
+	if it := <-out; it.sig == nil || it.sig.lost { // established by the timer: no event was ever delivered
+		t.Fatalf("first item must be 'connected': %+v", it)
+	}
+	h.fake.BreakStream(fmt.Errorf("idle timeout"))
+	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 2 })
+	if got := h.fake.Subscriptions()[1]; got.IsZero() || !got.Equal(established) {
+		t.Fatalf("resubscribed with since=%v, want the time the stream was established (%v), not zero", got, established)
+	}
+	<-out // lost
+	<-out // connected again
+	h.fake.BreakStream(fmt.Errorf("idle timeout"))
+	waitFor(t, func() bool { return len(h.fake.Subscriptions()) == 3 })
+	if n := strings.Count(logs.String(), "retry_in=5ms"); n != 2 || strings.Contains(logs.String(), "retry_in=10ms") {
+		t.Fatalf("a stream that was up must resubscribe after the base backoff each time:\n%s", logs)
 	}
 }

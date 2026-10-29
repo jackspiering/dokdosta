@@ -609,6 +609,36 @@ func TestExternalParentRecreateRecreatesTheDependent(t *testing.T) {
 	}
 }
 
+// The dependents sweep is asked for once and cleared when it runs; a List that fails then must not leave the stale
+// sidecar to the next poll (sweep() retries in the same situation). The poll is far off here, so only the retry can
+// repair it.
+func TestDependentsSweepIsRetriedAfterAFailedList(t *testing.T) {
+	h := newCompose(t, func(c *config.Global) { c.Grace, c.PollInterval = 5*time.Second, 10*time.Minute }, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	var newParent docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) { c.NetworkMode = "container:" + newParent.ID })
+		return nil
+	}
+	h.tick()
+	newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.event(newParent, "create", "")
+	h.event(newParent, "start", "")
+	h.fake.ListErr = errors.New("docker: connection reset")
+	h.advance(6 * time.Second) // the sweep runs at +5s and its List fails
+	if h.cf.Count("up") != 0 {
+		t.Fatalf("nothing can be repaired while the list fails: %s", h.verbs())
+	}
+	h.fake.ListErr = nil
+	h.advance(time.Minute) // far short of the 10 minute poll
+	if got := h.verbs(); got != "up dep" {
+		t.Fatalf("compose calls = %q, want the sidecar repaired by the retried sweep", got)
+	}
+	if h.current("p", "dep").ID == dep.ID {
+		t.Fatal("not recreated")
+	}
+}
+
 // The bundled compose recreating a sidecar that another compose release made cannot be verified: the dependents step is
 // blocked (also in warn mode, which overrides verified drift only), and nothing is deployed.
 func TestStaleSidecarMadeByAnotherComposeReleaseIsNotRecreatedByTheBundledOne(t *testing.T) {
