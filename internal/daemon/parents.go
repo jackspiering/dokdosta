@@ -188,7 +188,7 @@ func (d *Daemon) absentRemembered() []string {
 		add(k)
 	}
 	for id := range d.warned {
-		if k, _, ok := strings.Cut(id, "|"); ok { // a state key holds no "|"; the warning text may
+		if k, _, ok := strings.Cut(id, "|"); ok { // a "|" in the host ID or a label cuts a wrong prefix: a warning logged again, never a row lost
 			add(k)
 		}
 	}
