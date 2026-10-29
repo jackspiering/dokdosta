@@ -34,6 +34,11 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A container Docker restores after a Docker daemon restart is no longer taken for a hand start.** When dokdosta
+  reconnected to the events stream, the `start` events the new subscription replays could be handled before the
+  restore window was open, so a `restart: always` container that had been stopped by hand and was SUSPENDED was
+  unsuspended and its ladder started over. The reconnect and the events behind it are now handled in the order they
+  arrived, and those replayed starts and kills fall inside the restore window. (B-005; B-006 adds a regression test)
 - A service built from a `build:` section in your compose file is no longer treated as not made by compose. Compose puts
   the project, service and version labels into the image it builds, and dokdosta took them for labels from the image: the
   container got a restart only, no recreate or pull, and a failed `docker compose run` task lost its one-off mark. The
