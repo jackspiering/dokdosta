@@ -1050,6 +1050,36 @@ func TestSidecarThatIsNotOptedInIsNotHealedForItsOwnFailures(t *testing.T) {
 	h.wantCalls()
 }
 
+// A sidecar without an opt-in that dokdosta recreated with its parent, and that then exits, has no ladder of its own: its
+// incident ends SUSPENDED (one notification), not open for ever.
+func TestSidecarThatFailsAfterItsRepairIsSuspendedOnce(t *testing.T) {
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	_, dep := h.pair()
+	h.noOptIn(dep.ID)
+	var newParent docker.Container
+	h.cf.OnUp = func(compose.Project) error {
+		h.replace("p", "dep", func(c *docker.Container) {
+			c.NetworkMode = "container:" + newParent.ID
+		})
+		return nil
+	}
+	h.tick()
+	newParent = h.replace("p", "parent", func(c *docker.Container) { c.Health = "healthy" })
+	h.advance(3 * time.Minute)
+	// The repaired sidecar dies while its incident is still recovering.
+	h.set(h.current("p", "dep").ID, func(c *docker.Container) { c.Health, c.Status, c.Running, c.ExitCode = "", "exited", false, 1 })
+	h.advance(6 * time.Hour)
+	if got := h.verbs(); got != "up dep" {
+		t.Fatalf("%q", got)
+	}
+	if open, suspended := h.d.Engine().IncidentOpen(key("p", "dep")); !open || !suspended {
+		t.Fatalf("open=%v suspended=%v / %v", open, suspended, h.rec.Types())
+	}
+	if h.count(engine.Suspended) != 1 || h.count(engine.IncidentClosed) != 0 {
+		t.Fatalf("%v", h.rec.Types())
+	}
+}
+
 func TestSidecarOfAParentThatIsNotOptedInIsNotTouched(t *testing.T) {
 	h := newCompose(t, nil, nil, docker.ServerInfo{})
 	parent, dep := h.pair()

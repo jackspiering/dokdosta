@@ -30,6 +30,10 @@ workflow refuses an undated section.
 
 ### Fixed
 
+- **A sidecar left down after its repair is now SUSPENDED, with a notification.** A sidecar without an opt-in of its own
+  that dokdosta recreated or restarted with its parent, and that then exits or turns unhealthy, kept its incident open
+  for ever with no message. It is now suspended once ("repaired with its parent but not running; it has no opt-in of its
+  own"); run `dokdosta unsuspend` once it is fixed.
 - **A refusal that never clears now ends in SUSPENDED.** When a pre-action check fails the same way ten times in a row
   (for example "cannot recreate: ..."), dokdosta suspends the container with the reason "refused 10 times: ..." and sends
   the usual SUSPENDED notification, instead of refusing every few seconds for ever. Any action, or a wait for a parent,

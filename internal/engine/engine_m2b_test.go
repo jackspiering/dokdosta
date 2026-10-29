@@ -343,3 +343,18 @@ func TestRecoveringIncidentLearnsTheParent(t *testing.T) {
 		t.Fatalf("%v", rec.Types())
 	}
 }
+
+// A sidecar repaired by the dependents step that fails again has no ladder to run; the daemon ends its incident here.
+func TestEndUnrepairedSuspendsOnce(t *testing.T) {
+	e, _, rec := newEngine(t, 0)
+	e.EndUnrepaired(tgt, "no incident") // nothing open: nothing happens
+	if rec.Count(Suspended) != 0 {
+		t.Fatalf("%v", rec.Types())
+	}
+	run(e, staleGone, cfg, Obs{Parent: "gone:A"})
+	e.EndUnrepaired(tgt, "repaired with its parent but not running")
+	e.EndUnrepaired(tgt, "repaired with its parent but not running")
+	if open, suspended := e.IncidentOpen(tgt.Key); !open || !suspended || rec.Count(Suspended) != 1 {
+		t.Fatalf("open=%v suspended=%v / %v", open, suspended, rec.Types())
+	}
+}

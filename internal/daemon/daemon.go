@@ -760,6 +760,11 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	}
 	dec := rules.Classify(in)
 	if dec.Class == rules.ClassSkip {
+		// A sidecar repaired as a dependent that now fails again has no ladder of its own (no opt-in), and the skip keeps
+		// the engine from seeing it: end the incident here, SUSPENDED, or it would stay open for ever.
+		if dec.Skip == rules.SkipNotOptedIn && incidentOpen && in.DependentOfOptedIn && !cfg.Disabled {
+			d.eng.EndUnrepaired(t, "repaired with its parent but not running; it has no opt-in of its own")
+		}
 		d.view.observe(key, c, dec, now)
 		d.log.Debug("classified", "key", key, "container", c.Name, "class", dec.Class, "skip", dec.Skip)
 		return
