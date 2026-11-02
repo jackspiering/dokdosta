@@ -201,6 +201,7 @@ func New(o Options) *Daemon {
 	d.eventsDown.Store(d.started.UnixNano())
 	d.lastTick.Store(d.started.UnixNano())
 	d.checkStartup()
+	d.loadLearned()
 	return d
 }
 

@@ -79,6 +79,36 @@ func (d *Daemon) known(mem map[string][]string, prefix, key string) []string {
 	return l
 }
 
+// MetaLister is a Meta that can list its keys by prefix (internal/store). The daemon reads a learned set by key, and
+// only for a key it sees; a container removed while dokdosta was down is never seen again, so without the listing its
+// rows would stay for ever (#167, the follow-up of B-018).
+type MetaLister interface {
+	MetaKeys(prefix string) ([]string, error)
+}
+
+// loadLearned reads every learned set from the store at startup. A key that is not in the list then is scheduled by
+// absentRemembered like any other, and forgetParents drops it an hour after the first list without it; a key that is in
+// the list keeps what it learned. A dry run has no store and loads nothing; a failed read is counted by the store, and
+// those rows wait for the next start.
+func (d *Daemon) loadLearned() {
+	l, ok := d.o.Meta.(MetaLister)
+	if !ok {
+		return
+	}
+	for _, set := range []struct {
+		prefix string
+		mem    map[string][]string
+	}{{metaParents, d.parents}, {metaNSParent, d.nsParents}} {
+		keys, err := l.MetaKeys(set.prefix)
+		if err != nil {
+			continue
+		}
+		for _, k := range keys {
+			d.known(set.mem, set.prefix, strings.TrimPrefix(k, set.prefix))
+		}
+	}
+}
+
 // optInServices are the services whose opt-in decides whether the dependents step repairs a sidecar whose parent is gone:
 // its namespace parent, and only when that was never learned the services of its depends_on (plan v3.13 item 3).
 func (d *Daemon) optInServices(key string, labels map[string]string) []string {

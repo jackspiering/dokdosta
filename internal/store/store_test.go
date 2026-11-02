@@ -587,3 +587,26 @@ func TestSchemaFourDatabaseIsMigratedToTheIncidentParent(t *testing.T) {
 		t.Fatalf("%+v %v", snap.Keys, err)
 	}
 }
+
+// MetaKeys lists by prefix, in order, and a "_" or "%" in the prefix is that character, not a LIKE pattern (#167).
+func TestMetaKeysListsByPrefix(t *testing.T) {
+	s := open(t, t.TempDir())
+	defer s.Close()
+	for _, k := range []string{"parents:h/p/b/1", "parents:h/p/a/1", "parentsX", "nsparent:h/p/a/1", "a_b:1", "axb:1", "a%:1"} {
+		s.SetMeta(k, "v")
+	}
+	for prefix, want := range map[string][]string{
+		"parents:": {"parents:h/p/a/1", "parents:h/p/b/1"},
+		"a_b:":     {"a_b:1"},
+		"a%":       {"a%:1"},
+		"none:":    nil,
+	} {
+		got, err := s.MetaKeys(prefix)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("MetaKeys(%q) = %q, want %q", prefix, got, want)
+		}
+	}
+}

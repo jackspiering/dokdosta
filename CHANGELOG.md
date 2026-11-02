@@ -10,6 +10,13 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **What dokdosta learned about a container removed while it was down is forgotten too.** The learned parents of a
+  dependent (`parents:` and `nsparent:` rows in the store) were dropped an hour after their container left the list, but
+  only for containers dokdosta saw leave; the rows of one removed while dokdosta was stopped stayed in the store. They are
+  now loaded at startup and forgotten by the same rule (#167).
+
 ## [0.3.0] - 2026-10-29
 
 **whalenurse is renamed dokdosta** (plan v3.15). The sections below this one keep the old name, as released.
