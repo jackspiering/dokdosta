@@ -10,6 +10,7 @@
 //	Compose   docker compose, always with -p <project>; refuses -p, --project-name, down, rm, build and --build
 //	ComposeBuild  `docker compose build -- <one service>` of a matching project, from a compose file of its own that holds
 //	          only the context, the Dockerfile and a test tag; the Dockerfile has only base images in its FROM lines
+//	          (ComposeBuildClassic: the same, with DOCKER_BUILDKIT=0 for compose's classic builder)
 //	          (Compose refuses build and --build; `up` without --no-build still builds a missing image, so stacks bring
 //	          images that already exist)
 //	Down      the ONLY place that runs `down -v`, and only for matching projects
@@ -155,6 +156,16 @@ func (g *Guard) Compose(ctx context.Context, project string, args ...string) (st
 // name any image, cache or Dockerfile): it writes a compose file of its own in a temporary directory that holds only
 // the service, the test tag, the context dir and "Dockerfile". It builds the one service and pushes nothing.
 func (g *Guard) ComposeBuild(ctx context.Context, project, dir, service, tag string) (string, error) {
+	return g.composeBuild(ctx, project, dir, service, tag, false)
+}
+
+// ComposeBuildClassic is ComposeBuild with compose's classic builder (DOCKER_BUILDKIT=0, pkg/compose/build_bake.go
+// buildWithBake), which labels the image differently (#174). The same checks apply.
+func (g *Guard) ComposeBuildClassic(ctx context.Context, project, dir, service, tag string) (string, error) {
+	return g.composeBuild(ctx, project, dir, service, tag, true)
+}
+
+func (g *Guard) composeBuild(ctx context.Context, project, dir, service, tag string, classic bool) (string, error) {
 	if err := requireTag(tag); err != nil {
 		return "", err
 	}
@@ -190,7 +201,11 @@ func (g *Guard) ComposeBuild(ctx context.Context, project, dir, service, tag str
 		return "", err
 	}
 	g.touch(project)
-	return g.R.Run(ctx, "docker", "compose", "-p", project, "-f", file, "build", "--", service)
+	args := []string{"compose", "-p", project, "-f", file, "build", "--", service}
+	if classic {
+		return g.R.Run(ctx, "env", append([]string{"DOCKER_BUILDKIT=0", "docker"}, args...)...)
+	}
+	return g.R.Run(ctx, "docker", args...)
 }
 
 // Down is the only `down -v` in the harness.

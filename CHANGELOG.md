@@ -16,6 +16,10 @@ workflow refuses an undated section.
   dependent (`parents:` and `nsparent:` rows in the store) were dropped an hour after their container left the list, but
   only for containers dokdosta saw leave; the rows of one removed while dokdosta was stopped stayed in the store. They are
   now loaded at startup and forgotten by the same rule (#167).
+- **A service built by compose's classic builder keeps its compose identity** (plan v3.17). Without buildx, or with
+  `DOCKER_BUILDKIT=0`, compose labels the image with `com.docker.compose.image.builder=classic`, and the container inherits
+  it; dokdosta took that for a label from the image and treated the container as not made by compose (restart rung only).
+  That label is no longer evidence (#174).
 
 ## [0.3.0] - 2026-10-29
 
