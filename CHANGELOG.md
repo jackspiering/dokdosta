@@ -10,6 +10,10 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-02
+
+Two fixes, and the image rebuilt on updated base images.
+
 ### Fixed
 
 - **What dokdosta learned about a container removed while it was down is forgotten too.** The learned parents of a
@@ -20,6 +24,11 @@ workflow refuses an undated section.
   `DOCKER_BUILDKIT=0`, compose labels the image with `com.docker.compose.image.builder=classic`, and the container inherits
   it; dokdosta took that for a label from the image and treated the container as not made by compose (restart rung only).
   That label is no longer evidence (#174).
+
+### Changed
+
+- **Updated base images.** The image is built with the current `golang:1.27.3` and runs on the current
+  `gcr.io/distroless/static:nonroot` (new digests, in both Dockerfiles).
 
 ## [0.3.0] - 2026-10-29
 
@@ -488,7 +497,8 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-[Unreleased]: https://github.com/jackspiering/dokdosta/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jackspiering/dokdosta/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.1
 [0.3.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.0
 [0.3.0-rc.1]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.0-rc.1
 [0.2.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.2.0
