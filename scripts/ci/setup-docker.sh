@@ -8,6 +8,10 @@
 # from the GitHub release (checksum verified) rather than from apt, which may not carry every release of the matrix.
 # The image-drift job and the integration job both call this script.
 #
+# Every download retries and has a time limit, and apt reads only Docker's own list: a full `apt-get update` once hung for an
+# hour on the runner's Ubuntu mirror (job 122234849509, 27 Oct 2026). The restart after the image-store switch is tried
+# three times and prints the daemon's journal if it still fails (it failed twice with no reason in the log, Oct 2026).
+#
 # usage: scripts/ci/setup-docker.sh classic|containerd [compose-version|latest]     (default compose: 5.6.0)
 # It exports DOKDOSTA_COMPOSE_BIN and DOKDOSTA_COMPOSE_VERSION to later steps through $GITHUB_ENV.
 set -euo pipefail
@@ -27,18 +31,31 @@ if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
   exit 2
 fi
 
+fetch=(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120)
+list=/etc/apt/sources.list.d/docker-m0b.list
+# Only Docker's list: the packages below all come from it, and the runner's own mirrors are where apt hung.
+apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
 sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker-m0b.asc
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker-m0b.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker-m0b.list
-sudo apt-get update
-sudo apt-get install -y --allow-change-held-packages --allow-downgrades docker-ce='5:29.*' docker-ce-cli='5:29.*' containerd.io docker-compose-plugin
+sudo "${fetch[@]}" https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker-m0b.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker-m0b.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee "$list"
+install_docker() {
+  sudo apt-get install -y "${apt_opts[@]}" --allow-change-held-packages --allow-downgrades \
+    docker-ce='5:29.*' docker-ce-cli='5:29.*' containerd.io docker-compose-plugin
+}
+sudo apt-get update "${apt_opts[@]}" -o Dir::Etc::sourcelist="$list" -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0
+# Their dependencies are on the runner already (it ships Docker); if one is not, read every list once, with the time limits.
+if ! install_docker; then
+  echo "::warning::installing from Docker's list alone failed; reading every apt list and trying again"
+  sudo apt-get update "${apt_opts[@]}"
+  install_docker
+fi
 docker version --format 'engine {{.Server.Version}} (API {{.Server.APIVersion}})'
 
 # Compose: the release asked for, replacing whatever apt installed.
 auth=()
 if [ -n "${GITHUB_TOKEN:-}" ]; then auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}"); fi
 if [ "$want" = latest ]; then
-  tag=$(curl -fsSL "${auth[@]}" https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)
+  tag=$("${fetch[@]}" "${auth[@]}" https://api.github.com/repos/docker/compose/releases/latest | jq -r .tag_name)
 else
   tag="v${want#v}"
 fi
@@ -49,8 +66,8 @@ case "$(uname -m)" in
 esac
 dir=$(mktemp -d)
 base="https://github.com/docker/compose/releases/download/${tag}"
-curl -fsSL -o "$dir/$asset" "$base/$asset"
-curl -fsSL -o "$dir/$asset.sha256" "$base/$asset.sha256"
+"${fetch[@]}" -o "$dir/$asset" "$base/$asset"
+"${fetch[@]}" -o "$dir/$asset.sha256" "$base/$asset.sha256"
 (cd "$dir" && echo "$(awk '{print $1}' "$asset.sha256")  $asset" | sha256sum -c -)
 plugin=/usr/libexec/docker/cli-plugins/docker-compose
 sudo install -m 0755 -d "$(dirname "$plugin")"
@@ -72,5 +89,15 @@ if [ "$store" = containerd ]; then
 else
   echo '{"features":{"containerd-snapshotter":false},"storage-driver":"overlay2"}' | sudo tee /etc/docker/daemon.json
 fi
-sudo systemctl restart docker
+for attempt in 1 2 3; do
+  if sudo systemctl restart docker && timeout 60 sh -c 'until docker info >/dev/null 2>&1; do sleep 1; done'; then break; fi
+  echo "::warning::docker did not come back after the restart (attempt $attempt of 3)"
+  if [ "$attempt" -eq 3 ]; then
+    sudo systemctl status docker --no-pager || true
+    sudo journalctl -u docker -u containerd --no-pager -n 80 || true
+    exit 1
+  fi
+  sudo systemctl reset-failed docker docker.socket || true
+  sleep 5
+done
 docker info --format 'storage driver: {{.Driver}} / {{json .DriverStatus}}'

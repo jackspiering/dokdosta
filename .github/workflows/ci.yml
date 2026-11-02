@@ -98,6 +98,18 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
+      # The Go cache (modules and build cache) that the go job saves on pushes to main only: setup-go's own cache was
+      # saved by whichever job finished first (once the workflows job, with actionlint's modules only), never again after
+      # that, and a PR's save is visible to that PR alone. The key changes with go.mod or go.sum.
+      - name: Restore the Go cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-v2
       - name: gofmt
         run: |
           unformatted=$(gofmt -l .)
@@ -125,6 +137,16 @@ jobs:
         env:
           CGO_ENABLED: "1" # -race needs cgo; the shipped binary is built with CGO_ENABLED=0 above
         run: go test -race -count=1 ./...
+      # Only a push to main saves (the whole job passed, so the cache is complete), once per go.mod/go.sum; every job that
+      # restores it reads that one entry.
+      - name: Save the Go cache (pushes to main only)
+        if: github.event_name == 'push' && steps.go-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
   scripts:
     name: shellcheck and M0 self-tests
@@ -169,6 +191,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
       # The offline check (also in make scripts-test), then each SHA against the tag its comment names (needs the network).
       - name: Every action is pinned to the commit of its release tag
         env:
@@ -197,6 +220,15 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
+      - name: Restore the Go cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-v2
       - uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
         with:
           syft-version: v1.55.0
@@ -258,6 +290,15 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+          cache: false
+      - name: Restore the Go cache
+        id: go-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: go-${{ runner.os }}-${{ hashFiles('go.mod', 'go.sum') }}-v2
       - name: compose config -q on every example (and the variables they ask for are asked for)
         run: |
           docker compose version
@@ -326,6 +367,7 @@ jobs:
           name: dokdosta-image
           path: ${{ runner.temp }}/image
       - name: Install the latest Docker Engine 29.x and Compose 5.6.0
+        timeout-minutes: 10
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: scripts/ci/setup-docker.sh classic
@@ -373,6 +415,7 @@ jobs:
         if: env.SKIP != 'true'
         with:
           go-version-file: go.mod
+          cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.SKIP != 'true'
         with:
@@ -383,6 +426,9 @@ jobs:
       # scope job resolved (setup-docker.sh resolves "latest" itself if the scope job could not).
       - name: Install the latest Docker Engine 29.x and Compose ${{ matrix.compose }}, select the image store
         if: env.SKIP != 'true'
+        # It once hung for 60 minutes in apt-get update (job 122234849509); a stuck setup fails fast now, and a re-run of
+        # the failed jobs repeats only this shard.
+        timeout-minutes: 10
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COMPOSE: ${{ matrix.compose == 'latest' && needs.scope.outputs.compose_latest || matrix.compose }}
@@ -399,6 +445,18 @@ jobs:
           docker compose version
           echo "DOKDOSTA_COMPOSE_BIN=$DOKDOSTA_COMPOSE_BIN ($DOKDOSTA_COMPOSE_VERSION)"
           docker info --format 'storage driver: {{.Driver}} / {{json .DriverStatus}}'
+      # The modules the integration tests need, fetched with retries before the test step: proxy.golang.org stream errors
+      # failed two shards in October 2026 (jobs 123054018252, 123080692849). No cache: restoring the go job's cache in all
+      # 18 shards would move more data than the ~1-3 s of downloads it saves.
+      - name: Download the Go modules of the integration tests (retried)
+        if: env.SKIP != 'true'
+        run: |
+          for attempt in 1 2 3; do
+            go list -deps -test -tags integration ./test/integration/ >/dev/null && break
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "::warning::downloading the Go modules failed (attempt $attempt of 3), trying again"
+            sleep 10
+          done
       - name: Run shard ${{ matrix.shard }} of the integration tests
         if: env.SKIP != 'true'
         env:
@@ -420,11 +478,12 @@ jobs:
     # so: a failed scope job skips everything, and turns these six red. On a stack layer (full is false) this job is
     # skipped as a whole, on purpose: a skipped matrix reports none of the six names, so they are not green on the layer's
     # head commit, and the layer cannot merge into main on the light set. A failed scope job leaves `full` empty, which
-    # runs this job, and it fails.
+    # runs this job, and it fails. `!cancelled()`, not `always()`: in a run that a newer push cancelled, these six would
+    # still queue for a runner only to fail.
     name: integration (${{ matrix.store }} store, compose ${{ matrix.compose }}; real Docker, dokdosta-test-* projects only)
     runs-on: ubuntu-latest
     needs: [scope, integration-shard]
-    if: ${{ always() && needs.scope.outputs.full != 'false' }}
+    if: ${{ !cancelled() && needs.scope.outputs.full != 'false' }}
     strategy:
       matrix:
         store: [classic, containerd]
@@ -466,6 +525,7 @@ jobs:
           persist-credentials: false
       - name: Install the latest Docker Engine 29.x and Compose 5.6.0, select the image store
         if: env.RUN == 'true'
+        timeout-minutes: 10
         run: scripts/ci/setup-docker.sh "${{ matrix.store }}"
       - name: Image drift (dokdosta-test-imgdrift project only)
         if: env.RUN == 'true'
