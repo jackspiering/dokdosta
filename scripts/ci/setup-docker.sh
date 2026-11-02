@@ -31,7 +31,9 @@ if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
   exit 2
 fi
 
-fetch=(curl -fsSL --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120)
+# Five retries 5 s apart: GitHub's release download answered 500 for about 7 s once (job 125476857201, 2 Nov 2026), longer
+# than curl's default backoff (1, 2, 4 s) waits.
+fetch=(curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 120)
 list=/etc/apt/sources.list.d/docker-m0b.list
 # Only Docker's list: the packages below all come from it, and the runner's own mirrors are where apt hung.
 apt_opts=(-o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30)
