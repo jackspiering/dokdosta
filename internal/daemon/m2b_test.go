@@ -1987,6 +1987,36 @@ func TestLearnedParentsOfAnUntrackedContainerAreForgotten(t *testing.T) {
 	}
 }
 
+// The learned rows of a container removed while dokdosta was down are in the store only: nothing reads them by key again,
+// so they are loaded at startup, and the same hour forgets them (#167, the follow-up of B-018). The rows of a container
+// that is still there stay.
+func TestLearnedRowsOfAContainerRemovedWhileDownAreForgotten(t *testing.T) {
+	st := openStore(t)
+	gone, kept := key("p", "gone"), key("p", "dep")
+	st.SetMeta(metaParents+gone, "parent")
+	st.SetMeta(metaNSParent+gone, "network:parent")
+	h := newCompose(t, nil, nil, docker.ServerInfo{})
+	h.svc(hexID("c1"), "p", "parent")
+	dep := h.svc(hexID("d1"), "p", "dep", compose.LabelDependsOn, "parent:service_started:true")
+	h.noOptIn(dep.ID)
+	st.SetMeta(metaParents+kept, "parent")
+	h.restartWithStore(st)
+	h.tick()
+	h.advance(30 * time.Minute)
+	if _, ok, _ := st.Meta(metaParents + gone); !ok {
+		t.Fatal("forgotten before the hour")
+	}
+	h.advance(33 * time.Minute) // the hour since the first list without it, then a poll
+	for _, k := range []string{metaParents + gone, metaNSParent + gone} {
+		if v, ok, _ := st.Meta(k); ok {
+			t.Errorf("%s should be deleted: %q", k, v)
+		}
+	}
+	if v, ok, _ := st.Meta(metaParents + kept); !ok || v != "parent" {
+		t.Errorf("the row of a container that is still there is kept: %q %v", v, ok)
+	}
+}
+
 // A container that drops its network_mode: container: reference keeps no namespace parent, which would decide the opt-in
 // of a later sidecar (plan v3.13 item 3; B-018).
 func TestNSParentRowIsDroppedWhenTheContainerDropsItsNetworkMode(t *testing.T) {

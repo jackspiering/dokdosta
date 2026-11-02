@@ -30,9 +30,9 @@ func isSteering(k string) bool {
 //
 //   - every com.docker.compose.* label, when the compose identity is the image's (plan v3.16 item 1, identityFromImage):
 //     one of them has the value the image carries for that key, and compose cannot have made the container (a label it
-//     writes at create time is missing) or the shared key is none of project, service and version, the three compose
-//     writes into every image it builds. The container then was not made by compose, and it falls back to its name and
-//     rung 1;
+//     writes at create time is missing) or the shared key is none of the keys compose writes into an image it builds
+//     (project, service, version, image.builder). The container then was not made by compose, and it falls back to its
+//     name and rung 1;
 //   - the dokdosta.* rule below applies to the whalenurse.* labels from before the rename too (plan v3.15 item 5):
 //     a container that carries one is left alone, so one the image supplies must not count either;
 //   - on a compose container, every dokdosta.* label that the service's `labels:` in the compose file does not declare
@@ -91,10 +91,12 @@ func (f *ImageLabelFilter) cachedDrop(id string) ([]string, bool) {
 var _ Reader = (*ImageLabelFilter)(nil)
 
 // identityFromImage reports whether the compose labels shared with the image (the container's com.docker.compose.* labels
-// whose value is the image's) are the image's, and not compose's own. Verified against compose v5.2.0 and v5.6.1:
-//   - compose writes only project, service and version into an image it builds (getImageBuildLabels, pkg/compose/build.go),
-//     so a container it makes from that image shares exactly those three, and they prove nothing; any other shared key came
-//     from the image (a committed image, or a publisher's label), and the mistake in the other direction is fail-safe;
+// whose value is the image's) are the image's, and not compose's own. Verified against compose v5.2.0, v5.6.1 and v5.7.0:
+//   - compose writes only project, service and version into an image BuildKit builds (getImageBuildLabels,
+//     pkg/compose/build.go, through bake), and only image.builder=classic into one its classic builder builds (no buildx,
+//     or DOCKER_BUILDKIT=0; pkg/compose/build_classic.go; plan v3.17 item 1, #174). A container it makes from that image
+//     shares those keys, and they prove nothing; any other shared key came from the image (a committed image, or a
+//     publisher's label), and the mistake in the other direction is fail-safe;
 //   - getCreateConfigs (pkg/compose/create.go) writes config-hash on every container (v5.6.x skips it only for hook
 //     runners), but container-number only `if number > 0`: `compose run` creates a one-off container with number -1
 //     (pkg/compose/run.go), so a real one-off has config-hash and oneoff=True and no container-number. A container without
@@ -116,7 +118,7 @@ func identityFromImage(labels map[string]string, shared []string) bool {
 	}
 	for _, k := range shared {
 		switch k {
-		case LabelProject, LabelService, composeLabelPrefix + "version":
+		case LabelProject, LabelService, composeLabelPrefix + "version", LabelImageBuilder:
 		default:
 			return true
 		}

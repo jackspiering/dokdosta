@@ -340,6 +340,32 @@ func (s *Store) SetMeta(key, value string) {
 	}
 }
 
+// MetaKeys lists the meta keys that start with prefix, in key order (#167: the daemon loads the rows it learned, so the
+// rule that forgets them also reaches those of containers removed while it was down). The prefix is compared with substr,
+// as Rekey does, not with LIKE, so a "_" or "%" in it means itself.
+func (s *Store) MetaKeys(prefix string) ([]string, error) {
+	rows, err := s.db.Query(`SELECT key FROM meta WHERE substr(key, 1, ?) = ? ORDER BY key`, len(prefix), prefix)
+	if err != nil {
+		s.fail(OpReadMeta, prefix, err)
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			s.fail(OpReadMeta, prefix, err)
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	if err := rows.Err(); err != nil {
+		s.fail(OpReadMeta, prefix, err)
+		return nil, err
+	}
+	return out, nil
+}
+
 // DeleteMeta removes a meta value.
 func (s *Store) DeleteMeta(key string) {
 	if _, err := s.db.Exec(`DELETE FROM meta WHERE key = ?`, key); err != nil {

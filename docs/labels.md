@@ -70,9 +70,10 @@ container's image ID, so a moved tag changes nothing) and does not let the ones 
   labels, and it is neither a parent nor a sidecar by service. That is decided only on evidence that compose did not create
   the container: one of its labels has the value the image gives it **and** either compose cannot have made it
   (`config-hash` or `oneoff` is missing, or `container-number` is missing while `oneoff` is not `True`; compose writes no
-  `container-number` on a `docker compose run` container), or the shared labels include one other than `project`, `service`
-  and `version`. Those three alone are not evidence: compose writes them into every image it builds, so a service with
-  `build:` keeps its identity, and a `compose run` task keeps its one-off mark. An image committed from a compose container
+  `container-number` on a `docker compose run` container), or the shared labels include one other than `project`, `service`,
+  `version` and `image.builder`. Those four alone are not evidence: compose writes them into the images it builds (the
+  first three with BuildKit, `image.builder=classic` with its classic builder, when buildx is missing or `DOCKER_BUILDKIT=0`),
+  so a service with `build:` keeps its identity, and a `compose run` task keeps its one-off mark. An image committed from a compose container
   carries more compose labels than those three, and the container made from it is treated as not made by compose. (A
   container whose creator sets `config-hash`, `container-number` and `oneoff` with its own `--label` flags while `project`
   and `service` come from the image would go unnoticed.)
