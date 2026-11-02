@@ -1,4 +1,4 @@
-FROM golang:1.27.3@sha256:f20d83a83e18dbd2a4714b8ffd4b30b287b6243962dd75608e86abcc63ba4efc AS build
+FROM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS build
 WORKDIR /src
 ENV CGO_ENABLED=0
 COPY go.mod go.sum ./
@@ -32,7 +32,7 @@ RUN mkdir -p /out/data
 # socket's group at run time with `group_add` (see docs/running.md).
 # To recreate, mount the host's compose plugin read-only at /host/docker-compose (used first) and the stacks root
 # read-only at the identical host path; without the plugin the bundled copy above is used.
-FROM gcr.io/distroless/static:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
+FROM gcr.io/distroless/static:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329
 COPY --from=build /out/dokdosta /dokdosta
 COPY --from=build --chmod=0755 /out/docker-compose /usr/libexec/dokdosta/docker-compose
 COPY --from=build --chown=65532:65532 /out/data /data
