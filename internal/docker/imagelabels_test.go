@@ -89,6 +89,33 @@ func TestFilterKeepsTheComposeIdentityOfAContainerComposeCreatedFromAComposeBuil
 	}
 }
 
+// Compose's classic builder (no buildx, or DOCKER_BUILDKIT=0) writes image.builder=classic and no other compose label into
+// the image, and the container compose makes from it inherits that label: it is no evidence that the identity came from
+// the image (plan v3.17 item 1, #174).
+func TestFilterKeepsTheComposeIdentityOfAContainerBuiltByTheClassicBuilder(t *testing.T) {
+	_, own := composeBuiltImage(false)
+	img := map[string]string{LabelImageBuilder: "classic"}
+	own[LabelImageBuilder] = "classic"
+	got := inspectFiltered(t, img, own)
+	if !reflect.DeepEqual(got, own) {
+		t.Fatalf("%v", got)
+	}
+	if _, _, _, ok := ComposeKeyParts(got); !ok {
+		t.Fatal("no longer a compose container")
+	}
+}
+
+// The classic builder's label proves nothing either way: a container compose did not make (no config-hash) from an image
+// that carries a compose identity next to it is still not a compose container.
+func TestFilterStillDropsTheImagesIdentityNextToTheClassicBuilderLabel(t *testing.T) {
+	img := map[string]string{LabelProject: "p", LabelService: "web", LabelImageBuilder: "classic"}
+	own := map[string]string{LabelProject: "p", LabelService: "web", LabelImageBuilder: "classic", "dokdosta.enable": "true"}
+	got := inspectFiltered(t, img, own)
+	if _, _, _, ok := ComposeKeyParts(got); ok {
+		t.Fatalf("a container compose did not make kept the image's compose identity: %v", got)
+	}
+}
+
 // A real `docker compose run` container from a compose-built image has no container-number and keeps oneoff=True, which
 // is what rule 0 (SkipOneOff) reads.
 func TestFilterKeepsOneOffLabel(t *testing.T) {

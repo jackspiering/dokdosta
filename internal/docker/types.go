@@ -19,10 +19,12 @@ var ErrImageNotFound = errors.New("no such image")
 
 // Compose and dokdosta label keys used across packages.
 const (
-	LabelProject       = "com.docker.compose.project"
-	LabelService       = "com.docker.compose.service"
-	LabelNumber        = "com.docker.compose.container-number"
-	LabelOneOff        = "com.docker.compose.oneoff"
+	LabelProject = "com.docker.compose.project"
+	LabelService = "com.docker.compose.service"
+	LabelNumber  = "com.docker.compose.container-number"
+	LabelOneOff  = "com.docker.compose.oneoff"
+	// LabelImageBuilder is the one compose label its classic builder writes into an image (pkg/compose/build_classic.go).
+	LabelImageBuilder  = "com.docker.compose.image.builder"
 	LabelSwarmTaskID   = "com.docker.swarm.task.id"
 	containerRefPrefix = "container:"
 )

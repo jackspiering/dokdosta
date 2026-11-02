@@ -155,3 +155,74 @@ func TestBuiltServiceKeepsItsComposeIdentity(t *testing.T) {
 		t.Fatalf("found %d one-off containers, want 1", found)
 	}
 }
+
+// Compose's classic builder (DOCKER_BUILDKIT=0, or no buildx) writes com.docker.compose.image.builder=classic into the
+// image and none of project, service and version (pkg/compose/build_classic.go; getImageBuildLabels is the bake path's).
+// The container compose makes from it inherits that label with the image's value, which must not make it non-compose
+// (plan v3.17 item 1, #174): its labels pass the filter whole and it keeps its compose key.
+func TestClassicBuiltServiceKeepsItsComposeIdentity(t *testing.T) {
+	g, cli := requireIntegration(t)
+	ctx := context.Background()
+
+	var b [3]byte
+	_, _ = rand.Read(b[:])
+	tag := "dokdosta-test/classic-" + hex.EncodeToString(b[:]) + ":latest"
+	t.Cleanup(func() {
+		if err := g.Untag(context.Background(), tag); err != nil {
+			t.Logf("cleanup of %s: %v", tag, err)
+		}
+	})
+	s := newStack(t, g, cli, "classic", fmt.Sprintf(`services:
+  app:
+    build: .
+    image: %s
+    labels:
+      dokdosta.enable: "true"
+    stop_grace_period: 2s
+    command: %s
+`, tag, loopCmd))
+	if err := os.WriteFile(filepath.Join(s.dir, "Dockerfile"), []byte("FROM busybox:1.37\nRUN echo built > /built\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.ComposeBuildClassic(ctx, s.project, s.dir, "app", tag); err != nil {
+		t.Fatal(err)
+	}
+
+	// The premise: the classic builder built it (its label is there), so the container shares that label with the image.
+	out, err := g.R.Run(ctx, "docker", "image", "inspect", "--format", "{{json .Config.Labels}}", tag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var imageLabels map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(out)), &imageLabels); err != nil {
+		t.Fatalf("image labels %q: %v", out, err)
+	}
+	t.Logf("image labels: %v", imageLabels)
+	if imageLabels[docker.LabelImageBuilder] != "classic" {
+		t.Fatalf("the image was not built by compose's classic builder: %v", imageLabels)
+	}
+
+	s.up()
+	raw := s.container("app")
+	if raw.Labels[docker.LabelImageBuilder] != "classic" {
+		t.Fatalf("the container did not inherit the builder label: %v", raw.Labels)
+	}
+	filtered := &docker.ImageLabelFilter{Reader: cli}
+	list, err := filtered.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sm := range list {
+		if sm.ID != raw.ID {
+			continue
+		}
+		if p, svc, _, ok := docker.ComposeKeyParts(sm.Labels); !ok || p != s.project || svc != "app" {
+			t.Fatalf("the classic-built service lost its compose identity: %v", sm.Labels)
+		}
+		if sm.Labels[docker.LabelImageBuilder] != "classic" || sm.Labels["dokdosta.enable"] != "true" {
+			t.Fatalf("labels were dropped: %v", sm.Labels)
+		}
+		return
+	}
+	t.Fatalf("container %s is not in the filtered list", raw.ID)
+}
