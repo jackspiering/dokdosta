@@ -39,6 +39,11 @@ A few rules from the plan that you will meet in review:
 
 ## Running the tests
 
+Run `make check` before you push. It runs what CI's `go` and `scripts` jobs check, without Docker:
+`gofmt`, `go mod tidy` (commit what it changes), `go vet` (also with `-tags integration`), the static build, the
+integration shard list, the unit tests with `-race`, `make scripts-test` and `shellcheck`. CI runs the full matrix on
+every push, so a slip it finds costs far more than this. The parts one at a time:
+
 ```
 go vet ./... && go vet -tags integration ./...
 go test -race ./...                       # unit tests; they touch no Docker
