@@ -502,7 +502,7 @@ func (d *Daemon) dependentMayTakeMove(ctx context.Context, c docker.Container) b
 		if !labelIsOneOf(c.Labels[compose.LabelImage], []string{mv.Old, mv.OldPlain}) {
 			continue
 		}
-		for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
+		for _, dep := range d.parentServices(d.containerKey(c), c.Labels) {
 			for _, s := range d.idx.all {
 				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || d.keyOf(s) != mv.Key {
 					continue

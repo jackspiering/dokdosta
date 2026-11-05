@@ -147,16 +147,13 @@ func (d *Daemon) recreateBlocker(c docker.Container) string {
 // stopped ones, as compose counts them): the distinct container numbers. A one-off container (`compose run`) is not a
 // replica, and the old and new container of a recreate in progress, or left over by a failed one, share a number.
 func (d *Daemon) replicas(c docker.Container) int {
-	project, service := c.Labels[docker.LabelProject], c.Labels[docker.LabelService]
 	numbers := map[string]bool{}
-	for _, s := range d.idx.all {
-		if s.Labels[docker.LabelProject] == project && s.Labels[docker.LabelService] == service && !docker.IsOneOff(s.Labels) {
-			n := s.Labels[docker.LabelNumber]
-			if n == "" {
-				n = "1"
-			}
-			numbers[n] = true
+	for _, s := range d.idx.serviceContainers(c.Labels[docker.LabelProject], c.Labels[docker.LabelService]) {
+		n := s.Labels[docker.LabelNumber]
+		if n == "" {
+			n = "1"
 		}
+		numbers[n] = true
 	}
 	return len(numbers)
 }
@@ -173,21 +170,15 @@ func (d *Daemon) unavailable(c docker.Container) map[string]string {
 // holdsReference reports whether network_mode, ipc, pid or volumes_from names another container: compose hashes those
 // after resolving them, so check 1 of the drift guard cannot be used for it (plan §3.6, E4).
 func holdsReference(c docker.Container) bool {
-	if docker.ContainerRef(c.NetworkMode) != "" || docker.ContainerRef(c.IpcMode) != "" || docker.ContainerRef(c.PidMode) != "" {
-		return true
-	}
-	return len(c.VolumesFrom) > 0
+	return len(nsRefs(c)) > 0 || len(c.VolumesFrom) > 0
 }
 
 // refsRefusal re-checks every container: reference just before an API restart or a forced recreate. The parent can be
 // recreated between the decision and the action, and an API restart of a dependent whose parent ID is gone turns a
 // running dependent into an exited one (E1). It returns why the action must not go ahead, or "".
 func (d *Daemon) refsRefusal(ctx context.Context, c docker.Container) string {
-	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
-		ref := docker.ContainerRef(mode)
-		if ref == "" {
-			continue
-		}
+	for _, r := range nsRefs(c) {
+		ref := r.Ref
 		p, err := d.rd.Inspect(ctx, ref)
 		switch {
 		case errors.Is(err, docker.ErrNotFound):
@@ -212,11 +203,8 @@ func (d *Daemon) staleParentRefusal(c docker.Container) (why string, healing boo
 	if project == "" {
 		return "", false
 	}
-	for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
-		for _, s := range d.idx.all {
-			if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || docker.IsOneOff(s.Labels) {
-				continue
-			}
+	for _, dep := range d.parentServices(d.containerKey(c), c.Labels) {
+		for _, s := range d.idx.serviceContainers(project, dep) {
 			if s.State != "running" {
 				return fmt.Sprintf("waiting for service %s that it depends on (%s)", dep, s.State), false
 			}
@@ -259,12 +247,7 @@ func (d *Daemon) driftFindings(ctx context.Context, c docker.Container, p compos
 // is why it is stale), a reference to a container compose did not make cannot be judged, and a scaled service has no
 // one container to be current.
 func (d *Daemon) refsCurrent(c docker.Container) bool {
-	var refs []string
-	for _, m := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
-		if r := docker.ContainerRef(m); r != "" {
-			refs = append(refs, r)
-		}
-	}
+	refs := containerRefs(c)
 	for _, v := range c.VolumesFrom {
 		name, _, _ := strings.Cut(v, ":")
 		refs = append(refs, name)
@@ -298,14 +281,10 @@ func (d *Daemon) refsCurrent(c docker.Container) bool {
 // stale) is found through the service its reference resolved to when dokdosta last saw it, and only when that was never
 // learned through the services named in c's depends_on label (plan v3.13 item 3).
 func (d *Daemon) parentOptedIn(c docker.Container) bool {
-	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
-		ref := docker.ContainerRef(mode)
-		if ref == "" {
-			continue
-		}
+	for _, r := range nsRefs(c) {
 		found := false
 		for _, s := range d.idx.all {
-			if docker.MatchesRef(s.ID, s.Name, ref) {
+			if docker.MatchesRef(s.ID, s.Name, r.Ref) {
 				found = true
 				if pc, _ := config.ParseLabels(s.Labels, d.cfg.Mode); pc.OptedIn {
 					return true
@@ -316,11 +295,8 @@ func (d *Daemon) parentOptedIn(c docker.Container) bool {
 			continue
 		}
 		project := c.Labels[docker.LabelProject]
-		for _, dep := range d.optInServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
-			for _, s := range d.idx.all {
-				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || docker.IsOneOff(s.Labels) {
-					continue
-				}
+		for _, dep := range d.learned.optIn(d.containerKey(c), c.Labels) {
+			for _, s := range d.idx.serviceContainers(project, dep) {
 				if pc, _ := config.ParseLabels(s.Labels, d.cfg.Mode); pc.OptedIn {
 					return true
 				}
@@ -441,11 +417,8 @@ func (d *Daemon) postCheckStale(ctx context.Context, t engine.Target, old docker
 
 // staleAfterUp reports why a dependent that was just brought up is still not pointing at a running parent, or "".
 func (d *Daemon) staleAfterUp(ctx context.Context, c docker.Container) string {
-	for _, mode := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
-		ref := docker.ContainerRef(mode)
-		if ref == "" {
-			continue
-		}
+	for _, r := range nsRefs(c) {
+		ref := r.Ref
 		p, err := d.rd.Inspect(ctx, ref)
 		switch {
 		case errors.Is(err, docker.ErrNotFound):
@@ -484,10 +457,8 @@ func (d *Daemon) afterAction(t engine.Target, c docker.Container, recheck time.T
 
 // firstRef is the raw container: reference of a dependent: the same string for every sibling that shares the parent.
 func firstRef(c docker.Container) string {
-	for _, m := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
-		if r := docker.ContainerRef(m); r != "" {
-			return r
-		}
+	if r := nsRefs(c); len(r) > 0 {
+		return r[0].Ref
 	}
 	return ""
 }

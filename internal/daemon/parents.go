@@ -38,23 +38,49 @@ const parentsGoneAfter = time.Hour
 // repaired when the parent is recreated the next time. dokdosta therefore remembers, per key, the services a dependent
 // depends on, learned while the label or a live container: reference still shows them (plan v3.11).
 
-// parentServices returns the services that the dependent holding these labels depends on: the label while it has any,
-// otherwise what was learned for the key.
-func (d *Daemon) parentServices(key string, labels map[string]string) []string {
-	if l := dependsOn(labels[compose.LabelDependsOn]); len(l) > 0 {
-		return l
-	}
-	return d.knownParents(key)
+// learnedParents is what dokdosta remembers about dependents between looks at them (plan v3.11 item 2, v3.13 item 3, #167):
+// per state key, the services a dependent depends on and the services its container: references resolved to, kept in
+// memory and in the store's meta (none in a dry run: nopMeta), and dropped an hour after the key left the container list.
+// It knows nothing of the container list: the daemon tells it what a look at a container showed (learn), which keys are
+// gone (absent), and asks it questions; so it is tested with a fake meta alone.
+type learnedParents struct {
+	meta      Meta
+	parents   map[string][]string  // per key: the services a dependent depends on (meta "parents:<key>")
+	nsParents map[string][]string  // per key: "kind:service" per container: reference (meta "nsparent:<key>")
+	gone      map[string]time.Time // keys that were not in a list, and since when
 }
 
-func (d *Daemon) knownParents(key string) []string { return d.known(d.parents, metaParents, key) }
+func newLearnedParents(m Meta) *learnedParents {
+	if m == nil {
+		m = nopMeta{}
+	}
+	return &learnedParents{meta: m, parents: map[string][]string{}, nsParents: map[string][]string{}, gone: map[string]time.Time{}}
+}
 
-// namespaceParents are the services that the live container: references of a dependent resolved to when dokdosta last
-// saw them (plan v3.13 item 3); nil when it never saw one, as for a sidecar first seen after its parent was gone. They are
-// kept per reference ("network:web", "ipc:db"), so that one reference resolving does not wipe what was learned for another.
-func (d *Daemon) namespaceParents(key string) []string {
+// nopMeta is the Meta of a dry run: nothing is read or kept.
+type nopMeta struct{}
+
+func (nopMeta) Meta(string) (string, bool, error) { return "", false, nil }
+func (nopMeta) SetMeta(string, string)            {}
+func (nopMeta) DeleteMeta(string)                 {}
+
+// services returns the services that the dependent holding these labels depends on: the depends_on label while it has
+// any, otherwise what was learned for the key. Every reader of the label goes through here (labelreads_test.go).
+func (l *learnedParents) services(key string, labels map[string]string) []string {
+	if s := dependsOn(labels[compose.LabelDependsOn]); len(s) > 0 {
+		return s
+	}
+	return l.known(key)
+}
+
+func (l *learnedParents) known(key string) []string { return l.read(l.parents, metaParents, key) }
+
+// namespace are the services that the live container: references of a dependent resolved to when dokdosta last saw them
+// (plan v3.13 item 3); nil when it never saw one, as for a sidecar first seen after its parent was gone. They are kept per
+// reference ("network:web", "ipc:db"), so that one reference resolving does not wipe what was learned for another.
+func (l *learnedParents) namespace(key string) []string {
 	var out []string
-	for _, e := range d.known(d.nsParents, metaNSParent, key) {
+	for _, e := range l.read(l.nsParents, metaNSParent, key) {
 		if _, svc, ok := strings.Cut(e, ":"); ok && !slices.Contains(out, svc) {
 			out = append(out, svc)
 		}
@@ -62,21 +88,27 @@ func (d *Daemon) namespaceParents(key string) []string {
 	return out
 }
 
-// known reads a learned set from memory, then from the store's meta.
-func (d *Daemon) known(mem map[string][]string, prefix, key string) []string {
-	if l, ok := mem[key]; ok {
-		return l
+// optIn are the services whose opt-in decides whether the dependents step repairs a sidecar whose parent is gone: its
+// namespace parent, and only when that was never learned the services of its depends_on (plan v3.13 item 3).
+func (l *learnedParents) optIn(key string, labels map[string]string) []string {
+	if s := l.namespace(key); len(s) > 0 {
+		return s
 	}
-	if d.o.Meta == nil {
-		return nil
+	return l.services(key, labels)
+}
+
+// read reads a learned set from memory, then from the store's meta.
+func (l *learnedParents) read(mem map[string][]string, prefix, key string) []string {
+	if s, ok := mem[key]; ok {
+		return s
 	}
-	v, ok, _ := d.o.Meta.Meta(prefix + key) // a read error is counted and logged by the store; nothing is cached
+	v, ok, _ := l.meta.Meta(prefix + key) // a read error is counted and logged by the store; nothing is cached
 	if !ok || v == "" {
 		return nil
 	}
-	l := strings.Split(v, ",")
-	mem[key] = l
-	return l
+	s := strings.Split(v, ",")
+	mem[key] = s
+	return s
 }
 
 // MetaLister is a Meta that can list its keys by prefix (internal/store). The daemon reads a learned set by key, and
@@ -86,78 +118,46 @@ type MetaLister interface {
 	MetaKeys(prefix string) ([]string, error)
 }
 
-// loadLearned reads every learned set from the store at startup. A key that is not in the list then is scheduled by
-// absentRemembered like any other, and forgetParents drops it an hour after the first list without it; a key that is in
-// the list keeps what it learned. A dry run has no store and loads nothing; a failed read is counted by the store, and
-// those rows wait for the next start.
-func (d *Daemon) loadLearned() {
-	l, ok := d.o.Meta.(MetaLister)
+// load reads every learned set from the store at startup. A key that is not in the list then is scheduled by
+// absentRemembered like any other, and forget drops it an hour after the first list without it; a key that is in the
+// list keeps what it learned. A dry run has no store and loads nothing; a failed read is counted by the store, and those
+// rows wait for the next start.
+func (l *learnedParents) load() {
+	ml, ok := l.meta.(MetaLister)
 	if !ok {
 		return
 	}
 	for _, set := range []struct {
 		prefix string
 		mem    map[string][]string
-	}{{metaParents, d.parents}, {metaNSParent, d.nsParents}} {
-		keys, err := l.MetaKeys(set.prefix)
+	}{{metaParents, l.parents}, {metaNSParent, l.nsParents}} {
+		keys, err := ml.MetaKeys(set.prefix)
 		if err != nil {
 			continue
 		}
 		for _, k := range keys {
-			d.known(set.mem, set.prefix, strings.TrimPrefix(k, set.prefix))
+			l.read(set.mem, set.prefix, strings.TrimPrefix(k, set.prefix))
 		}
 	}
 }
 
-// optInServices are the services whose opt-in decides whether the dependents step repairs a sidecar whose parent is gone:
-// its namespace parent, and only when that was never learned the services of its depends_on (plan v3.13 item 3).
-func (d *Daemon) optInServices(key string, labels map[string]string) []string {
-	if l := d.namespaceParents(key); len(l) > 0 {
-		return l
-	}
-	return d.parentServices(key, labels)
-}
-
-// liveNamespace are the "kind:service" entries for the references of c (network, ipc, pid) that resolve to a container of
-// its project now; refs says which kinds hold a container: reference at all.
-func (d *Daemon) liveNamespace(c docker.Container) (live []string, refs map[string]bool) {
-	refs = map[string]bool{}
-	project := c.Labels[docker.LabelProject]
-	for _, r := range []struct{ kind, mode string }{{"network", c.NetworkMode}, {"ipc", c.IpcMode}, {"pid", c.PidMode}} {
-		ref := docker.ContainerRef(r.mode)
-		if ref == "" {
-			continue
-		}
-		refs[r.kind] = true
-		for _, s := range d.idx.all {
-			svc := s.Labels[docker.LabelService]
-			if svc == "" || s.Labels[docker.LabelProject] != project || docker.IsOneOff(s.Labels) || !docker.MatchesRef(s.ID, s.Name, ref) {
-				continue
-			}
-			if e := r.kind + ":" + svc; !slices.Contains(live, e) {
-				live = append(live, e)
-			}
-		}
-	}
-	return live, refs
-}
-
-// learnParents records the services a dependent depends on. A non-empty label is authoritative and replaces what was
-// stored; a live container: reference that resolves to a container of the same project adds that container's service, and
+// learn records what a look at a dependent showed: its depends_on label, the live "kind:service" entries of its
+// container: references that resolve to a container of its project (liveNS), and which kinds hold a container: reference
+// at all (held). A non-empty label is authoritative and replaces what was stored; a live reference adds its service, and
 // never shrinks a set learned from the label (depends_on can name services besides the one it shares a namespace with).
-func (d *Daemon) learnParents(key string, c docker.Container) {
-	delete(d.parentsGone, key)
-	liveNS, refs := d.liveNamespace(c)
+// The key is in the list, so it is no longer gone.
+func (l *learnedParents) learn(key, dependsOnLabel string, liveNS []string, held map[string]bool) {
+	delete(l.gone, key)
 	var live []string
 	for _, e := range liveNS {
 		if _, svc, _ := strings.Cut(e, ":"); !slices.Contains(live, svc) {
 			live = append(live, svc)
 		}
 	}
-	known := d.knownParents(key)
+	known := l.known(key)
 	var next []string
-	if l := dependsOn(c.Labels[compose.LabelDependsOn]); len(l) > 0 {
-		next = slices.Clone(l)
+	if s := dependsOn(dependsOnLabel); len(s) > 0 {
+		next = slices.Clone(s)
 	} else {
 		next = slices.Clone(known)
 		for _, svc := range live {
@@ -167,19 +167,17 @@ func (d *Daemon) learnParents(key string, c docker.Container) {
 		}
 	}
 	if len(next) > 0 && !slices.Equal(next, known) {
-		d.parents[key] = next
-		if d.o.Meta != nil {
-			d.o.Meta.SetMeta(metaParents+key, strings.Join(next, ","))
-		}
+		l.parents[key] = next
+		l.meta.SetMeta(metaParents+key, strings.Join(next, ","))
 	}
 	// The namespace parent is what the live references say: per reference, replaced when it resolves, kept while it does
 	// not (its parent is gone, which is when it matters), and dropped when the container no longer holds that reference
 	// (plan v3.13 item 3).
-	oldNS := d.known(d.nsParents, metaNSParent, key)
+	oldNS := l.read(l.nsParents, metaNSParent, key)
 	var nextNS []string
 	for _, e := range oldNS {
 		kind, _, _ := strings.Cut(e, ":")
-		if refs[kind] && !slices.ContainsFunc(liveNS, func(l string) bool { return strings.HasPrefix(l, kind+":") }) {
+		if held[kind] && !slices.ContainsFunc(liveNS, func(s string) bool { return strings.HasPrefix(s, kind+":") }) {
 			nextNS = append(nextNS, e)
 		}
 	}
@@ -188,17 +186,91 @@ func (d *Daemon) learnParents(key string, c docker.Container) {
 	nextNS = slices.Compact(nextNS)
 	switch {
 	case len(nextNS) > 0 && !slices.Equal(nextNS, oldNS):
-		d.nsParents[key] = nextNS
-		if d.o.Meta != nil {
-			d.o.Meta.SetMeta(metaNSParent+key, strings.Join(nextNS, ","))
-		}
+		l.nsParents[key] = nextNS
+		l.meta.SetMeta(metaNSParent+key, strings.Join(nextNS, ","))
 	case len(nextNS) == 0 && len(oldNS) > 0:
 		// Every reference was dropped: a stale entry must not decide a later sidecar's opt-in.
-		delete(d.nsParents, key)
-		if d.o.Meta != nil {
-			d.o.Meta.DeleteMeta(metaNSParent + key)
+		delete(l.nsParents, key)
+		l.meta.DeleteMeta(metaNSParent + key)
+	}
+}
+
+// absent notes that the key was not in the container list; the first time starts the clock forget runs on.
+func (l *learnedParents) absent(key string, now time.Time) {
+	if _, ok := l.gone[key]; !ok {
+		l.gone[key] = now
+	}
+}
+
+// keys are the keys something is remembered about.
+func (l *learnedParents) keys() []string {
+	var out []string
+	for k := range l.parents {
+		out = append(out, k)
+	}
+	for k := range l.nsParents {
+		if _, ok := l.parents[k]; !ok {
+			out = append(out, k)
 		}
 	}
+	return out
+}
+
+// forget drops what is remembered about keys that have been gone from the container list for parentsGoneAfter, and
+// returns them, so the daemon drops what it remembers about them besides.
+func (l *learnedParents) forget(now time.Time) []string {
+	var out []string
+	for key, since := range l.gone {
+		if now.Sub(since) < parentsGoneAfter {
+			continue
+		}
+		// Only a key that had a learned set has a row to delete (WN-040); the set may live in the store alone after a restart.
+		learned, learnedNS := len(l.known(key)) > 0, len(l.namespace(key)) > 0
+		delete(l.parents, key)
+		delete(l.nsParents, key)
+		delete(l.gone, key)
+		if learned {
+			l.meta.DeleteMeta(metaParents + key)
+		}
+		if learnedNS {
+			l.meta.DeleteMeta(metaNSParent + key)
+		}
+		out = append(out, key)
+	}
+	return out
+}
+
+// ---- the daemon's side: what the container list says ----------------------------------------------
+
+// parentServices: see learnedParents.services.
+func (d *Daemon) parentServices(key string, labels map[string]string) []string {
+	return d.learned.services(key, labels)
+}
+
+// liveNamespace are the "kind:service" entries for the references of c (network, ipc, pid) that resolve to a container of
+// its project now; held says which kinds hold a container: reference at all.
+func (d *Daemon) liveNamespace(c docker.Container) (live []string, held map[string]bool) {
+	held = map[string]bool{}
+	project := c.Labels[docker.LabelProject]
+	for _, r := range nsRefs(c) {
+		held[r.Kind] = true
+		for _, s := range d.idx.all {
+			svc := s.Labels[docker.LabelService]
+			if svc == "" || s.Labels[docker.LabelProject] != project || docker.IsOneOff(s.Labels) || !docker.MatchesRef(s.ID, s.Name, r.Ref) {
+				continue
+			}
+			if e := r.Kind + ":" + svc; !slices.Contains(live, e) {
+				live = append(live, e)
+			}
+		}
+	}
+	return live, held
+}
+
+// learnParents tells learnedParents what this look at c showed.
+func (d *Daemon) learnParents(key string, c docker.Container) {
+	live, held := d.liveNamespace(c)
+	d.learned.learn(key, c.Labels[compose.LabelDependsOn], live, held)
 }
 
 // absentRemembered are the keys dokdosta remembers something about outside the engine (learned parents, label warnings)
@@ -211,10 +283,7 @@ func (d *Daemon) absentRemembered() []string {
 			out = append(out, k)
 		}
 	}
-	for k := range d.parents {
-		add(k)
-	}
-	for k := range d.nsParents {
+	for _, k := range d.learned.keys() {
 		add(k)
 	}
 	for id := range d.warned {
@@ -227,25 +296,11 @@ func (d *Daemon) absentRemembered() []string {
 
 // forgetParents drops what is remembered about keys that have been gone from the container list for a while.
 func (d *Daemon) forgetParents(now time.Time) {
-	for key, since := range d.parentsGone {
-		if now.Sub(since) < parentsGoneAfter {
-			continue
-		}
-		// Only a key that had a learned set has a row to delete (WN-040); the set may live in the store alone after a restart.
-		learned, learnedNS := len(d.knownParents(key)) > 0, len(d.namespaceParents(key)) > 0
-		delete(d.parents, key)
-		delete(d.nsParents, key)
-		delete(d.parentsGone, key)
+	for _, key := range d.learned.forget(now) {
 		for id := range d.warned {
 			if strings.HasPrefix(id, key+"|") {
 				delete(d.warned, id)
 			}
-		}
-		if d.o.Meta != nil && learned {
-			d.o.Meta.DeleteMeta(metaParents + key)
-		}
-		if d.o.Meta != nil && learnedNS {
-			d.o.Meta.DeleteMeta(metaNSParent + key)
 		}
 	}
 }
