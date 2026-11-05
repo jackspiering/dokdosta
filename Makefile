@@ -1,5 +1,16 @@
 # Conveniences; CI runs the same commands (.github/workflows/ci.yml). Nothing here publishes anything.
-.PHONY: build test vet scripts-test snapshot verify-release
+.PHONY: check build test vet scripts-test shellcheck snapshot verify-release
+
+# What CI's go and scripts jobs check, in their order, without Docker: run it before every push.
+# A formatting slip or an untidy go.mod found here costs seconds; found by CI it costs a full run (about 120 runner-minutes).
+# go mod tidy rewrites go.mod/go.sum when they are not tidy, so commit what it changed. Not here: govulncheck and the
+# pins' --verify-remote (network), actionlint (go run, CI's workflows job), and the integration tests (CI only).
+check:
+	@unformatted=$$(gofmt -l .); if [ -n "$$unformatted" ]; then echo "needs gofmt:"; echo "$$unformatted"; exit 1; fi
+	go mod tidy && git diff --exit-code go.mod go.sum
+	$(MAKE) vet build
+	scripts/ci/shard-integration.sh --check-ci .github/workflows/ci.yml
+	$(MAKE) test scripts-test shellcheck
 
 build:
 	CGO_ENABLED=0 go build -trimpath -o dokdosta ./cmd/dokdosta
@@ -17,6 +28,10 @@ scripts-test:
 	scripts/release/release-notes.sh --self-test && scripts/release/verify.sh --self-test && scripts/ci/check-dockerfiles.sh --self-test && scripts/ci/check-dockerfiles.sh && scripts/ci/check-pins.sh --self-test && scripts/ci/check-pins.sh && scripts/ci/shard-integration.sh --self-test
 	scripts/ci/changes.sh --self-test && scripts/ci/compose-latest.sh --self-test
 	scripts/ci/check-workflows.sh --self-test && scripts/ci/check-workflows.sh
+
+# CI's scripts job runs the same.
+shellcheck:
+	shellcheck -x $$( { grep -rIl --exclude-dir=testdata -E '^#!.*(ba)?sh' scripts test; find scripts test -name '*.sh'; } | sort -u)
 
 # Everything the release builds, into dist/, without pushing, signing or publishing (needs goreleaser and syft).
 snapshot:
