@@ -154,7 +154,7 @@ func (r *Redactor) Redact(s string) string {
 // dokdosta writes them itself and no Docker or compose text reaches them, so Event leaves them alone: a short query value
 // of a URL ("true", "json") must not turn ok=true into ok=***.
 var controlAttrs = map[string]bool{
-	"action": true, "at": true, "class": true, "count": true, "dry_run": true, "held": true, engine.AttrIncident: true,
+	"action": true, "at": true, "checks": true, "class": true, "count": true, "dry_run": true, "held": true, engine.AttrIncident: true,
 	"moved_at": true, "not_applicable": true, "ok": true, "opened": true, "outcome": true, "reason": true, "rung": true,
 	"rungs": true, "scope": true, "until": true,
 }

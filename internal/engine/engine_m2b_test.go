@@ -102,7 +102,7 @@ func TestDriftBlockedSuspendsAndSpendsNoSlot(t *testing.T) {
 
 func TestDriftWarnedOnlyReports(t *testing.T) {
 	e, _, rec := newEngine(t, 0)
-	e.Warned(tgt, []string{"image: the tag moved"})
+	e.Warned(tgt, []string{"image: the tag moved"}, nil)
 	if rec.Count(DriftWarned) != 1 || rec.Count(Suspended) != 0 {
 		t.Fatalf("%v", rec.Types())
 	}

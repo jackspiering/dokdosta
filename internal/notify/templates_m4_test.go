@@ -123,7 +123,7 @@ func TestNoNewerImageIsInTheGivingUpMessage(t *testing.T) {
 // does not carry the same sentence twice.
 func TestDriftBlockNamesWhoMovedTheTag(t *testing.T) {
 	findings := "image: image web:1 now resolves to bbbbbbbbbbbb, but this container was created from aaaaaaaaaaaa: the tag moved (dokdosta moved this tag: nas/other/web/1 pulled it at 2026-10-19T10:30:00Z)"
-	e := ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": findings, "moved_by": "nas/other/web/1", "moved_at": "2026-10-19T10:30:00Z", "moved_ref": "web:1"})
+	e := ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": findings, "checks": "image", "moved_by": "nas/other/web/1", "moved_at": "2026-10-19T10:30:00Z", "moved_ref": "web:1"})
 	m := renderOne(t, e, rctx{})
 	if !strings.Contains(m.Body, "tag moved by dokdosta's pull rung: other/web at 2026-10-19 10:30 UTC") {
 		t.Fatalf("%s", m.Body)
@@ -163,7 +163,7 @@ func TestUpgradeIsDedupedPerIncident(t *testing.T) {
 func TestDriftBlockWithAMoverKeepsTheUnsuspendCommand(t *testing.T) {
 	ref := "127.0.0.1:32772/dokdosta-test/shared:latest"
 	findings := "image: image " + ref + " now resolves to c42447ac2b0e, but this container was created from dda213a6a6b0: the tag moved (dokdosta moved this tag: itest/dokdosta-test-pull-a-015936/app/1 pulled it at 2026-10-19T07:45:02Z)"
-	e := ev(engine.DriftBlocked, "itest/dokdosta-test-pull-b-3a0f41/api/1", "x", map[string]string{"findings": findings, "moved_by": "itest/dokdosta-test-pull-a-015936/app/1", "moved_at": "2026-10-19T07:45:02Z"})
+	e := ev(engine.DriftBlocked, "itest/dokdosta-test-pull-b-3a0f41/api/1", "x", map[string]string{"findings": findings, "checks": "image", "moved_by": "itest/dokdosta-test-pull-a-015936/app/1", "moved_at": "2026-10-19T07:45:02Z"})
 	m := renderOne(t, e, rctx{})
 	if !strings.Contains(m.Body, "dokdosta unsuspend dokdosta-test-pull-b-3a0f41/api") || !strings.Contains(m.Body, "tag moved by dokdosta's pull rung: dokdosta-test-pull-a-015936/app at 2026-10-19 07:45 UTC") {
 		t.Fatalf("%s", m.Body)

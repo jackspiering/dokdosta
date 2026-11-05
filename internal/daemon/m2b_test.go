@@ -1249,6 +1249,10 @@ func TestUpgradedHostPluginIsNotedInTheDriftMessage(t *testing.T) {
 		!strings.Contains(b[0].Message, "compose upgraded from 5.2.0 to 5.6.0 since this container was created") {
 		t.Fatalf("%+v", b)
 	}
+	// The notification's hint is chosen from these, not from the wording.
+	if a := b[0].Attrs; a[compose.AttrChecks] != "config" || a[compose.AttrComposeFrom] != "5.2.0" || a[compose.AttrComposeTo] != "5.6.0" {
+		t.Fatalf("the block does not carry the upgrade: %v", a)
+	}
 	// ... and it is still verified drift: warn recreates.
 	h2 := newCompose(t, func(c *config.Global) { c.DriftGuard = config.DriftWarn }, nil, docker.ServerInfo{})
 	web2 := h2.svc(hexID("a1"), "p", "web", compose.LabelVersion, "5.2.0")

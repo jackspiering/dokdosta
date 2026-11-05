@@ -50,7 +50,7 @@ const (
 // allowedAttrs are the event attributes the engine and the daemon emit. Anything else is dropped at the boundary, so a
 // future attribute that carried something it should not stays inside until someone adds it here on purpose.
 var allowedAttrs = map[string]bool{
-	"action": true, "at": true, "class": true, "cause": true, "count": true, "dependents": true, "dry_run": true,
+	"action": true, "at": true, "checks": true, "class": true, "cause": true, "compose_from": true, "compose_to": true, "count": true, "dependents": true, "dry_run": true,
 	"error": true, "findings": true, "held": true, "id": true, "image": true, "incident": true, "moved_at": true,
 	"moved_by": true, "moved_ref": true, "new": true, "not_applicable": true, "not_run": true, "ok": true, "old": true, "old_id": true,
 	"old_image": true, "opened": true, "outcome": true, "reason": true, "ref": true, "rollback_tag": true,

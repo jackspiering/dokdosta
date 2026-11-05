@@ -152,21 +152,19 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 		return false // dokdosta is stopping: a check cut short is not a finding, and nothing is blocked or recorded
 	}
 	var findings []string
-	var extra map[string]string
-	verifiedOnly := true
+	extra := compose.Attrs(fs)
 	for _, f := range fs {
 		text := f.String()
 		if f.Check == compose.CheckImage {
 			if m, ok := d.moverOf(ctx, c); ok && !m.Followed { // a followed move was made by someone else
 				text += fmt.Sprintf(" (dokdosta moved this tag: %s pulled it at %s)", m.Key, m.At.UTC().Format(time.RFC3339))
-				extra = map[string]string{"moved_by": m.Key, "moved_at": m.At.UTC().Format(time.RFC3339), "moved_ref": m.Ref}
+				extra["moved_by"], extra["moved_at"], extra["moved_ref"] = m.Key, m.At.UTC().Format(time.RFC3339), m.Ref
 			}
 		}
 		findings = append(findings, text)
-		verifiedOnly = verifiedOnly && f.Verified()
 	}
-	if d.cfg.DriftGuard == config.DriftWarn && verifiedOnly {
-		d.eng.Warned(t, findings) // warn overrides verified drift only
+	if d.cfg.DriftGuard == config.DriftWarn && compose.Overridable(fs) {
+		d.eng.Warned(t, findings, extra) // warn overrides verified drift only
 		return true
 	}
 	if d.cfg.DriftGuard == config.DriftWarn {
