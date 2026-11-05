@@ -152,7 +152,7 @@ type Daemon struct {
 	learned      *learnedParents              // what is remembered about dependents between looks (parents.go)
 	refs         map[string][]string          // per container ID: its container: references (network_mode, ipc, pid) as the last inspect showed them
 	refsRetry    map[string]time.Time         // IDs whose inspect for refs failed, and when learnRefs may try again
-	moves        map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
+	moves        *moveLedger                  // tags that the pull rung moved or rung 2 followed (moves.go)
 
 	eventsUp   atomic.Bool
 	eventsDown atomic.Int64 // unix nanos when the stream went down; 0 while up
@@ -188,6 +188,7 @@ func New(o Options) *Daemon {
 		pend:      map[string]pending{},
 		warned:    map[string]bool{},
 		learned:   newLearnedParents(o.Meta),
+		moves:     newMoveLedger(o.Meta),
 		refs:      map[string][]string{}, refsRetry: map[string]time.Time{},
 		depGate: map[string]depGate{},
 		view:    newView(),
