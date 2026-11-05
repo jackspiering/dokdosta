@@ -1762,7 +1762,7 @@ func TestSidecarFirstSeenAfterItsParentIsGoneIsDecidedByDependsOn(t *testing.T) 
 func TestNamespaceParentIsRekeyedToTheCurrentHost(t *testing.T) {
 	st := openStore(t)
 	st.SetMeta(metaNSParent+"old/p/dep/1", "parent")
-	if _, err := st.Rekey("h", store.RekeyMeta{Keyed: MetaKeyed, WithKey: MetaWithKey}); err != nil {
+	if _, err := st.Rekey("h", rekeyMeta()); err != nil {
 		t.Fatal(err)
 	}
 	if v, ok, _ := st.Meta(metaNSParent + "h/p/dep/1"); !ok || v != "parent" {
