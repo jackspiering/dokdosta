@@ -37,8 +37,8 @@ func (d *Daemon) waitsFor(ctx context.Context, c docker.Container) string {
 		}
 		svc, cond := parts[0], parts[1]
 		holds, found := false, false
-		for _, s := range d.idx.all {
-			if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != svc || docker.IsOneOff(s.Labels) || s.ID == c.ID {
+		for _, s := range d.idx.serviceContainers(project, svc) {
+			if s.ID == c.ID {
 				continue
 			}
 			found = true

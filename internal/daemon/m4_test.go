@@ -243,7 +243,7 @@ func TestPullThatMovedTheTagButFailedToRecreateStillRecordsTheMove(t *testing.T)
 	if len(moved) != 1 || moved[0].Attrs["ok"] != "false" || !strings.Contains(moved[0].Attrs["error"], "port is already allocated") || moved[0].Attrs["rollback_tag"] == "" {
 		t.Fatalf("%+v", moved)
 	}
-	if _, ok := h.d.moveOf("web:1"); !ok {
+	if _, ok := h.d.moves.of("web:1"); !ok {
 		t.Fatal("the move must be recorded although the up failed")
 	}
 	var res engine.Event
@@ -416,7 +416,7 @@ func TestDriftBlockOnASharedTagNamesWhoMovedIt(t *testing.T) {
 func TestMoverIsNotNamedOnceTheTagMovedAgain(t *testing.T) {
 	h := newCompose(t, nil, nil, docker.ServerInfo{})
 	api := h.sharedAPI()
-	h.d.recordMove(tagMove{Ref: normalizeRef("web:1"), Key: key("p", "web"), At: h.clk.Now(), Old: imgLabel("web"), New: imgNewer, OldPlain: imgLabel("web"), NewPlain: imgNewer})
+	h.d.moves.record(tagMove{Ref: normalizeRef("web:1"), Key: key("p", "web"), At: h.clk.Now(), Old: imgLabel("web"), New: imgNewer, OldPlain: imgLabel("web"), NewPlain: imgNewer})
 	h.fake.SetImage("web:1", imgNewer)
 	if _, ok := h.d.moverOf(h.ctx, api); !ok {
 		t.Fatal("the tag is where the pull put it: the mover must be named")
@@ -486,7 +486,7 @@ func TestDryRunNeverPulls(t *testing.T) {
 	if h.count(engine.TagMoved) != 0 {
 		t.Fatal("a dry run moves nothing")
 	}
-	if _, ok := h.d.moveOf("web:1"); ok {
+	if _, ok := h.d.moves.of("web:1"); ok {
 		t.Fatal("a dry run records no move")
 	}
 }

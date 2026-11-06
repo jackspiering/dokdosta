@@ -125,7 +125,7 @@ func openStore(t *testing.T) *store.Store {
 func (h *harness) withStore(st *store.Store, bootID string) func(*Options) {
 	return func(o *Options) {
 		// As the binary does (openStore in cmd/dokdosta): re-key to the host ID, then load.
-		if _, err := st.Rekey(h.cfg.HostID, store.RekeyMeta{Keyed: MetaKeyed, WithKey: MetaWithKey}); err != nil {
+		if _, err := st.Rekey(h.cfg.HostID, rekeyMeta()); err != nil {
 			h.t.Fatal(err)
 		}
 		snap, err := st.Load(h.clk.Now())

@@ -149,12 +149,10 @@ type Daemon struct {
 	beatEvery    time.Duration                // how often last_seen is written during an action (heartbeatEvery; tests shorten it)
 	stopGrace    time.Duration                // how long an action in flight may run on after the stop (shutdownGrace)
 	view         *view                        // what the API reads
-	parents      map[string][]string          // per key: the services a dependent depends on, learned (also kept in the store's meta; parents.go)
-	nsParents    map[string][]string          // per key: the services its container: references resolved to (also kept in the store's meta; parents.go)
-	parentsGone  map[string]time.Time         // keys that were not in the last list, and since when
+	learned      *learnedParents              // what is remembered about dependents between looks (parents.go)
 	refs         map[string][]string          // per container ID: its container: references (network_mode, ipc, pid) as the last inspect showed them
 	refsRetry    map[string]time.Time         // IDs whose inspect for refs failed, and when learnRefs may try again
-	moves        map[string]tagMove           // tags that the pull rung moved, by normalized reference (also kept in the store's meta)
+	moves        *moveLedger                  // tags that the pull rung moved or rung 2 followed (moves.go)
 
 	eventsUp   atomic.Bool
 	eventsDown atomic.Int64 // unix nanos when the stream went down; 0 while up
@@ -189,8 +187,9 @@ func New(o Options) *Daemon {
 		stopGrace: shutdownGrace,
 		pend:      map[string]pending{},
 		warned:    map[string]bool{},
-		parents:   map[string][]string{}, nsParents: map[string][]string{}, parentsGone: map[string]time.Time{},
-		refs: map[string][]string{}, refsRetry: map[string]time.Time{},
+		learned:   newLearnedParents(o.Meta),
+		moves:     newMoveLedger(o.Meta),
+		refs:      map[string][]string{}, refsRetry: map[string]time.Time{},
 		depGate: map[string]depGate{},
 		view:    newView(),
 	}
@@ -201,7 +200,7 @@ func New(o Options) *Daemon {
 	d.eventsDown.Store(d.started.UnixNano())
 	d.lastTick.Store(d.started.UnixNano())
 	d.checkStartup()
-	d.loadLearned()
+	d.learned.load()
 	return d
 }
 
@@ -728,9 +727,7 @@ func (d *Daemon) process(ctx context.Context, key string) {
 	sum, ok := d.idx.byKey[key]
 	t := engine.Target{Key: key}
 	if !ok {
-		if _, known := d.parentsGone[key]; !known {
-			d.parentsGone[key] = d.clk.Now()
-		}
+		d.learned.absent(key, d.clk.Now())
 		d.eng.Forget(t)
 		d.view.forget(key)
 		return
@@ -867,25 +864,54 @@ func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Containe
 		return
 	}
 
+	d.runAction(ctx, t, c, dec, plan, cfg, func() outcome {
+		actx, cancel := d.actionContext(ctx, actionTimeout)
+		defer cancel()
+		var err error
+		switch plan.Act {
+		case rules.ActionRestart:
+			err = d.o.Actor.Restart(actx, c.ID)
+		case rules.ActionStart:
+			err = d.o.Actor.Start(actx, c.ID)
+		}
+		return d.ended(ctx, err, engine.Result{Err: err, DryRun: d.cfg.DryRun})
+	})
+}
+
+// outcome is how an action's body ended: interrupted by dokdosta's stop (the engine forgets the attempt, plan §3.8), or
+// with a result for the engine. noFollowUp leaves out afterAction (the pull that found nothing newer: nothing changed, and
+// the container is SUSPENDED).
+type outcome struct {
+	interrupted error
+	res         engine.Result
+	noFollowUp  bool
+}
+
+// ended is the outcome of a body whose action returned err: interrupted when dokdosta's stop cut it short, else res.
+func (d *Daemon) ended(ctx context.Context, err error, res engine.Result) outcome {
+	if interrupted(ctx, err) {
+		return outcome{interrupted: err}
+	}
+	return outcome{res: res}
+}
+
+// runAction is the one place an action's lifecycle lives, once the pre-action checks have passed: nothing new starts
+// while dokdosta is stopping; then Begin (the in-flight window), the body, and either Interrupt or End followed by
+// afterAction (the recheck, the dependents sweep and the sibling gate, plan §3.5).
+func (d *Daemon) runAction(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container, body func() outcome) {
 	if ctx.Err() != nil {
 		return
 	}
 	d.eng.Begin(t, plan, dec)
-	actx, cancel := d.actionContext(ctx, actionTimeout)
-	defer cancel()
-	var err error
-	switch plan.Act {
-	case rules.ActionRestart:
-		err = d.o.Actor.Restart(actx, c.ID)
-	case rules.ActionStart:
-		err = d.o.Actor.Start(actx, c.ID)
-	}
-	if interrupted(ctx, err) {
-		d.eng.Interrupt(t, plan, err)
+	o := body()
+	if o.interrupted != nil {
+		d.eng.Interrupt(t, plan, o.interrupted)
 		return
 	}
-	recheck := d.eng.End(t, plan, engine.Result{Err: err, DryRun: d.cfg.DryRun}, cfg)
-	d.afterAction(t, c, recheck)
+	recheck := d.eng.End(t, plan, o.res, cfg)
+	if !o.noFollowUp {
+		d.afterAction(t, c, recheck)
+	}
 }
 
 // actionContext is the context of a mutating action: ctx's values and the timeout, but not ctx's cancellation, so a stop
@@ -925,6 +951,11 @@ func (d *Daemon) keyOf(s docker.Summary) string {
 	return docker.StateKey(d.cfg.HostID, s.Name, s.Labels)
 }
 
+// containerKey is keyOf for an inspected container.
+func (d *Daemon) containerKey(c docker.Container) string {
+	return docker.StateKey(d.cfg.HostID, c.Name, c.Labels)
+}
+
 // parentDownOrBusy reports whether a resolved parent is not running or is being healed: the rules wait for it then.
 func parentDownOrBusy(parents []rules.Parent) bool {
 	for _, p := range parents {
@@ -936,17 +967,6 @@ func parentDownOrBusy(parents []rules.Parent) bool {
 }
 
 func hasRef(s docker.Summary) bool { return docker.ContainerRef(s.NetworkMode) != "" }
-
-// containerRefs lists the container: references of a container, raw: network_mode, ipc and pid.
-func containerRefs(c docker.Container) []string {
-	out := []string{}
-	for _, m := range []string{c.NetworkMode, c.IpcMode, c.PidMode} {
-		if r := docker.ContainerRef(m); r != "" {
-			out = append(out, r)
-		}
-	}
-	return out
-}
 
 // refsOf is every container: reference the daemon knows a listed container holds. The list carries only NetworkMode; the
 // ipc and pid references are known from an inspect (process, learnRefs) and are those of the last one.
@@ -1052,16 +1072,10 @@ func (d *Daemon) refresh(ctx context.Context) error {
 // parentsOf resolves each container: reference of c against the last list.
 func (d *Daemon) parentsOf(ctx context.Context, c docker.Container) []rules.Parent {
 	var out []rules.Parent
-	for _, r := range []struct{ kind, mode string }{
-		{rules.RefNetwork, c.NetworkMode}, {rules.RefIPC, c.IpcMode}, {rules.RefPID, c.PidMode},
-	} {
-		ref := docker.ContainerRef(r.mode)
-		if ref == "" {
-			continue
-		}
-		p := rules.Parent{Kind: r.kind, Ref: ref}
+	for _, r := range nsRefs(c) {
+		p := rules.Parent{Kind: r.Kind, Ref: r.Ref}
 		for _, s := range d.idx.all {
-			if !docker.MatchesRef(s.ID, s.Name, ref) {
+			if !docker.MatchesRef(s.ID, s.Name, r.Ref) {
 				continue
 			}
 			p.Found, p.ID = true, s.ID

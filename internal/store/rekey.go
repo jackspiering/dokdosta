@@ -2,16 +2,24 @@ package store
 
 import (
 	"database/sql"
-	"encoding/json"
 	"sort"
 	"strings"
 )
 
-// RekeyMeta says which meta rows hold a state key: Keyed are prefixes followed by the key ("parents:<key>"), WithKey are
-// prefixes whose value is a JSON object with the key in its "key" field ("tagmoved:<ref>"). The daemon owns both lists.
+// RekeyMeta says which meta rows hold a state key: Keyed are prefixes followed by the key ("parents:<key>"); Values are
+// prefixes whose value holds keys in a format only its owner knows ("tagmoved:<ref>", a JSON record of the daemon's). The
+// owners register them (daemon.MetaRekey); the store only runs them in its transaction.
 type RekeyMeta struct {
-	Keyed   []string
-	WithKey []string
+	Keyed  []string
+	Values []ValueRekey
+}
+
+// ValueRekey rewrites the keys inside the values of the meta rows under Prefix. Rewrite gets a value and the mapping of
+// one key to its key under the current host (the key itself when it stays), and returns the new value and whether it
+// changed. A value it cannot read is returned unchanged.
+type ValueRekey struct {
+	Prefix  string
+	Rewrite func(value string, rekey func(key string) string) (string, bool)
 }
 
 // Rekey gives every persisted record keyed by a state key of another host the current host (plan v3.13 item 12). One
@@ -181,12 +189,18 @@ func moveKey(tx *sql.Tx, from, to string, m RekeyMeta) error {
 	return nil
 }
 
-// rekeyMetaValues moves the key inside the JSON values of the WithKey rows (the container that moved a tag).
+// rekeyMetaValues moves the keys inside the values of the Values rows, through their owners' Rewrite.
 func rekeyMetaValues(tx *sql.Tx, host string, m RekeyMeta) error {
-	for _, p := range m.WithKey {
+	rekey := func(k string) string {
+		if to, ok := rekeyed(k, host); ok {
+			return to
+		}
+		return k
+	}
+	for _, vr := range m.Values {
 		type row struct{ k, v string }
 		var rows []row
-		r, err := tx.Query(`SELECT key, value FROM meta WHERE substr(key, 1, ?) = ?`, len(p), p)
+		r, err := tx.Query(`SELECT key, value FROM meta WHERE substr(key, 1, ?) = ?`, len(vr.Prefix), vr.Prefix)
 		if err != nil {
 			return err
 		}
@@ -202,45 +216,11 @@ func rekeyMetaValues(tx *sql.Tx, host string, m RekeyMeta) error {
 			return err
 		}
 		for _, x := range rows {
-			var obj map[string]json.RawMessage
-			if json.Unmarshal([]byte(x.v), &obj) != nil {
-				continue
-			}
-			changed := false
-			var k string
-			if json.Unmarshal(obj["key"], &k) == nil {
-				if to, ok := rekeyed(k, host); ok && to != k {
-					obj["key"], _ = json.Marshal(to)
-					changed = true
-				}
-			}
-			// The followers (plan v3.13 item 6) are keys too. Their other fields are kept as they are.
-			var followers []map[string]json.RawMessage
-			if raw, ok := obj["followers"]; ok && json.Unmarshal(raw, &followers) == nil {
-				followersChanged := false
-				for _, f := range followers {
-					var fk string
-					if json.Unmarshal(f["key"], &fk) != nil {
-						continue
-					}
-					if to, ok := rekeyed(fk, host); ok && to != fk {
-						f["key"], _ = json.Marshal(to)
-						followersChanged = true
-					}
-				}
-				if followersChanged {
-					obj["followers"], _ = json.Marshal(followers)
-					changed = true
-				}
-			}
+			v, changed := vr.Rewrite(x.v, rekey)
 			if !changed {
 				continue
 			}
-			b, err := json.Marshal(obj)
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(`UPDATE meta SET value = ? WHERE key = ?`, string(b), x.k); err != nil {
+			if _, err := tx.Exec(`UPDATE meta SET value = ? WHERE key = ?`, v, x.k); err != nil {
 				return err
 			}
 		}
