@@ -69,13 +69,9 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 //
 // In dry-run nothing is pulled: the guard runs (it only reads), and the pull goes to compose.DryRun.
 func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container) {
-	if why := d.recreateBlocker(c); why != "" {
+	p, why := d.composeProject(c)
+	if why != "" {
 		d.refuse(t, dec, "cannot pull: "+why)
-		return
-	}
-	p, err := compose.ProjectFromLabels(c.Labels)
-	if err != nil {
-		d.refuse(t, dec, "cannot pull: "+err.Error())
 		return
 	}
 	if c.Image == "" {
@@ -123,45 +119,38 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 	// rollback, so the one message puts them all back.
 	sidecars := d.sidecarsSharing(ctx, c, ref, old, oldPlain)
 
-	if ctx.Err() != nil {
-		return
-	}
-	d.eng.Begin(t, plan, dec)
+	d.runAction(ctx, t, c, dec, plan, cfg, func() outcome { return d.pullAndUp(ctx, t, c, dec, p, ref, arch, old, oldPlain, sidecars) })
+}
+
+// pullAndUp is rung 3's action, steps 2 to 5 of executePull, inside runAction.
+func (d *Daemon) pullAndUp(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project, ref, arch, old, oldPlain string, sidecars []string) outcome {
 	// The pull itself stops with dokdosta (killing a pull changes no container) and is then not counted.
 	pctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
 	d.markActing()
 	pullErr := d.o.ComposeActor.Pull(pctx, p)
 	if interrupted(ctx, pullErr) {
-		d.eng.Interrupt(t, plan, pullErr)
-		return
+		return outcome{interrupted: pullErr}
 	}
 	// Whatever follows a pull that ran is finished even when dokdosta is stopping: a pull that moved the image must be
 	// followed by its up, or the next run's pull would find "no newer image" and SUSPEND a container never moved onto it.
 	actx, acancel := d.actionContext(ctx, composeTimeout)
 	defer acancel()
 	if d.cfg.DryRun {
-		recheck := d.eng.End(t, plan, engine.Result{DryRun: true}, cfg)
-		d.afterAction(t, c, recheck)
-		return
+		return outcome{res: engine.Result{DryRun: true}}
 	}
 	if pullErr != nil {
-		recheck := d.eng.End(t, plan, engine.Result{Err: fmt.Errorf("compose pull: %w", pullErr)}, cfg)
-		d.afterAction(t, c, recheck)
-		return
+		return outcome{res: engine.Result{Err: fmt.Errorf("compose pull: %w", pullErr)}}
 	}
 	now, nowErr := d.rd.ImageID(actx, ref, arch)
 	if nowErr != nil {
-		recheck := d.eng.End(t, plan, engine.Result{Err: fmt.Errorf("the pull ran, but the image %s cannot be read afterwards: %w", ref, nowErr)}, cfg)
-		d.afterAction(t, c, recheck)
-		return
+		return outcome{res: engine.Result{Err: fmt.Errorf("the pull ran, but the image %s cannot be read afterwards: %w", ref, nowErr)}}
 	}
 	if old != "" && now == old {
-		d.eng.End(t, plan, engine.Result{
+		return outcome{noFollowUp: true, res: engine.Result{
 			Exhausted: fmt.Sprintf("the pull found no newer image for %s (still %s)", ref, shortID(old)),
 			Attrs:     map[string]string{"outcome": "unchanged", "ref": ref, "image": old},
-		}, cfg)
-		return
+		}}
 	}
 
 	// The image changed. Record it first: the tag moved for every stack that shares it, whether or not the up works.
@@ -182,12 +171,12 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 
 	attrs := map[string]string{"ref": ref, "old": old, "new": now, "at": at.UTC().Format(time.RFC3339), "ok": fmt.Sprint(upErr == nil)}
 	upgradeRollback(attrs, p, ref, firstNonEmpty(oldPlain, old), sidecars)
-	outcome, msg := "upgraded", fmt.Sprintf("%s: %s moved to %s; recreated", ref, shortID(old), shortID(now))
+	result, msg := "upgraded", fmt.Sprintf("%s: %s moved to %s; recreated", ref, shortID(old), shortID(now))
 	if old == "" {
 		msg = fmt.Sprintf("%s: pulled %s (no local copy before); recreated", ref, shortID(now))
 	}
 	if upErr != nil {
-		outcome, msg = "upgrade-failed", strings.Replace(msg, "recreated", "the recreate failed: "+upErr.Error(), 1)
+		result, msg = "upgrade-failed", strings.Replace(msg, "recreated", "the recreate failed: "+upErr.Error(), 1)
 		if nr := (upNotRun{}); errors.As(upErr, &nr) {
 			msg = strings.Replace(msg, "the recreate failed: ", "the recreate was not run: ", 1)
 			attrs["not_run"] = "true"
@@ -195,8 +184,7 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 		attrs["error"] = upErr.Error()
 	}
 	d.eng.Note(t, engine.TagMoved, msg, attrs)
-	recheck := d.eng.End(t, plan, engine.Result{Err: upErr, Attrs: map[string]string{"outcome": outcome, "ref": ref, "old": old, "new": now}}, cfg)
-	d.afterAction(t, c, recheck)
+	return outcome{res: engine.Result{Err: upErr, Attrs: map[string]string{"outcome": result, "ref": ref, "old": old, "new": now}}}
 }
 
 // upNotRun is why the up after a pull that moved the image was not run (see upRefusal). The move is recorded either way.

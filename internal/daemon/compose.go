@@ -123,24 +123,30 @@ func (d *Daemon) composeStatus() ComposeStatus {
 // container that compose did not make, a service with more than one container (every compose command names the service
 // and acts on all of its containers) and compose inputs that are missing or unreadable (plan §3.4 *Fallbacks*).
 func (d *Daemon) recreateBlocker(c docker.Container) string {
+	_, why := d.composeProject(c)
+	return why
+}
+
+// composeProject is recreateBlocker that also returns the project the compose rungs act on when they can.
+func (d *Daemon) composeProject(c docker.Container) (compose.Project, string) {
 	cs := d.cs()
 	if !cs.gate.Recreate {
-		return "the compose rungs are disabled: " + cs.gate.Reason
+		return compose.Project{}, "the compose rungs are disabled: " + cs.gate.Reason
 	}
 	if _, _, _, ok := docker.ComposeKeyParts(c.Labels); !ok {
-		return "not a compose container: only rung 1 applies"
+		return compose.Project{}, "not a compose container: only rung 1 applies"
 	}
 	p, err := compose.ProjectFromLabels(c.Labels)
 	if err != nil {
-		return err.Error()
+		return compose.Project{}, err.Error()
 	}
 	if err := p.Readable(d.o.Stat); err != nil {
-		return err.Error()
+		return compose.Project{}, err.Error()
 	}
 	if n := d.replicas(c); n > 1 {
-		return fmt.Sprintf("service %s has %d containers (scaled): a compose recreate acts on all of them, so only rung 1 applies", c.Labels[docker.LabelService], n)
+		return compose.Project{}, fmt.Sprintf("service %s has %d containers (scaled): a compose recreate acts on all of them, so only rung 1 applies", c.Labels[docker.LabelService], n)
 	}
-	return ""
+	return p, ""
 }
 
 // replicas counts the replicas compose sees for c's service in its project, from the last list (which includes the
@@ -321,13 +327,9 @@ func (d *Daemon) requestDependentSweep(at time.Time) {
 // (`up -d --force-recreate --no-deps ...`); ActionRecreateStale is the dependents step after a parent recreate
 // (`up -d --no-deps ...` without --force-recreate, then a post-check, and --force-recreate only if it is still stale).
 func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container) {
-	if why := d.recreateBlocker(c); why != "" {
+	p, why := d.composeProject(c)
+	if why != "" {
 		d.refuse(t, dec, "cannot recreate: "+why)
-		return
-	}
-	p, err := compose.ProjectFromLabels(c.Labels)
-	if err != nil {
-		d.refuse(t, dec, "cannot recreate: "+err.Error())
 		return
 	}
 	stale := plan.Act == rules.ActionRecreateStale
@@ -368,28 +370,24 @@ func (d *Daemon) executeRecreate(ctx context.Context, t engine.Target, c docker.
 		return
 	}
 
-	d.eng.Begin(t, plan, dec)
-	actx, cancel := d.actionContext(ctx, composeTimeout)
-	defer cancel()
-	var runErr error
-	d.markActing()
-	if stale {
-		runErr = d.o.ComposeActor.Up(actx, p)
-		if runErr == nil && !d.cfg.DryRun {
-			runErr = d.postCheckStale(actx, t, c, p)
+	d.runAction(ctx, t, c, dec, plan, cfg, func() outcome {
+		actx, cancel := d.actionContext(ctx, composeTimeout)
+		defer cancel()
+		var runErr error
+		d.markActing()
+		if stale {
+			runErr = d.o.ComposeActor.Up(actx, p)
+			if runErr == nil && !d.cfg.DryRun {
+				runErr = d.postCheckStale(actx, t, c, p)
+			}
+		} else {
+			runErr = d.o.ComposeActor.Recreate(actx, p)
+			if allow && !d.cfg.DryRun && !interrupted(ctx, runErr) {
+				d.noteUpgrade(actx, t, c, p, runErr)
+			}
 		}
-	} else {
-		runErr = d.o.ComposeActor.Recreate(actx, p)
-		if allow && !d.cfg.DryRun && !interrupted(ctx, runErr) {
-			d.noteUpgrade(actx, t, c, p, runErr)
-		}
-	}
-	if interrupted(ctx, runErr) {
-		d.eng.Interrupt(t, plan, runErr)
-		return
-	}
-	recheck := d.eng.End(t, plan, engine.Result{Err: runErr, DryRun: d.cfg.DryRun}, cfg)
-	d.afterAction(t, c, recheck)
+		return d.ended(ctx, runErr, engine.Result{Err: runErr, DryRun: d.cfg.DryRun})
+	})
 }
 
 // postCheckStale looks at the dependent after the non-forced up: it must exist, run, and point at containers that exist
