@@ -307,12 +307,14 @@ func shortDur(d time.Duration) string {
 // "recreate skipped by the drift guard (<finding>): <why the incident opened>".
 var driftBlock = regexp.MustCompile(`^recreate skipped by the drift guard \((.*)\): (.*)$`)
 
-// driftWhy turns the guard's finding into the reason in plain words.
+// driftWhy turns the guard's finding into the reason in plain words. A finding reads "<check>: <cause>" (compose.Finding).
+// The SUSPENDED document carries only that text, so the page still matches the guard's wording: the check's prefix and a
+// phrase of the cause. Matching on the checks alone would need them in the API's SUSPENDED document (a hub-contract change).
 func driftWhy(finding string) string {
 	switch {
 	case strings.HasPrefix(finding, "config: compose would recreate"), strings.HasPrefix(finding, "config: config --hash"):
 		return "the configuration or image changed since the container was created"
-	case strings.HasPrefix(finding, "image ") && strings.Contains(finding, "the tag moved"):
+	case strings.HasPrefix(finding, "image: ") && strings.Contains(finding, "the tag moved"):
 		return "the image tag moved since the container was created"
 	default:
 		return finding

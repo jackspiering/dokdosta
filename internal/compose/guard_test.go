@@ -223,6 +223,9 @@ func TestGuardNotesAnUpgradedHostPlugin(t *testing.T) {
 		!strings.Contains(got[0].Cause, "compose upgraded from 5.2.0 to 5.6.0 since this container was created") {
 		t.Fatalf("%v", got)
 	}
+	if u := got[0].Upgrade; u == nil || u.From != "5.2.0" || u.To != "5.6.0" {
+		t.Fatalf("the upgrade is not structured: %+v", u)
+	}
 	// Same release: no note. No version label: no note.
 	in.Labels[LabelVersion] = "5.6.0"
 	if got = g.Check(context.Background(), in); len(got) != 1 || strings.Contains(got[0].Cause, "upgraded") {
@@ -468,5 +471,34 @@ func TestGuardSkewNeedsAChangeOnceTheOracleAnsweredForAReferenceHolder(t *testin
 	f.OracleFn = func(Project, string) (Oracle, error) { return Oracle{}, ErrUnparseable }
 	if got := (Guard{Compose: f, Images: img}).Check(context.Background(), in); causes(got) != CheckSkew {
 		t.Fatalf("no answer from the oracle: check 3 stands alone: %v", got)
+	}
+}
+
+func TestAttrsCarryTheChecksInOrderOnce(t *testing.T) {
+	fs := []Finding{{Check: CheckImage, Cause: "a"}, {Check: CheckSkew, Cause: "b"}, {Check: CheckImage, Cause: "c"},
+		{Check: CheckConfig, Cause: "d", Upgrade: &Upgrade{From: "5.2.0", To: "5.6.0"}}}
+	a := Attrs(fs)
+	if a[AttrChecks] != "image,skew,config" || a[AttrComposeFrom] != "5.2.0" || a[AttrComposeTo] != "5.6.0" {
+		t.Fatalf("%v", a)
+	}
+	if Attrs(nil) != nil {
+		t.Fatal("no findings, no attributes")
+	}
+}
+
+func TestOnlyVerifiedDriftIsOverridable(t *testing.T) {
+	for _, c := range []struct {
+		fs   []Finding
+		want bool
+	}{
+		{nil, false},
+		{[]Finding{{Check: CheckConfig}}, true},
+		{[]Finding{{Check: CheckConfig}, {Check: CheckImage}}, true},
+		{[]Finding{{Check: CheckImage}, {Check: CheckSkew}}, false},
+		{[]Finding{{Check: CheckUnverified}}, false},
+	} {
+		if got := Overridable(c.fs); got != c.want {
+			t.Errorf("%v: %v", c.fs, got)
+		}
 	}
 }

@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -22,125 +21,6 @@ import (
 // for up to composeTimeout); Healthy tolerates an action in flight for this long plus a minute.
 const pullTimeout = 10 * time.Minute
 
-// metaTagMoved is the prefix of the store keys that remember which container moved which tag.
-const metaTagMoved = "tagmoved:"
-
-// tagMove is a record that dokdosta's own pull rung moved a tag: other stacks that share the tag see image drift
-// afterwards, and the drift message names who did it and when (plan §3.6, §3.7).
-type tagMove struct {
-	Ref      string    `json:"ref"`       // the normalized reference
-	Key      string    `json:"key"`       // the state key of the container whose pull rung moved it
-	At       time.Time `json:"at"`        // when
-	Old      string    `json:"old"`       // what the reference resolved to for this platform before ("" if there was no local image)
-	New      string    `json:"new"`       // ... and after
-	OldPlain string    `json:"old_plain"` // the same without a platform: the index digest on the containerd store
-	NewPlain string    `json:"new_plain"`
-	// Followed marks a move that was not made by dokdosta: rung 2 recreated a pull-enabled container onto the image the
-	// tag had been moved to by someone else (plan v3.13 item 6). The dependents step may take it like a pull's, but it is
-	// not named as the mover in a drift block of another stack.
-	Followed bool `json:"followed,omitempty"`
-	// Followers are other pull-enabled containers whose rung 2 took the same result (same New): each with its own old image,
-	// so that their sidecars may take it too, and none of them replaces the mover or the others.
-	Followers []mover `json:"followers,omitempty"`
-}
-
-// mover is one container's part in a move: who, when, and the image it was running (as the compose image label and as the
-// image ID), which its sidecars were created from.
-type mover struct {
-	Key      string    `json:"key"`
-	At       time.Time `json:"at"`
-	Old      string    `json:"old"`
-	OldPlain string    `json:"old_plain"`
-}
-
-func (m tagMove) movers() []mover {
-	return append([]mover{{Key: m.Key, At: m.At, Old: m.Old, OldPlain: m.OldPlain}}, m.Followers...)
-}
-
-// recordFollowed remembers that rung 2 of the container took a tag that someone else moved. When the record of the tag
-// already stands for the same result (a pull of another container, or another container's followed move), the container
-// is added to it and nothing is replaced; otherwise it is the record.
-func (d *Daemon) recordFollowed(ref string, by mover, now, nowPlain string) {
-	ref = normalizeRef(ref)
-	if cur, ok := d.moveOf(ref); ok && cur.New == now && cur.NewPlain == nowPlain {
-		if cur.Key == by.Key {
-			return
-		}
-		cur.Followers = slices.DeleteFunc(slices.Clone(cur.Followers), func(f mover) bool { return f.Key == by.Key })
-		cur.Followers = append(cur.Followers, by)
-		d.recordMove(cur)
-		return
-	}
-	d.recordMove(tagMove{Ref: ref, Key: by.Key, At: by.At, Followed: true, Old: by.Old, OldPlain: by.OldPlain, New: now, NewPlain: nowPlain})
-}
-
-// normalizeRef makes `nginx`, `nginx:latest` and `docker.io/library/nginx:latest` the same reference, so a move recorded
-// under one spelling is found under another (plan §3.7). A reference with a digest is kept as it is.
-func normalizeRef(ref string) string {
-	r := strings.TrimSpace(ref)
-	if r == "" || strings.Contains(r, "@") {
-		return r
-	}
-	for _, p := range []string{"index.docker.io/", "registry-1.docker.io/", "docker.io/"} {
-		r = strings.TrimPrefix(r, p)
-	}
-	if rest, ok := strings.CutPrefix(r, "library/"); ok && !strings.Contains(rest, "/") {
-		r = rest
-	}
-	if last := r[strings.LastIndex(r, "/")+1:]; !strings.Contains(last, ":") {
-		r += ":latest"
-	}
-	return r
-}
-
-// recordMove remembers the move: in memory, and in the store when there is one, so that it is still known after a restart
-// of dokdosta (a drift block on another stack can come days later).
-func (d *Daemon) recordMove(m tagMove) {
-	if d.moves == nil {
-		d.moves = map[string]tagMove{}
-	}
-	d.moves[m.Ref] = m
-	if d.o.Meta != nil {
-		if b, err := json.Marshal(m); err == nil {
-			d.o.Meta.SetMeta(metaTagMoved+m.Ref, string(b))
-		}
-	}
-}
-
-func (d *Daemon) moveOf(ref string) (tagMove, bool) {
-	ref = normalizeRef(ref)
-	if m, ok := d.moves[ref]; ok {
-		return m, true
-	}
-	if d.o.Meta != nil {
-		if v, ok, _ := d.o.Meta.Meta(metaTagMoved + ref); ok { // a read error is counted and logged by the store
-			var m tagMove
-			if json.Unmarshal([]byte(v), &m) == nil && m.Ref == ref {
-				return m, true
-			}
-		}
-	}
-	return tagMove{}, false
-}
-
-// moverOf says who moved the tag that the container's image reference points at, or returns false. It claims the move only
-// while the reference still resolves to what that pull produced: if someone moved the tag again since, nothing is
-// said about the earlier pull.
-func (d *Daemon) moverOf(ctx context.Context, c docker.Container) (tagMove, bool) {
-	m, ok := d.moveOf(c.Image)
-	if !ok {
-		return tagMove{}, false
-	}
-	arch := d.cs().server.Arch
-	if now, err := d.rd.ImageID(ctx, c.Image, arch); err == nil && m.New != "" && now == m.New {
-		return m, true
-	}
-	if now, err := d.rd.ImageID(ctx, c.Image, ""); err == nil && m.NewPlain != "" && now == m.NewPlain {
-		return m, true
-	}
-	return tagMove{}, false
-}
-
 // guardVerdict runs the drift guard (plan §3.6) before a recreate or a pull and says whether the action may go ahead. When it may not, the container is SUSPENDED (Blocked); when the findings were
 // verified drift and DOKDOSTA_DRIFT_GUARD=warn, the action goes ahead and says so. It runs in dry-run too: it only reads.
 func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project, allowImageMove, own bool) bool {
@@ -152,21 +32,19 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 		return false // dokdosta is stopping: a check cut short is not a finding, and nothing is blocked or recorded
 	}
 	var findings []string
-	var extra map[string]string
-	verifiedOnly := true
+	extra := compose.Attrs(fs)
 	for _, f := range fs {
 		text := f.String()
 		if f.Check == compose.CheckImage {
 			if m, ok := d.moverOf(ctx, c); ok && !m.Followed { // a followed move was made by someone else
 				text += fmt.Sprintf(" (dokdosta moved this tag: %s pulled it at %s)", m.Key, m.At.UTC().Format(time.RFC3339))
-				extra = map[string]string{"moved_by": m.Key, "moved_at": m.At.UTC().Format(time.RFC3339), "moved_ref": m.Ref}
+				extra["moved_by"], extra["moved_at"], extra["moved_ref"] = m.Key, m.At.UTC().Format(time.RFC3339), m.Ref
 			}
 		}
 		findings = append(findings, text)
-		verifiedOnly = verifiedOnly && f.Verified()
 	}
-	if d.cfg.DriftGuard == config.DriftWarn && verifiedOnly {
-		d.eng.Warned(t, findings) // warn overrides verified drift only
+	if d.cfg.DriftGuard == config.DriftWarn && compose.Overridable(fs) {
+		d.eng.Warned(t, findings, extra) // warn overrides verified drift only
 		return true
 	}
 	if d.cfg.DriftGuard == config.DriftWarn {
@@ -191,13 +69,9 @@ func (d *Daemon) guardVerdict(ctx context.Context, t engine.Target, c docker.Con
 //
 // In dry-run nothing is pulled: the guard runs (it only reads), and the pull goes to compose.DryRun.
 func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container) {
-	if why := d.recreateBlocker(c); why != "" {
+	p, why := d.composeProject(c)
+	if why != "" {
 		d.refuse(t, dec, "cannot pull: "+why)
-		return
-	}
-	p, err := compose.ProjectFromLabels(c.Labels)
-	if err != nil {
-		d.refuse(t, dec, "cannot pull: "+err.Error())
 		return
 	}
 	if c.Image == "" {
@@ -245,51 +119,44 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 	// rollback, so the one message puts them all back.
 	sidecars := d.sidecarsSharing(ctx, c, ref, old, oldPlain)
 
-	if ctx.Err() != nil {
-		return
-	}
-	d.eng.Begin(t, plan, dec)
+	d.runAction(ctx, t, c, dec, plan, cfg, func() outcome { return d.pullAndUp(ctx, t, c, dec, p, ref, arch, old, oldPlain, sidecars) })
+}
+
+// pullAndUp is rung 3's action, steps 2 to 5 of executePull, inside runAction.
+func (d *Daemon) pullAndUp(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, p compose.Project, ref, arch, old, oldPlain string, sidecars []string) outcome {
 	// The pull itself stops with dokdosta (killing a pull changes no container) and is then not counted.
 	pctx, cancel := context.WithTimeout(ctx, pullTimeout)
 	defer cancel()
 	d.markActing()
 	pullErr := d.o.ComposeActor.Pull(pctx, p)
 	if interrupted(ctx, pullErr) {
-		d.eng.Interrupt(t, plan, pullErr)
-		return
+		return outcome{interrupted: pullErr}
 	}
 	// Whatever follows a pull that ran is finished even when dokdosta is stopping: a pull that moved the image must be
 	// followed by its up, or the next run's pull would find "no newer image" and SUSPEND a container never moved onto it.
 	actx, acancel := d.actionContext(ctx, composeTimeout)
 	defer acancel()
 	if d.cfg.DryRun {
-		recheck := d.eng.End(t, plan, engine.Result{DryRun: true}, cfg)
-		d.afterAction(t, c, recheck)
-		return
+		return outcome{res: engine.Result{DryRun: true}}
 	}
 	if pullErr != nil {
-		recheck := d.eng.End(t, plan, engine.Result{Err: fmt.Errorf("compose pull: %w", pullErr)}, cfg)
-		d.afterAction(t, c, recheck)
-		return
+		return outcome{res: engine.Result{Err: fmt.Errorf("compose pull: %w", pullErr)}}
 	}
 	now, nowErr := d.rd.ImageID(actx, ref, arch)
 	if nowErr != nil {
-		recheck := d.eng.End(t, plan, engine.Result{Err: fmt.Errorf("the pull ran, but the image %s cannot be read afterwards: %w", ref, nowErr)}, cfg)
-		d.afterAction(t, c, recheck)
-		return
+		return outcome{res: engine.Result{Err: fmt.Errorf("the pull ran, but the image %s cannot be read afterwards: %w", ref, nowErr)}}
 	}
 	if old != "" && now == old {
-		d.eng.End(t, plan, engine.Result{
+		return outcome{noFollowUp: true, res: engine.Result{
 			Exhausted: fmt.Sprintf("the pull found no newer image for %s (still %s)", ref, shortID(old)),
 			Attrs:     map[string]string{"outcome": "unchanged", "ref": ref, "image": old},
-		}, cfg)
-		return
+		}}
 	}
 
 	// The image changed. Record it first: the tag moved for every stack that shares it, whether or not the up works.
 	nowPlain, _ := d.rd.ImageID(actx, ref, "")
 	at := d.clk.Now()
-	d.recordMove(tagMove{Ref: normalizeRef(ref), Key: t.Key, At: at, Old: old, New: now, OldPlain: oldPlain, NewPlain: nowPlain})
+	d.moves.record(tagMove{Ref: normalizeRef(ref), Key: t.Key, At: at, Old: old, New: now, OldPlain: oldPlain, NewPlain: nowPlain})
 
 	var upErr error
 	if why := d.upRefusal(actx, t, c, dec, p); why != "" {
@@ -303,20 +170,13 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 	}
 
 	attrs := map[string]string{"ref": ref, "old": old, "new": now, "at": at.UTC().Format(time.RFC3339), "ok": fmt.Sprint(upErr == nil)}
-	if back := firstNonEmpty(oldPlain, old); back != "" {
-		attrs["old_image"] = back
-		also := sidecars
-		attrs["rollback_tag"], attrs["rollback_up"] = compose.RollbackCommands(p, ref, back, also...)
-		if len(also) > 0 {
-			attrs["sidecars"] = strings.Join(also, ",")
-		}
-	}
-	outcome, msg := "upgraded", fmt.Sprintf("%s: %s moved to %s; recreated", ref, shortID(old), shortID(now))
+	upgradeRollback(attrs, p, ref, firstNonEmpty(oldPlain, old), sidecars)
+	result, msg := "upgraded", fmt.Sprintf("%s: %s moved to %s; recreated", ref, shortID(old), shortID(now))
 	if old == "" {
 		msg = fmt.Sprintf("%s: pulled %s (no local copy before); recreated", ref, shortID(now))
 	}
 	if upErr != nil {
-		outcome, msg = "upgrade-failed", strings.Replace(msg, "recreated", "the recreate failed: "+upErr.Error(), 1)
+		result, msg = "upgrade-failed", strings.Replace(msg, "recreated", "the recreate failed: "+upErr.Error(), 1)
 		if nr := (upNotRun{}); errors.As(upErr, &nr) {
 			msg = strings.Replace(msg, "the recreate failed: ", "the recreate was not run: ", 1)
 			attrs["not_run"] = "true"
@@ -324,8 +184,7 @@ func (d *Daemon) executePull(ctx context.Context, t engine.Target, c docker.Cont
 		attrs["error"] = upErr.Error()
 	}
 	d.eng.Note(t, engine.TagMoved, msg, attrs)
-	recheck := d.eng.End(t, plan, engine.Result{Err: upErr, Attrs: map[string]string{"outcome": outcome, "ref": ref, "old": old, "new": now}}, cfg)
-	d.afterAction(t, c, recheck)
+	return outcome{res: engine.Result{Err: upErr, Attrs: map[string]string{"outcome": result, "ref": ref, "old": old, "new": now}}}
 }
 
 // upNotRun is why the up after a pull that moved the image was not run (see upRefusal). The move is recorded either way.
@@ -504,7 +363,7 @@ func (d *Daemon) dependentMayTakeMove(ctx context.Context, c docker.Container) b
 		if !labelIsOneOf(c.Labels[compose.LabelImage], []string{mv.Old, mv.OldPlain}) {
 			continue
 		}
-		for _, dep := range d.parentServices(docker.StateKey(d.cfg.HostID, c.Name, c.Labels), c.Labels) {
+		for _, dep := range d.parentServices(d.containerKey(c), c.Labels) {
 			for _, s := range d.idx.all {
 				if s.Labels[docker.LabelProject] != project || s.Labels[docker.LabelService] != dep || d.keyOf(s) != mv.Key {
 					continue
@@ -539,17 +398,11 @@ func (d *Daemon) noteUpgrade(ctx context.Context, t engine.Target, old docker.Co
 	var sidecars []string
 	if now, err := d.rd.ImageID(ctx, old.Image, d.cs().server.Arch); err == nil && now != "" {
 		nowPlain, _ := d.rd.ImageID(ctx, old.Image, "")
-		d.recordFollowed(old.Image, mover{Key: t.Key, At: d.clk.Now(), Old: old.Labels[compose.LabelImage], OldPlain: old.ImageID}, now, nowPlain)
+		d.moves.follow(old.Image, mover{Key: t.Key, At: d.clk.Now(), Old: old.Labels[compose.LabelImage], OldPlain: old.ImageID}, now, nowPlain)
 		sidecars = d.sidecarsSharing(ctx, old, old.Image, old.Labels[compose.LabelImage], old.ImageID)
 	}
-	tag, up := compose.RollbackCommands(p, old.Image, old.ImageID, sidecars...)
-	attrs := map[string]string{
-		"ref": old.Image, "old": old.ImageID, "new": cur.ImageID, "old_image": old.ImageID,
-		"rollback_tag": tag, "rollback_up": up, "ok": "true",
-	}
-	if len(sidecars) > 0 {
-		attrs["sidecars"] = strings.Join(sidecars, ",")
-	}
+	attrs := map[string]string{"ref": old.Image, "old": old.ImageID, "new": cur.ImageID, "ok": "true"}
+	upgradeRollback(attrs, p, old.Image, old.ImageID, sidecars) // old.ImageID is set: checked above
 	msg := fmt.Sprintf("%s: %s -> %s; recreated", old.Image, shortID(old.ImageID), shortID(cur.ImageID))
 	if recreateErr != nil {
 		attrs["ok"], attrs["error"] = "false", recreateErr.Error()

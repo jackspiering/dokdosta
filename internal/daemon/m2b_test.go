@@ -765,13 +765,13 @@ func TestLearnedParentsFollowTheLabelAndOnlyGrowFromLiveReferences(t *testing.T)
 	k := key("p", "dep")
 	h.tick()
 	h.advance(time.Minute)
-	if got := strings.Join(h.d.knownParents(k), ","); got != "other" {
+	if got := strings.Join(h.d.learned.known(k), ","); got != "other" {
 		t.Fatalf("from the label: %q", got)
 	}
 	h.set(dep.ID, func(c *docker.Container) { c.Labels = maps.Clone(c.Labels); delete(c.Labels, compose.LabelDependsOn) })
 	h.advance(time.Minute)
 	// an empty label forgets nothing, and the live container: reference adds the network parent
-	if got := strings.Join(h.d.knownParents(k), ","); got != "other,parent" {
+	if got := strings.Join(h.d.learned.known(k), ","); got != "other,parent" {
 		t.Fatalf("an empty label must not shrink what was learned, and a live reference adds its service: %q", got)
 	}
 	if v, _, _ := st.Meta(metaParents + k); v != "other,parent" {
@@ -782,7 +782,7 @@ func TestLearnedParentsFollowTheLabelAndOnlyGrowFromLiveReferences(t *testing.T)
 		c.Labels[compose.LabelDependsOn] = "parent:service_started:true"
 	})
 	h.advance(time.Minute)
-	if got := strings.Join(h.d.knownParents(k), ","); got != "parent" {
+	if got := strings.Join(h.d.learned.known(k), ","); got != "parent" {
 		t.Fatalf("a non-empty label is authoritative: %q", got)
 	}
 }
@@ -1249,6 +1249,10 @@ func TestUpgradedHostPluginIsNotedInTheDriftMessage(t *testing.T) {
 		!strings.Contains(b[0].Message, "compose upgraded from 5.2.0 to 5.6.0 since this container was created") {
 		t.Fatalf("%+v", b)
 	}
+	// The notification's hint is chosen from these, not from the wording.
+	if a := b[0].Attrs; a[compose.AttrChecks] != "config" || a[compose.AttrComposeFrom] != "5.2.0" || a[compose.AttrComposeTo] != "5.6.0" {
+		t.Fatalf("the block does not carry the upgrade: %v", a)
+	}
 	// ... and it is still verified drift: warn recreates.
 	h2 := newCompose(t, func(c *config.Global) { c.DriftGuard = config.DriftWarn }, nil, docker.ServerInfo{})
 	web2 := h2.svc(hexID("a1"), "p", "web", compose.LabelVersion, "5.2.0")
@@ -1438,7 +1442,7 @@ func TestARemovedContainerThatWasNoDependentLeavesNoParentsRow(t *testing.T) {
 	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "container:" + parent.ID })
 	depKey := key("p", "dep")
 	h.advance(2 * time.Minute)
-	if got := h.d.knownParents(depKey); len(got) == 0 {
+	if got := h.d.learned.known(depKey); len(got) == 0 {
 		t.Fatal("the dependent's parents should be learned")
 	}
 	if _, ok, _ := st.Meta(metaParents + depKey); !ok {
@@ -1451,7 +1455,7 @@ func TestARemovedContainerThatWasNoDependentLeavesNoParentsRow(t *testing.T) {
 			t.Errorf("%s: parents row %q for a key that never had a parent", k, v)
 		}
 	}
-	if v, ok, _ := st.Meta(metaParents + depKey); ok || len(h.d.knownParents(depKey)) != 0 {
+	if v, ok, _ := st.Meta(metaParents + depKey); ok || len(h.d.learned.known(depKey)) != 0 {
 		t.Errorf("the removed dependent's row should be deleted, not emptied: %q %v", v, ok)
 	}
 }
@@ -1758,7 +1762,7 @@ func TestSidecarFirstSeenAfterItsParentIsGoneIsDecidedByDependsOn(t *testing.T) 
 func TestNamespaceParentIsRekeyedToTheCurrentHost(t *testing.T) {
 	st := openStore(t)
 	st.SetMeta(metaNSParent+"old/p/dep/1", "parent")
-	if _, err := st.Rekey("h", store.RekeyMeta{Keyed: MetaKeyed, WithKey: MetaWithKey}); err != nil {
+	if _, err := st.Rekey("h", rekeyMeta()); err != nil {
 		t.Fatal(err)
 	}
 	if v, ok, _ := st.Meta(metaNSParent + "h/p/dep/1"); !ok || v != "parent" {
@@ -1792,7 +1796,7 @@ func TestNamespaceParentIsKeptPerReference(t *testing.T) {
 	h.event(newA, "create", "")
 	h.event(newA, "start", "")
 	h.advance(3 * time.Minute)
-	got := h.d.namespaceParents(key("p", "dep"))
+	got := h.d.learned.namespace(key("p", "dep"))
 	slices.Sort(got)
 	if got := strings.Join(got, ","); got != "a,b" {
 		t.Fatalf("learned: %q", got)
@@ -1979,7 +1983,7 @@ func TestLearnedParentsOfAnUntrackedContainerAreForgotten(t *testing.T) {
 	}
 	h.fake.Remove(dep.ID)
 	h.advance(63 * time.Minute) // GRACE, then the hour, then a poll
-	if v, ok, _ := st.Meta(metaParents + k); ok || len(h.d.knownParents(k)) != 0 {
+	if v, ok, _ := st.Meta(metaParents + k); ok || len(h.d.learned.known(k)) != 0 {
 		t.Errorf("the removed container's parents row should be deleted: %q %v", v, ok)
 	}
 	if n := warned(); n != 0 {
@@ -2034,7 +2038,7 @@ func TestNSParentRowIsDroppedWhenTheContainerDropsItsNetworkMode(t *testing.T) {
 	}
 	h.set(dep.ID, func(c *docker.Container) { c.NetworkMode = "bridge" })
 	h.advance(time.Minute)
-	if v, ok, _ := st.Meta(metaNSParent + k); ok || len(h.d.namespaceParents(k)) != 0 {
-		t.Errorf("the namespace parent should be dropped with the reference: %q %v %v", v, ok, h.d.namespaceParents(k))
+	if v, ok, _ := st.Meta(metaNSParent + k); ok || len(h.d.learned.namespace(k)) != 0 {
+		t.Errorf("the namespace parent should be dropped with the reference: %q %v %v", v, ok, h.d.learned.namespace(k))
 	}
 }

@@ -314,7 +314,7 @@ func TestSidecarTakesTheTagItsParentsPullMoved(t *testing.T) {
 	// its recreate (compose's --no-deps empties the depends_on label of the recreated one, and the fake leaves its image label alone).
 	pre := side
 	pre.Labels = maps.Clone(side.Labels)
-	m, _ := h.d.moveOf("web:1")
+	m, _ := h.d.moves.of("web:1")
 	if !h.d.dependentMayTakeMove(h.ctx, pre) {
 		t.Fatalf("the parent's incident is open and the move is this one's: must be allowed (%+v)", m)
 	}
@@ -491,7 +491,7 @@ func TestFollowedMoveIsNotNamedAsAnotherStacksMoverAndOnlyServesTheParentsSideca
 	h, web, _ := upgradeWithSidecar(t)
 	breakAndRun(h, web.ID, 6*time.Minute)
 
-	m, ok := h.d.moveOf("web:1")
+	m, ok := h.d.moves.of("web:1")
 	if !ok || !m.Followed || m.Key != key("p", "web") {
 		t.Fatalf("a followed move is recorded for the parent: %+v %v", m, ok)
 	}
@@ -518,23 +518,23 @@ func TestFollowedMoveIsNotNamedAsAnotherStacksMoverAndOnlyServesTheParentsSideca
 // A followed move never replaces the record of the pull it follows, and several containers may follow the same result: each
 // keeps its own part, so every one of their sidecars can take it (plan v3.13 item 6).
 func TestFollowedMoveIsAddedToTheRecordNotReplacingIt(t *testing.T) {
-	h := newCompose(t, nil, nil, docker.ServerInfo{})
-	d := h.d
-	d.recordMove(tagMove{Ref: "web:1", Key: key("p", "web"), At: h.clk.Now(), Old: "old-a", OldPlain: "plain-a", New: "new", NewPlain: "new-plain"})
-	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "old-b", OldPlain: "plain-b"}, "new", "new-plain")
-	d.recordFollowed("web:1", mover{Key: key("r", "job"), At: h.clk.Now(), Old: "old-c"}, "new", "new-plain")
-	m, ok := d.moveOf("web:1")
+	l := newMoveLedger(nil) // the ledger alone: no daemon, no store
+	at := time.Unix(1_000_000, 0)
+	l.record(tagMove{Ref: "web:1", Key: key("p", "web"), At: at, Old: "old-a", OldPlain: "plain-a", New: "new", NewPlain: "new-plain"})
+	l.follow("web:1", mover{Key: key("q", "api"), At: at, Old: "old-b", OldPlain: "plain-b"}, "new", "new-plain")
+	l.follow("web:1", mover{Key: key("r", "job"), At: at, Old: "old-c"}, "new", "new-plain")
+	m, ok := l.of("web:1")
 	if !ok || m.Key != key("p", "web") || m.Followed || len(m.Followers) != 2 || len(m.movers()) != 3 {
 		t.Fatalf("%+v", m)
 	}
 	// Following again updates the follower, it does not add a second one.
-	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "old-b2"}, "new", "new-plain")
-	if m, _ := d.moveOf("web:1"); len(m.Followers) != 2 {
+	l.follow("web:1", mover{Key: key("q", "api"), At: at, Old: "old-b2"}, "new", "new-plain")
+	if m, _ := l.of("web:1"); len(m.Followers) != 2 {
 		t.Fatalf("%+v", m)
 	}
 	// A different result is a new record.
-	d.recordFollowed("web:1", mover{Key: key("q", "api"), At: h.clk.Now(), Old: "new"}, "newer", "newer-plain")
-	if m, _ := d.moveOf("web:1"); m.Key != key("q", "api") || !m.Followed || len(m.Followers) != 0 {
+	l.follow("web:1", mover{Key: key("q", "api"), At: at, Old: "new"}, "newer", "newer-plain")
+	if m, _ := l.of("web:1"); m.Key != key("q", "api") || !m.Followed || len(m.Followers) != 0 {
 		t.Fatalf("%+v", m)
 	}
 }

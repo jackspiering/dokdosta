@@ -40,11 +40,11 @@ func TestTemplates(t *testing.T) {
 		{"flapping", ev(engine.Suspended, webKey, "flapping: 4 incidents within 24h0m0s (limit 3): container is unhealthy", map[string]string{"reason": "flapping"}),
 			rctx{}, []string{"flapping, SUSPENDED"}, []string{webKey, "4 incidents within 24h0m0s", "dokdosta unsuspend stack/web"}, true},
 		{"drift blocked with the compose-upgrade hint", ev(engine.DriftBlocked, webKey, "recreate skipped by the drift guard: x",
-			map[string]string{"findings": "compose would recreate this container (its dry-run says: Recreate): the compose file, an env file or the image changed since it was created (compose upgraded from 5.2.0 to 5.6.0 since this container was created, so this may be a changed hash layout rather than an edit)"}),
+			map[string]string{"findings": "config: compose would recreate this container (its dry-run says: Recreate): the compose file, an env file or the image changed since it was created (compose upgraded from 5.2.0 to 5.6.0 since this container was created, so this may be a changed hash layout rather than an edit)", "checks": "config", "compose_from": "5.2.0", "compose_to": "5.6.0"}),
 			rctx{}, []string{"recreate blocked by the drift guard"}, []string{webKey, "compose upgraded 5.2.0 to 5.6.0", "hint:", "docker compose up -d web", "dokdosta unsuspend stack/web"}, true},
-		{"drift blocked, bundled compose", ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "can't verify drift (compose 5.2.0 on host vs 5.6.0 in dokdosta): the container was made by another compose release"}),
+		{"drift blocked, bundled compose", ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "skew: can't verify drift (compose 5.2.0 on host vs 5.6.0 in dokdosta): the container was made by another compose release", "checks": "skew"}),
 			rctx{}, []string{"blocked"}, []string{"can't verify drift", "/host/docker-compose"}, true},
-		{"drift blocked, moved tag", ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "image busybox:1.37 now resolves to aaa, but this container was created from bbb: the tag moved"}),
+		{"drift blocked, moved tag", ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "image: image busybox:1.37 now resolves to aaa, but this container was created from bbb: the tag moved", "checks": "image"}),
 			rctx{}, []string{"blocked"}, []string{"the tag moved", "docker compose up -d web"}, true},
 		{"drift warned", ev(engine.DriftWarned, webKey, "x", map[string]string{"findings": "the tag moved"}),
 			rctx{}, []string{"recreating despite drift"}, []string{webKey, "found: the tag moved"}, false},
@@ -100,7 +100,7 @@ func TestTemplates(t *testing.T) {
 	worst := []engine.Event{
 		ev(engine.ActionResult, webKey, "recreate failed: "+long, map[string]string{"action": "recreate", "rung": "recreate", "ok": "false"}),
 		ev(engine.Suspended, webKey, "every rung ran or was unavailable: "+long, map[string]string{"reason": "ladder"}),
-		ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": long + "compose upgraded from 5.2.0 to 5.6.0"}),
+		ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": long + "compose upgraded from 5.2.0 to 5.6.0", "checks": "config", "compose_from": "5.2.0", "compose_to": "5.6.0"}),
 		ev(engine.NotifyOnly, webKey, long, map[string]string{"class": "x", "dependents": strings.Repeat("stack-sidecar-1,", 30)}),
 		ev(engine.Recovered, webKey, long, nil),
 	}
@@ -196,12 +196,25 @@ func TestUnsuspendCommandIsShellQuoted(t *testing.T) {
 	if !strings.Contains(m.Body, "dokdosta unsuspend 'p$(id)/web'") {
 		t.Errorf("%s", m.Body)
 	}
-	d := renderOne(t, ev(engine.DriftBlocked, "nas/p/w;id/1", "x", map[string]string{"findings": "the tag moved"}), rctx{})
+	d := renderOne(t, ev(engine.DriftBlocked, "nas/p/w;id/1", "x", map[string]string{"findings": "image: the tag moved", "checks": "image"}), rctx{})
 	if !strings.Contains(d.Body, "dokdosta unsuspend 'p/w;id'") || !strings.Contains(d.Body, "docker compose up -d 'w;id'") {
 		t.Errorf("%s", d.Body)
 	}
 	ok := renderOne(t, ev(engine.Suspended, webKey, "every rung ran or was unavailable: unhealthy", map[string]string{"reason": "ladder"}), rctx{})
 	if !strings.Contains(ok.Body, "dokdosta unsuspend stack/web") {
 		t.Errorf("an ordinary scope is not quoted: %s", ok.Body)
+	}
+}
+
+// The hint follows the guard's structured checks, never its wording: a cause that happens to contain another check's
+// words does not change it, and an event without the checks gets no hint at all.
+func TestDriftHintFollowsTheChecksNotTheWording(t *testing.T) {
+	m := renderOne(t, ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "config: the tag moved, can't verify drift (compose", "checks": "config"}), rctx{})
+	if !strings.Contains(m.Body, "hint: the compose file, an env file or the image changed") {
+		t.Errorf("%s", m.Body)
+	}
+	m = renderOne(t, ev(engine.DriftBlocked, webKey, "x", map[string]string{"findings": "config: compose would recreate"}), rctx{})
+	if strings.Contains(m.Body, "hint:") {
+		t.Errorf("a hint without checks: %s", m.Body)
 	}
 }

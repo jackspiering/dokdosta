@@ -142,7 +142,7 @@ func TestInScopeMirrorsTheEnginesRule(t *testing.T) {
 
 func TestSuspendedTextInPlainWords(t *testing.T) {
 	cfg := "recreate skipped by the drift guard (config: compose would recreate this container (its dry-run says: Recreate, Recreated, Starting, Started): the compose file, an env file or the image changed since it was created): healthcheck reports unhealthy"
-	img := "recreate skipped by the drift guard (image web:1 now resolves to aaaa, but this container was created from bbbb: the tag moved): healthcheck reports unhealthy"
+	img := "recreate skipped by the drift guard (image: image web:1 now resolves to aaaa, but this container was created from bbbb: the tag moved): healthcheck reports unhealthy"
 	hash := "recreate skipped by the drift guard (config: config --hash is h2, the container was created with h1: the compose file or an env file changed): container exited with code 1"
 	unv := "recreate skipped by the drift guard (unverified: image web:1 cannot be resolved for linux/amd64: no such image): healthcheck reports unhealthy"
 	for _, c := range []struct {

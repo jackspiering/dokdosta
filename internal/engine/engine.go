@@ -879,8 +879,9 @@ func (e *Engine) Blocked(t Target, d rules.Decision, findings []string) bool {
 	return e.BlockedWith(t, d, findings, nil)
 }
 
-// BlockedWith is Blocked with extra attributes on the DriftBlocked event: when the tag that moved was moved by
-// dokdosta's own pull rung, the daemon says which container did it and when (plan §3.6, §3.7).
+// BlockedWith is Blocked with extra attributes on the DriftBlocked event: the guard's structured facts (compose.Attrs:
+// the checks, a compose upgrade), and when the tag that moved was moved by dokdosta's own pull rung, which container did
+// it and when (plan §3.6, §3.7).
 func (e *Engine) BlockedWith(t Target, d rules.Decision, findings []string, extra map[string]string) bool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -901,12 +902,17 @@ func (e *Engine) BlockedWith(t Target, d rules.Decision, findings []string, extr
 	return true
 }
 
-// Warned records that DOKDOSTA_DRIFT_GUARD=warn let a recreate through despite the findings.
-func (e *Engine) Warned(t Target, findings []string) {
+// Warned records that DOKDOSTA_DRIFT_GUARD=warn let a recreate through despite the findings. extra carries the guard's
+// structured facts (compose.Attrs), as for BlockedWith.
+func (e *Engine) Warned(t Target, findings []string, extra map[string]string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	cause := strings.Join(findings, "; ")
-	e.emit(t, DriftWarned, "recreating despite the drift guard (DOKDOSTA_DRIFT_GUARD=warn): "+cause, map[string]string{"findings": cause})
+	attrs := map[string]string{"findings": cause}
+	for k, v := range extra {
+		attrs[k] = v
+	}
+	e.emit(t, DriftWarned, "recreating despite the drift guard (DOKDOSTA_DRIFT_GUARD=warn): "+cause, attrs)
 }
 
 // Note publishes an event the daemon observed (the version gate, a post-check) so it reaches the same stream as the

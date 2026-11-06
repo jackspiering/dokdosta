@@ -10,6 +10,19 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The dashboard says in plain words when a moved image tag blocked a recreate.** The SUSPENDED banner of a container
+  whose recreate the drift guard blocked because the tag moved showed the guard's raw finding instead of "the image tag
+  moved since the container was created": the page looked for the finding in a form the guard does not write.
+
+### Changed
+
+- **The drift guard's events carry what it found as data.** `DriftBlocked` and `DriftWarned` have three new attributes
+  (also in `/api/v1/events`): `checks` (the checks that found something: `config`, `image`, `skew`, `unverified`) and, for
+  config drift after a compose upgrade, `compose_from` and `compose_to`. The notification's hint is chosen from them, not
+  from the wording of the finding; the finding's text is unchanged.
+
 ## [0.3.1] - 2026-11-02
 
 Two fixes, and the image rebuilt on updated base images.

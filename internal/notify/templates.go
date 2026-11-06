@@ -154,7 +154,7 @@ func render(e engine.Event, c rctx) (m Message, dedupe string, ok bool) {
 		}
 		// The next step comes before the hint: when the body is full it is the hint that gives way, never the command.
 		detail = append(detail, "then: "+unsuspendCmd(scope))
-		if hint := driftHint(findings, scope); hint != "" {
+		if hint := driftHint(attr, scope); hint != "" {
 			detail = append(detail, hint)
 		}
 
@@ -451,18 +451,23 @@ func shortFindings(f string) string {
 
 // driftHint is the next step for the findings of the drift guard. The guard's own text already says what it found, and for
 // a compose that was upgraded since the container was created (the host plugin) or is not the release that made it (the
-// bundled copy) it says so; what it cannot say is what to do about it.
-func driftHint(findings, scope string) string {
+// bundled copy) it says so; what it cannot say is what to do about it. The hint is chosen from the guard's structured
+// facts (compose.Attrs: the checks, a compose upgrade), never from its wording.
+func driftHint(attr func(string) string, scope string) string {
+	checks := map[string]bool{}
+	for _, c := range strings.Split(attr(wncompose.AttrChecks), ",") {
+		checks[c] = true
+	}
+	up := "docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
 	switch {
-	case strings.Contains(findings, "can't verify drift (compose"):
-		return "hint: dokdosta's compose is not the one that made it. Mount the host plugin at /host/docker-compose, or: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
-	case reUpgraded.MatchString(findings):
-		v := reUpgraded.FindStringSubmatch(findings)
-		return "hint: compose upgraded " + v[1] + " to " + v[2] + " since creation: maybe a new hash layout, not an edit. If the file is fine: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
-	case strings.Contains(findings, "the tag moved"):
-		return "hint: the image tag points at another image now. Take it with: docker compose up -d " + wncompose.ShellWord(serviceOf(scope)) + ", or re-tag the old one"
-	case strings.Contains(findings, "would recreate") || strings.Contains(findings, "config --hash is"):
-		return "hint: the compose file, an env file or the image changed since creation. Apply it yourself: docker compose up -d " + wncompose.ShellWord(serviceOf(scope))
+	case checks[wncompose.CheckSkew]:
+		return "hint: dokdosta's compose is not the one that made it. Mount the host plugin at /host/docker-compose, or: " + up
+	case checks[wncompose.CheckConfig] && attr(wncompose.AttrComposeFrom) != "":
+		return "hint: compose upgraded " + attr(wncompose.AttrComposeFrom) + " to " + attr(wncompose.AttrComposeTo) + " since creation: maybe a new hash layout, not an edit. If the file is fine: " + up
+	case checks[wncompose.CheckImage]:
+		return "hint: the image tag points at another image now. Take it with: " + up + ", or re-tag the old one"
+	case checks[wncompose.CheckConfig]:
+		return "hint: the compose file, an env file or the image changed since creation. Apply it yourself: " + up
 	}
 	return ""
 }

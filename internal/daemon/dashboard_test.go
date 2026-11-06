@@ -728,8 +728,9 @@ func driftRig(t *testing.T) *dashboardRig {
 	return driftRigWith(t, cf)
 }
 
-// driftRigWith runs an unhealthy container through restart into a drift guard that blocks, with this compose.
-func driftRigWith(t *testing.T, cf *compose.Fake) *dashboardRig {
+// driftRigWith runs an unhealthy container through restart into a drift guard that blocks, with this compose. before
+// runs once the container exists.
+func driftRigWith(t *testing.T, cf *compose.Fake, before ...func(*cfH)) *dashboardRig {
 	t.Helper()
 	st, err := store.Open(t.TempDir(), nil)
 	if err != nil {
@@ -744,6 +745,9 @@ func driftRigWith(t *testing.T, cf *compose.Fake) *dashboardRig {
 		o.Bus.Subscribe(hub.Notify)
 	})
 	web := h.svc(hexID("a1"), "p", "web")
+	for _, f := range before {
+		f(h)
+	}
 	h.tick()
 	h.set(web.ID, unhealthy)
 	h.advance(6 * time.Minute)
@@ -806,6 +810,27 @@ func TestRetentionKeepsASuspendedContainersCause(t *testing.T) {
 }
 
 func web2(s *api.Service) http.Handler { return web.Handler(s) }
+
+// A moved tag, through the real guard: the banner says so in plain words, and the event carries the checks that the
+// notifications choose their hint from (the page once looked for "image " where the guard writes "image: ").
+func TestATagMovedSuspensionReadsInPlainLanguage(t *testing.T) {
+	cf := compose.NewFake()
+	cf.OracleFn = func(_ compose.Project, name string) (compose.Oracle, error) { return compose.Recreated(name), nil }
+	r := driftRigWith(t, cf, func(h *cfH) { h.fake.SetImage("web:1", "sha256:other") })
+	var evs []engine.Event
+	for _, e := range r.h.rec.Events() {
+		if e.Type == engine.DriftBlocked {
+			evs = append(evs, e)
+		}
+	}
+	if len(evs) != 1 || evs[0].Attrs[compose.AttrChecks] != compose.CheckImage {
+		t.Fatalf("the block does not carry its check: %+v", evs)
+	}
+	_, page := r.fetch(t, "/containers/h/p/web/1", "")
+	if !strings.Contains(page, "the recreate was blocked because the image tag moved since the container was created.") {
+		t.Fatalf("the banner does not say the tag moved:\n%s", page)
+	}
+}
 
 func TestADriftSuspensionReadsInPlainLanguage(t *testing.T) {
 	r := driftRig(t)

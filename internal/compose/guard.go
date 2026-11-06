@@ -15,19 +15,18 @@ const (
 	CheckUnverified = "unverified" // a check could not run
 )
 
-// Mode is DOKDOSTA_DRIFT_GUARD.
-type Mode string
-
-const (
-	Strict Mode = "strict" // any finding skips the recreate and SUSPENDS
-	Warn   Mode = "warn"   // recreate anyway and say so
-)
-
-// Finding is one reason the recreate should not go ahead.
+// Finding is one reason the recreate should not go ahead. Cause is the text people read; what the notifications and the
+// dashboard decide on is the structure (Check, Upgrade), carried to them by Attrs, never parsed back from Cause.
 type Finding struct {
 	Check string
 	Cause string
+	// Upgrade is set on a config finding when the compose in use is a later release than the one that made the container
+	// (the host plugin was upgraded): the change may be the hash layout rather than an edit.
+	Upgrade *Upgrade
 }
+
+// Upgrade is a compose release change since the container was created.
+type Upgrade struct{ From, To string }
 
 func (f Finding) String() string { return f.Check + ": " + f.Cause }
 
@@ -35,6 +34,45 @@ func (f Finding) String() string { return f.Check + ": " + f.Cause }
 // could not be made, a version skew that makes drift unverifiable) are "can't verify": DOKDOSTA_DRIFT_GUARD=warn does
 // not override them (plan v3.6).
 func (f Finding) Verified() bool { return f.Check == CheckConfig || f.Check == CheckImage }
+
+// Overridable reports whether DOKDOSTA_DRIFT_GUARD=warn lets an action go ahead despite these findings: only when every
+// one is verified drift (plan v3.6). None is not a question warn answers.
+func Overridable(fs []Finding) bool {
+	for _, f := range fs {
+		if !f.Verified() {
+			return false
+		}
+	}
+	return len(fs) > 0
+}
+
+// Attribute keys of the guard's structured facts on a DriftBlocked, DriftWarned or Suspended event.
+const (
+	AttrChecks      = "checks"       // the checks that found something, in order, comma-separated: config,image,skew,unverified
+	AttrComposeFrom = "compose_from" // a config finding's compose upgrade: the release that made the container
+	AttrComposeTo   = "compose_to"   // and the one in use
+)
+
+// Attrs returns the findings' structure as event attributes, so a reader decides on it rather than on the wording.
+func Attrs(fs []Finding) map[string]string {
+	if len(fs) == 0 {
+		return nil
+	}
+	var checks []string
+	seen := map[string]bool{}
+	out := map[string]string{}
+	for _, f := range fs {
+		if !seen[f.Check] {
+			seen[f.Check] = true
+			checks = append(checks, f.Check)
+		}
+		if f.Upgrade != nil && out[AttrComposeFrom] == "" {
+			out[AttrComposeFrom], out[AttrComposeTo] = f.Upgrade.From, f.Upgrade.To
+		}
+	}
+	out[AttrChecks] = strings.Join(checks, ",")
+	return out
+}
 
 // ImageResolver returns what an image reference resolves to for linux/<arch> (internal/docker implements it).
 type ImageResolver interface {
@@ -100,7 +138,7 @@ func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
 		case f != nil && explicitImage:
 			out = append(out, *f)
 		case drift != "":
-			out = append(out, Finding{CheckImage, drift})
+			out = append(out, Finding{Check: CheckImage, Cause: drift})
 			configDrift = "" // the image finding explains compose's decision
 		}
 	}
@@ -110,9 +148,9 @@ func (g Guard) Check(ctx context.Context, in GuardInput) []Finding {
 	// v5.6.0 pinned the hash byte layout) rather than the config, so say that drift cannot be verified.
 	if configDrift != "" {
 		if msg := g.skew(in); msg != "" {
-			out = append(out, Finding{CheckSkew, msg})
+			out = append(out, Finding{Check: CheckSkew, Cause: msg})
 		} else {
-			out = append(out, Finding{CheckConfig, configDrift + g.upgraded(in)})
+			out = append(out, g.configFinding(in, configDrift))
 		}
 	}
 	if !oracleAnswered {
@@ -164,7 +202,7 @@ func (g Guard) refHolderSkew(in GuardInput) []Finding {
 		return nil
 	}
 	if msg := g.skew(in); msg != "" {
-		return []Finding{{CheckSkew, msg}}
+		return []Finding{{Check: CheckSkew, Cause: msg}}
 	}
 	return nil
 }
@@ -185,9 +223,9 @@ func (g Guard) checkBeforePull(ctx context.Context, in GuardInput) []Finding {
 	}
 	if configDrift != "" {
 		if msg := g.skew(in); msg != "" {
-			out = append(out, Finding{CheckSkew, msg})
+			out = append(out, Finding{Check: CheckSkew, Cause: msg})
 		} else {
-			out = append(out, Finding{CheckConfig, configDrift + g.upgraded(in)})
+			out = append(out, g.configFinding(in, configDrift))
 		}
 	}
 	out = append(out, g.refHolderSkew(in)...)
@@ -223,9 +261,9 @@ func (g Guard) configCheck(ctx context.Context, in GuardInput) (drift string, f 
 	want := in.Labels[LabelConfigHash]
 	switch {
 	case herr != nil:
-		return "", &Finding{CheckUnverified, fmt.Sprintf("cannot check the compose config for drift: %v; config --hash: %v", err, herr)}, true
+		return "", &Finding{Check: CheckUnverified, Cause: fmt.Sprintf("cannot check the compose config for drift: %v; config --hash: %v", err, herr)}, true
 	case want == "":
-		return "", &Finding{CheckUnverified, "cannot check the compose config for drift: the container has no " + LabelConfigHash + " label"}, true
+		return "", &Finding{Check: CheckUnverified, Cause: "cannot check the compose config for drift: the container has no " + LabelConfigHash + " label"}, true
 	case hash != want:
 		return fmt.Sprintf("config --hash is %s, the container was created with %s: the compose file or an env file changed", hash, want), nil, true
 	}
@@ -248,17 +286,20 @@ func (g Guard) skew(in GuardInput) string {
 	return fmt.Sprintf("can't verify drift (compose %s on host vs %s in dokdosta): the container was made by another compose release than the bundled one, and compose sees a change", have, b.Version)
 }
 
-// upgraded is information for a config-drift message when the compose in use is not the release that made the container
-// (the host plugin was upgraded since): the change may be the hash layout rather than an edit. It is not a block of its
-// own (plan v3.6); the bundled compose is handled by skew.
-func (g Guard) upgraded(in GuardInput) string {
+// configFinding is the config-drift finding, with the upgrade note when the compose in use is not the release that made
+// the container (the host plugin was upgraded since): the change may be the hash layout rather than an edit. The note is
+// not a block of its own (plan v3.6); the bundled compose is handled by skew.
+func (g Guard) configFinding(in GuardInput, drift string) Finding {
+	f := Finding{Check: CheckConfig, Cause: drift}
 	b := g.Compose.Binary()
 	have := strings.TrimSpace(in.Labels[LabelVersion])
 	if have == "" || b.Version.IsZero() || SameRelease(have, b.Version) {
-		return ""
+		return f
 	}
 	v, _ := ParseVersion(have)
-	return fmt.Sprintf(" (compose upgraded from %s to %s since this container was created, so this may be a changed hash layout rather than an edit)", v, b.Version)
+	f.Upgrade = &Upgrade{From: v.String(), To: b.Version.String()}
+	f.Cause += fmt.Sprintf(" (compose upgraded from %s to %s since this container was created, so this may be a changed hash layout rather than an edit)", v, b.Version)
+	return f
 }
 
 // imageCheck compares the container's com.docker.compose.image label with what its image reference resolves to now. It
@@ -267,14 +308,14 @@ func (g Guard) imageCheck(ctx context.Context, in GuardInput) (*Finding, string)
 	want := in.Labels[LabelImage]
 	switch {
 	case in.ImageRef == "":
-		return &Finding{CheckUnverified, "cannot check the image for drift: the container has no image reference"}, ""
+		return &Finding{Check: CheckUnverified, Cause: "cannot check the image for drift: the container has no image reference"}, ""
 	case want == "":
-		return &Finding{CheckUnverified, "cannot check the image for drift: the container has no " + LabelImage + " label"}, ""
+		return &Finding{Check: CheckUnverified, Cause: "cannot check the image for drift: the container has no " + LabelImage + " label"}, ""
 	}
 	got, err := g.Images.ImageID(ctx, in.ImageRef, in.Arch)
 	if err != nil {
 		// A reference that is gone locally is a failure whatever the cause: the recreate would need a pull.
-		return &Finding{CheckUnverified, fmt.Sprintf("image %s cannot be resolved for linux/%s: %v", in.ImageRef, in.Arch, err)}, ""
+		return &Finding{Check: CheckUnverified, Cause: fmt.Sprintf("image %s cannot be resolved for linux/%s: %v", in.ImageRef, in.Arch, err)}, ""
 	}
 	if got == want {
 		return nil, ""
