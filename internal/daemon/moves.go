@@ -155,3 +155,46 @@ func upgradeRollback(attrs map[string]string, p compose.Project, ref, back strin
 func (d *Daemon) moverOf(ctx context.Context, c docker.Container) (tagMove, bool) {
 	return d.moves.standing(ctx, d.rd, c.Image, d.cs().server.Arch)
 }
+
+// rekeyTagMove moves the keys inside a "tagmoved:" record (the mover's and its followers', plan v3.13 item 6) for
+// store.Rekey. It edits the JSON in place, so a field it does not know stays as it was.
+func rekeyTagMove(value string, rekey func(string) string) (string, bool) {
+	var obj map[string]json.RawMessage
+	if json.Unmarshal([]byte(value), &obj) != nil {
+		return value, false
+	}
+	changed := false
+	var k string
+	if json.Unmarshal(obj["key"], &k) == nil {
+		if to := rekey(k); to != k {
+			obj["key"], _ = json.Marshal(to)
+			changed = true
+		}
+	}
+	var followers []map[string]json.RawMessage
+	if raw, ok := obj["followers"]; ok && json.Unmarshal(raw, &followers) == nil {
+		followersChanged := false
+		for _, f := range followers {
+			var fk string
+			if json.Unmarshal(f["key"], &fk) != nil {
+				continue
+			}
+			if to := rekey(fk); to != fk {
+				f["key"], _ = json.Marshal(to)
+				followersChanged = true
+			}
+		}
+		if followersChanged {
+			obj["followers"], _ = json.Marshal(followers)
+			changed = true
+		}
+	}
+	if !changed {
+		return value, false
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		return value, false
+	}
+	return string(b), true
+}

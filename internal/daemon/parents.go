@@ -18,13 +18,17 @@ const metaParents = "parents:"
 // references: its namespace parent (plan v3.13 item 3), which decides whether the dependents step may repair it.
 const metaNSParent = "nsparent:"
 
-// MetaKeyed and MetaWithKey are the meta rows that hold a state key, which the store re-keys to the current host ID at
-// startup (store.Rekey, plan v3.13 item 12): a prefix followed by the key, and a prefix whose JSON value has a "key".
-// A new meta record keyed by a state key must be added here.
+// MetaKeyed and MetaValues are the meta rows that hold a state key, which the store re-keys to the current host ID at
+// startup (store.Rekey, plan v3.13 item 12): a prefix followed by the key, and a prefix whose value holds keys in a
+// format of its owner's, with the owner's rewrite. A new meta record keyed by a state key must be added here;
+// TestEveryMetaRowIsRekeyedOrHoldsNoKey fails for a prefix the daemon writes that is in neither.
 var (
-	MetaKeyed   = []string{metaParents, metaNSParent}
-	MetaWithKey = []string{metaTagMoved}
+	MetaKeyed  = []string{metaParents, metaNSParent}
+	MetaValues = map[string]func(value string, rekey func(string) string) (string, bool){metaTagMoved: rekeyTagMove}
 )
+
+// metaNoKey are the meta rows that hold no state key.
+var metaNoKey = []string{MetaBootID, MetaLastSeen}
 
 // parentsGoneAfter is how long a key may be absent from the container list before what is remembered about it is dropped
 // (a compose recreate by hand removes the container for a moment, and the parent mapping must survive that).

@@ -864,25 +864,54 @@ func (d *Daemon) execute(ctx context.Context, t engine.Target, c docker.Containe
 		return
 	}
 
+	d.runAction(ctx, t, c, dec, plan, cfg, func() outcome {
+		actx, cancel := d.actionContext(ctx, actionTimeout)
+		defer cancel()
+		var err error
+		switch plan.Act {
+		case rules.ActionRestart:
+			err = d.o.Actor.Restart(actx, c.ID)
+		case rules.ActionStart:
+			err = d.o.Actor.Start(actx, c.ID)
+		}
+		return d.ended(ctx, err, engine.Result{Err: err, DryRun: d.cfg.DryRun})
+	})
+}
+
+// outcome is how an action's body ended: interrupted by dokdosta's stop (the engine forgets the attempt, plan §3.8), or
+// with a result for the engine. noFollowUp leaves out afterAction (the pull that found nothing newer: nothing changed, and
+// the container is SUSPENDED).
+type outcome struct {
+	interrupted error
+	res         engine.Result
+	noFollowUp  bool
+}
+
+// ended is the outcome of a body whose action returned err: interrupted when dokdosta's stop cut it short, else res.
+func (d *Daemon) ended(ctx context.Context, err error, res engine.Result) outcome {
+	if interrupted(ctx, err) {
+		return outcome{interrupted: err}
+	}
+	return outcome{res: res}
+}
+
+// runAction is the one place an action's lifecycle lives, once the pre-action checks have passed: nothing new starts
+// while dokdosta is stopping; then Begin (the in-flight window), the body, and either Interrupt or End followed by
+// afterAction (the recheck, the dependents sweep and the sibling gate, plan §3.5).
+func (d *Daemon) runAction(ctx context.Context, t engine.Target, c docker.Container, dec rules.Decision, plan engine.Plan, cfg config.Container, body func() outcome) {
 	if ctx.Err() != nil {
 		return
 	}
 	d.eng.Begin(t, plan, dec)
-	actx, cancel := d.actionContext(ctx, actionTimeout)
-	defer cancel()
-	var err error
-	switch plan.Act {
-	case rules.ActionRestart:
-		err = d.o.Actor.Restart(actx, c.ID)
-	case rules.ActionStart:
-		err = d.o.Actor.Start(actx, c.ID)
-	}
-	if interrupted(ctx, err) {
-		d.eng.Interrupt(t, plan, err)
+	o := body()
+	if o.interrupted != nil {
+		d.eng.Interrupt(t, plan, o.interrupted)
 		return
 	}
-	recheck := d.eng.End(t, plan, engine.Result{Err: err, DryRun: d.cfg.DryRun}, cfg)
-	d.afterAction(t, c, recheck)
+	recheck := d.eng.End(t, plan, o.res, cfg)
+	if !o.noFollowUp {
+		d.afterAction(t, c, recheck)
+	}
 }
 
 // actionContext is the context of a mutating action: ctx's values and the timeout, but not ctx's cancellation, so a stop

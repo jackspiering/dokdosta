@@ -13,12 +13,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -314,6 +316,15 @@ func hostIDWarning(hostID, selfID string) string {
 	return "the host ID is this container's ID (its hostname, the default without DOKDOSTA_HOST_ID), which changes whenever dokdosta is recreated: the state is carried over at startup, but keys, notifications and the API name another host after every upgrade. Set DOKDOSTA_HOST_ID"
 }
 
+// rekeyMeta is what the daemon says about its meta rows, for store.Rekey.
+func rekeyMeta() store.RekeyMeta {
+	m := store.RekeyMeta{Keyed: daemon.MetaKeyed}
+	for _, p := range slices.Sorted(maps.Keys(daemon.MetaValues)) {
+		m.Values = append(m.Values, store.ValueRekey{Prefix: p, Rewrite: daemon.MetaValues[p]})
+	}
+	return m
+}
+
 // openStore opens the state store, re-keys what it holds to the current host ID (plan v3.13 item 12: in a container the
 // default host ID is the container's ID, which an upgrade changes) and loads it.
 func openStore(cfg config.Global, log *slog.Logger, now time.Time) (*store.Store, engine.Snapshot, error) {
@@ -324,7 +335,7 @@ func openStore(cfg config.Global, log *slog.Logger, now time.Time) (*store.Store
 		}
 		return nil, engine.Snapshot{}, fmt.Errorf("cannot open the state store in %s (is DOKDOSTA_DATA_DIR a writable volume?): %w", cfg.DataDir, err)
 	}
-	n, err := st.Rekey(cfg.HostID, store.RekeyMeta{Keyed: daemon.MetaKeyed, WithKey: daemon.MetaWithKey})
+	n, err := st.Rekey(cfg.HostID, rekeyMeta())
 	if err != nil {
 		st.Close()
 		return nil, engine.Snapshot{}, fmt.Errorf("cannot re-key the state store to the host ID %s: %w", cfg.HostID, err)
