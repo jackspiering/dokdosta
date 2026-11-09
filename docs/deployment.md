@@ -15,7 +15,7 @@ The examples in [examples/](../examples/) are checked in CI (`compose config -q`
 
 ## As a container
 
-The image is `ghcr.io/jackspiering/dokdosta` (`linux/amd64` and `linux/arm64`). Tags: `v0.1.0` (immutable), `v0.1`, `v0` and
+The image is `ghcr.io/jackspiering/dokdosta` (`linux/amd64` and `linux/arm64`). Tags: `v0.3.1` (immutable), `v0.3`, `v0` and
 `latest`. Pin the exact tag, or its digest, in production, and [verify it](verifying-releases.md).
 
 ### What the container needs
@@ -23,7 +23,7 @@ The image is `ghcr.io/jackspiering/dokdosta` (`linux/amd64` and `linux/arm64`). 
 ```yaml
 services:
   dokdosta:
-    image: ghcr.io/jackspiering/dokdosta:v0.1.0
+    image: ghcr.io/jackspiering/dokdosta:v0.3.1
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]

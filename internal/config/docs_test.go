@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -159,5 +160,58 @@ func TestMarkdownLinksResolve(t *testing.T) {
 				t.Errorf("%s: link %q: no heading #%s in %s", f, target, frag, dest)
 			}
 		}
+	}
+}
+
+// An image tag in the documentation or the examples must be one that exists: a dated release in CHANGELOG.md, 0.3.0 or
+// later (the releases before it were published as ghcr.io/jackspiering/whalenurse, plan v3.15).
+func TestDocsNameOnlyReleasedImageTags(t *testing.T) {
+	changelog, err := os.ReadFile("../../CHANGELOG.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	released := map[string]bool{}
+	for _, m := range regexp.MustCompile(`(?m)^## \[(\d+)\.(\d+)\.(\d+[^\]]*)\] - \d{4}-\d{2}-\d{2}`).FindAllStringSubmatch(string(changelog), -1) {
+		major, _ := strconv.Atoi(m[1])
+		minor, _ := strconv.Atoi(m[2])
+		if major > 0 || minor >= 3 {
+			released[m[1]+"."+m[2]+"."+m[3]] = true
+		}
+	}
+	if !released["0.3.0"] {
+		t.Fatal("CHANGELOG.md has no dated 0.3.0 section: the pattern no longer matches the headings")
+	}
+	var files []string
+	for _, pat := range []string{"../../README.md", "../../docs/*.md", "../../examples/*/*"} {
+		m, err := filepath.Glob(pat)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, m...)
+	}
+	history := regexp.MustCompile(`docs/(m\d\w*-(notes|findings)|PLAN)\.md$`)
+	tag := regexp.MustCompile(`ghcr\.io/jackspiering/dokdosta:v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?)`)
+	seen := 0
+	for _, f := range files {
+		if history.MatchString(f) {
+			continue
+		}
+		fi, err := os.Stat(f)
+		if err != nil || fi.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range tag.FindAllStringSubmatch(string(b), -1) {
+			seen++
+			if !released[m[1]] {
+				t.Errorf("%s names the image tag v%s, which is not a dokdosta release (CHANGELOG.md, 0.3.0 or later)", f, m[1])
+			}
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no image tag found in the documentation: the pattern no longer matches")
 	}
 }

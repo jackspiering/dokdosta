@@ -23,7 +23,7 @@ A recreate deploys what is on disk and in the local image store *now*, so it run
 2. **Image drift**: the container's `com.docker.compose.image` label against what its image reference resolves to for `linux/<arch>` now (the platform image ID; correct on both image stores). A reference that is gone locally is a failure.
 3. **Version skew**: only for the bundled compose, see above.
 
-A container whose `network_mode`, `ipc`, `pid` or `volumes_from` names another container skips check 1 (compose hashes those after resolving them, so they never match) and gets checks 2 and 3.
+A container whose `network_mode`, `ipc`, `pid` or `volumes_from` names another container skips check 1 (compose hashes those after resolving them, so the hash never matches), with one exception: on its own failure, when every container it references is the current, running container of its service in the same project, the dry-run oracle is asked (never `config --hash`). The exception does not apply to a stale dependent, to a reference to a scaled service, or with compose 5.2.0, whose dry run reports a recreate for an unchanged container of this kind. Checks 2 and 3 always run.
 
 ## The pull rung (opt-in)
 

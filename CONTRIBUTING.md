@@ -58,8 +58,7 @@ shellcheck -x $(grep -rIl --exclude-dir=testdata -E '^#!.*(ba)?sh' scripts test;
 They run in CI on GitHub-hosted runners, in a matrix of two image stores (classic and containerd) times three compose releases
 (5.2.0, 5.6.0, latest). **Do not run them on a machine you care about** unless you have read `test/integration/guard.go`.
 
-The rule, enforced in code and not by convention: **they act only on compose projects named `dokdosta-test-*`** (the M0 scripts
-on `dokdosta-m0-*`). Every method of the test `Guard` that changes anything checks the project name of its target against
+The rule, enforced in code and not by convention: **they act only on compose projects named `dokdosta-test-*`**. Every method of the test `Guard` that changes anything checks the project name of its target against
 `^dokdosta-test-[a-z0-9][a-z0-9_-]*$` and **fails closed**: no match, no action. The guard cannot express `down` for another
 project, pulls only the base images it lists, tags and pushes only under `dokdosta-test/` or the local test registry on
 `127.0.0.1`, and wraps dokdosta's own Docker and compose actors so that the in-process healer under test cannot touch
