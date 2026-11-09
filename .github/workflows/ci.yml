@@ -312,12 +312,15 @@ jobs:
           (cd examples/full && docker compose --env-file .env.example config -q)
           (cd examples/full && ! docker compose config -q 2>"$RUNNER_TEMP/err.txt"); grep -q 'required variable' "$RUNNER_TEMP/err.txt"
           jq -e . examples/full/tailscale/serve.json >/dev/null
-      - name: systemd-analyze verify (the unit, pointed at a real binary; any output at all is a failure)
+      - name: systemd-analyze verify (the unit, pointed at a real binary; any warning about the unit is a failure)
         run: |
           CGO_ENABLED=0 go build -trimpath -o "$RUNNER_TEMP/dokdosta" ./cmd/dokdosta
           sed "s|/usr/local/bin/dokdosta|$RUNNER_TEMP/dokdosta|" examples/systemd/dokdosta.service > "$RUNNER_TEMP/dokdosta.service"
-          out=$(systemd-analyze verify "$RUNNER_TEMP/dokdosta.service" 2>&1) || { echo "$out"; exit 1; }
-          if [ -n "$out" ]; then echo "$out"; exit 1; fi
+          # --recursive-errors=no: a non-zero exit for a warning about this unit only. The runner image's own units warn too
+          # (CPUAccounting= in xfs_scrub_all.service, since 9 Nov 2026): those lines are shown, not judged.
+          out=$(systemd-analyze verify --recursive-errors=no "$RUNNER_TEMP/dokdosta.service" 2>&1) || { echo "$out"; exit 1; }
+          if printf '%s\n' "$out" | grep -F 'dokdosta.service'; then exit 1; fi
+          if [ -n "$out" ]; then echo "::notice::systemd-analyze warned about other units of the runner image (not judged):"; echo "$out"; fi
           systemd-analyze --offline=true security "$RUNNER_TEMP/dokdosta.service" | tail -n 3 || true
 
   image:
