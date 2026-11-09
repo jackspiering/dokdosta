@@ -86,8 +86,8 @@ The first push creates `ghcr.io/jackspiering/dokdosta` as a **private** package.
    `org.opencontainers.image.source`, which links it. If not, "Connect repository".
 2. **Make it public** (Package settings, Danger zone, Change visibility). Public packages cannot be made private again.
 3. Under "Manage Actions access", make sure this repository has **write** access (it does when the package is linked).
-4. Test as a stranger: `docker logout ghcr.io && docker pull ghcr.io/jackspiering/dokdosta:v0.1.0`, then
-   `make verify-release TAG=v0.1.0`.
+4. Test as a stranger: `docker logout ghcr.io && docker pull ghcr.io/jackspiering/dokdosta:vX.Y.Z`, then
+   `make verify-release TAG=vX.Y.Z`.
 
 ## Cutting a release **[maintainer]**
 
