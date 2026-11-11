@@ -21,15 +21,21 @@ jobs:
   scope:
     # What this run has to test. A pull request that changes only documentation (scripts/ci/changes.sh: *.md anywhere, and
     # docs/) skips every job except `go`, whose tests check the documentation; the required checks report "skipped", which
-    # counts as passed (the integration and image-drift legs pass explicitly). Pushes to main always run everything. A pull
-    # request into another branch (a layer of a stack) runs the light set only: go, scripts, workflows, examples (`full`
-    # is false). Main's ruleset does not apply to it, and the stack's PR into main runs everything. And when the latest
-    # compose release is one the matrix pins, the "compose latest" shards stop early (scripts/ci/compose-latest.sh). Plan
-    # section 6, *CI matrix*.
+    # counts as passed (the integration and image-drift legs pass explicitly). A push to main runs everything, unless a
+    # full pull-request run already tested its exact tree green (scripts/ci/tested-tree.sh): then it is treated like a
+    # documentation-only change. A pull request into another branch (a layer of a stack) runs the light set only: go,
+    # scripts, workflows, examples (`full` is false). Main's ruleset does not apply to it, and the stack's PR into main
+    # runs everything. And when the latest compose release is one the matrix pins, the "compose latest" shards stop early
+    # (scripts/ci/compose-latest.sh). Plan section 6, *CI matrix*.
     name: scope (documentation only? stack layer? is compose latest pinned?)
     runs-on: ubuntu-latest
+    # actions: read is for the one question a push asks the API: did a pull request's run test this tree (tested-tree.sh)?
+    permissions:
+      contents: read
+      actions: read
     outputs:
       code: ${{ steps.changes.outputs.code }}
+      tested_by: ${{ steps.changes.outputs.tested_by }}
       full: ${{ steps.layer.outputs.full }}
       compose_latest: ${{ steps.compose.outputs.version }}
       latest_pinned: ${{ steps.compose.outputs.pinned }}
@@ -38,12 +44,23 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 2
-      - name: Documentation only? (pull requests only; any doubt means code)
+      - name: Documentation only? A tree a pull request already tested? (any doubt means code)
         id: changes
         env:
           EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          SERVER: ${{ github.server_url }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           kind=code
+          if [ "$EVENT" = push ]; then
+            # The checkout of a pull request's run is the merge commit. When main did not move before the merge, the pushed
+            # commit has that commit's tree, and the run that tested it left a pointer named after the tree. A
+            # documentation-only pull request leaves none, so its push runs in full.
+            tree=$(git rev-parse 'HEAD^{tree}')
+            run=$(scripts/ci/tested-tree.sh lookup "$REPO" "$tree") || run=""
+            if [ -n "$run" ]; then kind=tested; fi
+          fi
           if [ "$EVENT" = pull_request ]; then
             # The checkout is the merge commit, whose first parent is the base branch: this is the pull request's change.
             # --no-renames lists both sides of a rename: moving a script to docs/x.md must count as removing the script.
@@ -58,6 +75,9 @@ jobs:
           if [ "$kind" = docs ]; then
             echo "::notice::Documentation only: the jobs it cannot affect are skipped (build, vet and unit tests run)."
             echo "code=false" >>"$GITHUB_OUTPUT"
+          elif [ "$kind" = tested ]; then
+            echo "::notice::The pull request's run $SERVER/$REPO/actions/runs/$run tested this exact tree ($tree) green: only build, vet and unit tests run again."
+            { echo "code=false"; echo "tested_by=$run"; } >>"$GITHUB_OUTPUT"
           else
             echo "code=true" >>"$GITHUB_OUTPUT"
           fi
@@ -172,10 +192,11 @@ jobs:
           scripts/release/verify.sh --self-test
       - name: Integration sharding self-test (the packing, the anchoring, the matrix check)
         run: scripts/ci/shard-integration.sh --self-test
-      - name: CI scope self-tests (documentation only, compose latest pinned)
+      - name: CI scope self-tests (documentation only, compose latest pinned, a tree a pull request tested)
         run: |
           scripts/ci/changes.sh --self-test
           scripts/ci/compose-latest.sh --self-test
+          scripts/ci/tested-tree.sh --self-test
       - name: Dockerfile and Dockerfile.release ship the same compose and the same base images
         run: scripts/ci/check-dockerfiles.sh --self-test && scripts/ci/check-dockerfiles.sh
 
@@ -322,6 +343,38 @@ jobs:
           if printf '%s\n' "$out" | grep -F 'dokdosta.service'; then exit 1; fi
           if [ -n "$out" ]; then echo "::notice::systemd-analyze warned about other units of the runner image (not judged):"; echo "$out"; fi
           systemd-analyze --offline=true security "$RUNNER_TEMP/dokdosta.service" | tail -n 3 || true
+
+  tested-tree:
+    # The pointer a later push to main looks for (scripts/ci/tested-tree.sh; plan section 6, v3.18 item 5). This run tests
+    # the tree of the merge commit it checked out, and when main does not move before the merge, the pushed commit has the
+    # same tree. Uploaded at the start, because the pointer proves nothing: the push asks the API whether this run ended
+    # green. Only a full run into main from a branch of this repository leaves one (a fork's run is refused by the lookup
+    # too). overwrite: a re-run of the job uploads it again.
+    name: tested tree (a pointer for the push to main that this pull request becomes)
+    runs-on: ubuntu-latest
+    needs: [scope]
+    if: >-
+      github.event_name == 'pull_request' && github.base_ref == github.event.repository.default_branch
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && needs.scope.outputs.code == 'true' && needs.scope.outputs.full == 'true'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: The tree this run tests
+        id: tree
+        run: |
+          tree=$(git rev-parse 'HEAD^{tree}')
+          echo "name=$(scripts/ci/tested-tree.sh name "$tree")" >>"$GITHUB_OUTPUT"
+          printf 'tree %s\nrun %s\ncommit %s\n' "$tree" "$GITHUB_RUN_ID" "$GITHUB_SHA" | tee "$RUNNER_TEMP/tested-tree.txt"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.tree.outputs.name }}
+          path: ${{ runner.temp }}/tested-tree.txt
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 7
 
   image:
     # The image under test, built once: the integration shards and the demo load it. Each of them used to build it, 19 builds
@@ -529,8 +582,9 @@ jobs:
   integration:
     # The six checks the repository ruleset requires, under their old names: each is green when every shard is. (A needs
     # on a matrix is all of its jobs, so one red shard turns all six red; the red shard's own name says which leg.) On a
-    # documentation-only pull request the shards are skipped, and that is green only if the scope job succeeded and said
-    # so: a failed scope job skips everything, and turns these six red. On a stack layer (full is false) this job is
+    # documentation-only pull request, and on a push whose tree a pull request's run tested, the shards are skipped, and
+    # that is green only if the scope job succeeded and said so: a failed scope job skips everything, and turns these six
+    # red. On a stack layer (full is false) this job is
     # skipped as a whole, on purpose: a skipped matrix reports none of the six names, so they are not green on the layer's
     # head commit, and the layer cannot merge into main on the light set. A failed scope job leaves `full` empty, which
     # runs this job, and it fails. `!cancelled()`, not `always()`: in a run that a newer push cancelled, these six would
@@ -544,20 +598,25 @@ jobs:
         store: [classic, containerd]
         compose: ["5.2.0", "5.6.0", latest]
     steps:
-      - name: Every shard passed (or the pull request changes only documentation)
+      - name: Every shard passed (or there is nothing to test again)
         env:
           SCOPE: ${{ needs.scope.result }}
           CODE: ${{ needs.scope.outputs.code }}
+          TESTED_BY: ${{ needs.scope.outputs.tested_by }}
           RESULT: ${{ needs.integration-shard.result }}
+          RUNS: ${{ github.server_url }}/${{ github.repository }}/actions/runs
         run: |
-          echo "scope: $SCOPE (code: $CODE), shards: $RESULT"
+          echo "scope: $SCOPE (code: $CODE, tested by: ${TESTED_BY:-no earlier run}), shards: $RESULT"
           if [ "$SCOPE" != success ]; then echo "::error::the scope job did not succeed, so nothing may be skipped"; exit 1; fi
-          if [ "$CODE" = false ] && [ "$RESULT" = skipped ]; then echo "documentation only: no integration test needed"; exit 0; fi
+          if [ "$CODE" = false ] && [ "$RESULT" = skipped ]; then
+            if [ -n "$TESTED_BY" ]; then echo "the integration tests passed on this exact tree in $RUNS/$TESTED_BY"; else echo "documentation only: no integration test needed"; fi
+            exit 0
+          fi
           [ "$RESULT" = success ]
 
   image-drift:
-    # Required checks of a matrix: on a documentation-only pull request the job runs and skips its steps, because a job
-    # skipped as a whole does not report the matrix's names. That is what a stack layer wants (full is false): the job is
+    # Required checks of a matrix: on a documentation-only pull request (and on a push whose tree a pull request's run
+    # tested) the job runs and skips its steps, because a job skipped as a whole does not report the matrix's names. That is what a stack layer wants (full is false): the job is
     # skipped as a whole, so its two required checks stay unreported, as the integration job's do.
     name: image-drift check (${{ matrix.store }} store)
     runs-on: ubuntu-latest
@@ -571,9 +630,13 @@ jobs:
       matrix:
         store: [classic, containerd]
     steps:
-      - name: Documentation only, nothing to check
+      - name: Nothing to check again
         if: env.RUN != 'true'
-        run: echo "Documentation only, no image-drift check needed."
+        env:
+          TESTED_BY: ${{ needs.scope.outputs.tested_by }}
+          RUNS: ${{ github.server_url }}/${{ github.repository }}/actions/runs
+        run: |
+          if [ -n "$TESTED_BY" ]; then echo "The image-drift check passed on this exact tree in $RUNS/$TESTED_BY."; else echo "Documentation only, no image-drift check needed."; fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: env.RUN == 'true'
         with:

@@ -26,7 +26,7 @@ test:
 scripts-test:
 	scripts/scrub-fixture --self-test
 	scripts/release/release-notes.sh --self-test && scripts/release/verify.sh --self-test && scripts/ci/check-dockerfiles.sh --self-test && scripts/ci/check-dockerfiles.sh && scripts/ci/check-pins.sh --self-test && scripts/ci/check-pins.sh && scripts/ci/shard-integration.sh --self-test
-	scripts/ci/changes.sh --self-test && scripts/ci/compose-latest.sh --self-test
+	scripts/ci/changes.sh --self-test && scripts/ci/compose-latest.sh --self-test && scripts/ci/tested-tree.sh --self-test
 	scripts/ci/check-workflows.sh --self-test && scripts/ci/check-workflows.sh
 
 # CI's scripts job runs the same.
