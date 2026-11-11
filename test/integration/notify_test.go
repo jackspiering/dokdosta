@@ -144,7 +144,7 @@ func TestNotificationsReachTheReceiverWhenTheLadderEndsInSuspended(t *testing.T)
 
 	// SUSPENDED means no more attempts and no more words.
 	n := len(hook.all())
-	time.Sleep(15 * time.Second)
+	quiet(3)
 	if len(hook.all()) != n {
 		t.Errorf("more messages after SUSPENDED: %v", titles(hook.all()))
 	}

@@ -393,7 +393,7 @@ func TestPullRungWithNoNewerImageEndsInSuspended(t *testing.T) {
 	if len(hook.matching("upgraded")) != 0 || len(hook.matching("pulled")) != 0 {
 		t.Fatalf("no upgrade message: %v", titles(hook.all()))
 	}
-	time.Sleep(15 * time.Second)
+	quiet(3)
 	if n := len(r.Compose.Pulls()); n != 1 {
 		t.Fatalf("SUSPENDED means no more pulls: %d", n)
 	}
@@ -630,7 +630,7 @@ func TestDryRunNeverPulls(t *testing.T) {
 		}
 		return false
 	})
-	time.Sleep(10 * time.Second)
+	quiet(2)
 	if n := len(r.Compose.Pulls()); n != 0 {
 		t.Fatalf("a dry run ran compose pull: %v", r.Compose.Pulls())
 	}

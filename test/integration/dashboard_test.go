@@ -70,10 +70,7 @@ services:
       DOKDOSTA_HOST_ID: %s
       DOKDOSTA_HTTP_ADDR: ":8484"
       DOKDOSTA_METRICS: "true"
-      DOKDOSTA_GRACE: 2s
-      DOKDOSTA_POLL_INTERVAL: 5s
-      DOKDOSTA_STARTUP_SETTLE: 0s
-%s`, img, gid, testHost, env)
+%s%s`, img, gid, testHost, timingYAML(false), env)
 	if withApp {
 		svc += appService("app")
 	}

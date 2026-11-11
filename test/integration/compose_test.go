@@ -96,7 +96,7 @@ func TestLadderRestartRecreateSuspended(t *testing.T) {
 	if !strings.Contains(strings.Join(r.Compose.Log(), "\n"), "--dry-run --progress json up -d --no-deps --pull never --no-build -- app") {
 		t.Fatalf("the dry-run oracle did not run before the recreate: %v", r.Compose.Log())
 	}
-	time.Sleep(20 * time.Second) // several polls: SUSPENDED means no more attempts
+	quiet(4) // several polls: SUSPENDED means no more attempts
 	if again := s.container("app"); again.ID != after.ID || len(r.Compose.Mutating()) != 1 {
 		t.Fatalf("a SUSPENDED container was touched again: %s -> %s", after.ID, again.ID)
 	}
@@ -597,7 +597,7 @@ func TestDryRunNeverRecreates(t *testing.T) {
 	if n := countFor(r.Rec, engine.ActionResult, s.key("app")); n != 2 {
 		t.Fatalf("restart and recreate, both dry: %d", n)
 	}
-	time.Sleep(10 * time.Second)
+	quiet(2)
 	after := s.container("app")
 	if after.ID != before.ID || !after.StartedAt.Equal(before.StartedAt) || after.RestartCount != before.RestartCount {
 		t.Fatalf("dry-run changed the container: %+v -> %+v", before.StartedAt, after.StartedAt)
@@ -629,12 +629,7 @@ type imageStatus struct {
 }
 
 func imageEnv() string {
-	return fmt.Sprintf(`      DOKDOSTA_HOST_ID: %s
-      DOKDOSTA_GRACE: 2s
-      DOKDOSTA_POLL_INTERVAL: 5s
-      DOKDOSTA_COOLDOWN: 5s
-      DOKDOSTA_STARTUP_SETTLE: 0s
-`, testHost)
+	return fmt.Sprintf("      DOKDOSTA_HOST_ID: %s\n", testHost) + timingYAML(true)
 }
 
 // imageStack: a dokdosta container (read-only rootfs, nonroot, the socket's group) that heals a stuck app in the same
