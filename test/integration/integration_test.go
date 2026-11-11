@@ -342,9 +342,16 @@ func TestDryRunDoesNothing(t *testing.T) {
 	}
 }
 
-// buildBinary compiles cmd/dokdosta with CGO_ENABLED=0.
+// buildBinary returns the dokdosta binary a test runs: the one DOKDOSTA_TEST_BIN names (CI compiles it once a run, in the
+// test-binaries job, the same way), otherwise cmd/dokdosta compiled here with CGO_ENABLED=0, so a local run needs nothing.
 func buildBinary(t *testing.T) string {
 	t.Helper()
+	if bin := os.Getenv("DOKDOSTA_TEST_BIN"); bin != "" {
+		if fi, err := os.Stat(bin); err != nil || !fi.Mode().IsRegular() || fi.Mode()&0o111 == 0 {
+			t.Fatalf("DOKDOSTA_TEST_BIN=%s is not an executable file (stat: %v)", bin, err)
+		}
+		return bin
+	}
 	root, err := exec.Command("go", "list", "-m", "-f", "{{.Dir}}").Output()
 	if err != nil {
 		t.Fatal(err)

@@ -9,8 +9,9 @@
 #                                                      for one n, and the n shards are exactly the tests there are
 #   scripts/ci/shard-integration.sh --self-test
 #
-# The test list is always `go test -tags integration -list` (SHARD_TESTS_FILE replaces it, for the self-test), so a new test
-# is in some shard without anyone editing a list. Tests are packed greedily, longest first, into the shard with the least
+# The test list is always `go test -tags integration -list`, or the same list from a compiled test binary when
+# SHARD_TEST_BINARY names one (CI's shards, which have no Go; SHARD_TESTS_FILE replaces both, for the self-test), so a new
+# test is in some shard without anyone editing a list. Tests are packed greedily, longest first, into the shard with the least
 # time so far, using scripts/ci/integration-durations.txt (a test not listed counts as 30 s). The regex is anchored:
 # TestImage is a prefix of TestImageServesTheDashboard..., and an unanchored -run would run those in two shards.
 set -euo pipefail
@@ -19,7 +20,9 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 durations="${SHARD_DURATIONS_FILE:-$here/integration-durations.txt}"
 
 tests() {
-  if [ -n "${SHARD_TESTS_FILE:-}" ]; then cat "$SHARD_TESTS_FILE"; else
+  if [ -n "${SHARD_TESTS_FILE:-}" ]; then cat "$SHARD_TESTS_FILE"; elif [ -n "${SHARD_TEST_BINARY:-}" ]; then
+    "$SHARD_TEST_BINARY" -test.list '^Test'
+  else
     (cd "$here/../.." && go test -tags integration -list '^Test' ./test/integration/)
   fi | grep -E '^Test[A-Za-z0-9_]*$' | sort -u
 }
@@ -92,6 +95,13 @@ self_test() {
   bad check_ci "$tmp/none.yml"
   ok "$0" 1/3
   bad "$0" 3/3
+  # a compiled test binary gives the list when no file does: its tests, not the file's, are what is packed
+  # shellcheck disable=SC2016 # the text of a script: its $1 is not this shell's
+  printf '#!/bin/sh\n[ "$1" = -test.list ] || exit 1\nprintf "%%s\\n" TestFromTheBinary TestAlsoFromTheBinary PASS\n' >"$tmp/test-binary"
+  chmod +x "$tmp/test-binary"
+  re=$(unset SHARD_TESTS_FILE; SHARD_TEST_BINARY="$tmp/test-binary" "$0" 0/1)
+  if [ "$re" = '^(TestAlsoFromTheBinary|TestFromTheBinary)$' ]; then echo "ok   the list of a test binary: $re"; else echo "FAIL the list of a test binary: $re"; fail=1; fi
+  if (unset SHARD_TESTS_FILE; SHARD_TEST_BINARY="$tmp/none" "$0" 0/1) >/dev/null 2>&1; then echo "FAIL (should fail) a test binary that is not there"; fail=1; else echo "ok   (fails) a test binary that is not there"; fi
   bad "$0" 1
   if [ "$fail" = 0 ]; then echo "shard-integration self-test: ok"; else echo "shard-integration self-test: FAILED" >&2; return 1; fi
 }
