@@ -67,7 +67,8 @@ Verify a release yourself: [verifying-releases.md](verifying-releases.md).
   `examples (compose config, systemd-analyze verify)`, `demo (examples/demo, break bop and watch the ladder)`, the six
   `integration (...)` legs and the two `image-drift check (...)` legs. (The check names are the jobs' `name:` in `ci.yml`. The six `integration (...)` checks are aggregate jobs that wait for the
   three `integration shard ... ` jobs each leg is split into; require the aggregates, not the shards. On a pull request that changes only documentation most of these checks
-  report "skipped", which counts as passed; the integration and image-drift legs pass only if the `scope` job said so.)
+  report "skipped", which counts as passed; the integration and image-drift legs pass only if the `scope` job said so. A push
+  to `main` whose exact tree a pull request's run already tested green reports the same way, and its `scope` job names that run.)
 - **Tag protection for `v*`**: a tag ruleset (Settings, Rules, Rulesets, target: tags, pattern `v*`) that restricts who can create
   them to you, and blocks updates and deletions. A release tag is the trigger of the only workflow that publishes; whoever can
   push one can publish.
