@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"syscall"
 	"testing"
@@ -30,6 +31,55 @@ import (
 )
 
 const testHost = "itest"
+
+// The timings of every dokdosta under test, in one place (plan v3.18 item 4). The tests' containers answer within a second
+// or two (a healthcheck every second, stop_grace_period 2s), and a ladder is mostly its own waits, so these decide how
+// long the suite runs: the cooldown doubles per rung (2 s, 4 s, 8 s). A test that turns out flaky gets the value it
+// needs raised here, never a weaker assertion.
+const (
+	testGrace    = 2 * time.Second
+	testPoll     = 2 * time.Second
+	testCooldown = 2 * time.Second
+	testRecovery = 4 * time.Second
+)
+
+// timingEnv is those timings as the variables of a dokdosta that runs as a process or in a container. cooldown is false
+// for the one that keeps the default.
+func timingEnv(cooldown bool) map[string]string {
+	env := map[string]string{
+		"DOKDOSTA_GRACE":          testGrace.String(),
+		"DOKDOSTA_POLL_INTERVAL":  testPoll.String(),
+		"DOKDOSTA_STARTUP_SETTLE": "0s",
+	}
+	if cooldown {
+		env["DOKDOSTA_COOLDOWN"] = testCooldown.String()
+	}
+	return env
+}
+
+// timingVars is timingEnv as KEY=value pairs, sorted.
+func timingVars() []string {
+	var out []string
+	for k, v := range timingEnv(true) {
+		out = append(out, k+"="+v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// timingYAML is timingEnv as lines of a compose file's `environment:` mapping, sorted.
+func timingYAML(cooldown bool) string {
+	var lines []string
+	for k, v := range timingEnv(cooldown) {
+		lines = append(lines, "      "+k+": "+v+"\n")
+	}
+	sort.Strings(lines)
+	return strings.Join(lines, "")
+}
+
+// quiet waits for the daemon to look at everything `polls` more times, to show that nothing more happens. Four polls
+// are longer than any wait of a two-rung ladder at these timings.
+func quiet(polls int) { time.Sleep(time.Duration(polls) * testPoll) }
 
 // Run with: DOKDOSTA_INTEGRATION=1 go test -tags integration ./test/integration/
 // CI does this on a GitHub-hosted runner. Do not run it on a Docker host you care about.
@@ -224,11 +274,11 @@ func composeBin(t *testing.T) *compose.Binary {
 func startDaemonOpts(t *testing.T, g *Guard, cli *docker.Moby, o daemonOpts) *running {
 	t.Helper()
 	cfg := config.Defaults()
-	cfg.RecoveryPeriod = 10 * time.Second
+	cfg.RecoveryPeriod = testRecovery
 	cfg.HostID = testHost
-	cfg.Grace = 2 * time.Second
-	cfg.PollInterval = 5 * time.Second
-	cfg.Cooldown = 5 * time.Second
+	cfg.Grace = testGrace
+	cfg.PollInterval = testPoll
+	cfg.Cooldown = testCooldown
 	cfg.StartupSettle = 0
 	cfg.RateLimit = 100
 	cfg.DryRun = o.Dry
@@ -332,7 +382,7 @@ func TestDryRunDoesNothing(t *testing.T) {
 		}
 		return false
 	})
-	time.Sleep(15 * time.Second) // several polls and cooldowns
+	quiet(4) // the rest of the dry ladder and several polls
 	after := s.container("app")
 	if after.ID != before.ID || !after.StartedAt.Equal(before.StartedAt) || after.RestartCount != before.RestartCount {
 		t.Fatalf("dry-run changed the container: before %+v after %+v", before.StartedAt, after.StartedAt)
@@ -377,9 +427,7 @@ func TestBinaryDryRunLogsDecisions(t *testing.T) {
 
 	bin := buildBinary(t)
 	sock := filepath.Join(t.TempDir(), "w.sock")
-	env := append(os.Environ(),
-		"DOKDOSTA_HOST_ID="+testHost, "DOKDOSTA_GRACE=2s", "DOKDOSTA_POLL_INTERVAL=5s", "DOKDOSTA_COOLDOWN=5s",
-		"DOKDOSTA_STARTUP_SETTLE=0s", "DOKDOSTA_CONTROL_SOCKET="+sock)
+	env := append(append(os.Environ(), timingVars()...), "DOKDOSTA_HOST_ID="+testHost, "DOKDOSTA_CONTROL_SOCKET="+sock)
 	cmd := exec.Command(bin, "run", "--dry-run")
 	cmd.Env = env
 	stderr, err := cmd.StderrPipe()
@@ -503,11 +551,7 @@ services:
     volumes: ["/var/run/docker.sock:/var/run/docker.sock", "data:/data"]
     environment:
       DOKDOSTA_HOST_ID: %s
-      DOKDOSTA_GRACE: 2s
-      DOKDOSTA_POLL_INTERVAL: 5s
-      DOKDOSTA_COOLDOWN: 5s
-      DOKDOSTA_STARTUP_SETTLE: 0s
-`, img, gid, testHost)+appService("app")+`
+%s`, img, gid, testHost, timingYAML(true))+appService("app")+`
 volumes:
   data: {}
 `)
@@ -611,7 +655,7 @@ func TestPauseResumeAndUnsuspendOverTheControlSocket(t *testing.T) {
 		t.Fatal(err)
 	}
 	breakApp(t, g, s)
-	time.Sleep(20 * time.Second)
+	quiet(4)
 	if now := s.container("app"); !now.StartedAt.Equal(before.StartedAt) || now.Health != "unhealthy" {
 		t.Fatalf("a paused container was touched: %+v", now)
 	}
@@ -724,9 +768,8 @@ func TestStateSurvivesARestartOfTheBinary(t *testing.T) {
 	s := stuckStack(t, g, cli, "persist")
 	bin := buildBinary(t)
 	sock := filepath.Join(t.TempDir(), "w.sock")
-	env := append(os.Environ(),
-		"DOKDOSTA_HOST_ID="+testHost, "DOKDOSTA_GRACE=2s", "DOKDOSTA_POLL_INTERVAL=5s", "DOKDOSTA_COOLDOWN=5s",
-		"DOKDOSTA_STARTUP_SETTLE=0s", "DOKDOSTA_CONTROL_SOCKET="+sock, "DOKDOSTA_DATA_DIR="+t.TempDir())
+	env := append(append(os.Environ(), timingVars()...),
+		"DOKDOSTA_HOST_ID="+testHost, "DOKDOSTA_CONTROL_SOCKET="+sock, "DOKDOSTA_DATA_DIR="+t.TempDir())
 	key := s.key("app")
 	isEvent := func(m map[string]any, typ string) bool { return m["type"] == typ && m["key"] == key }
 
@@ -766,7 +809,7 @@ func TestStateSurvivesARestartOfTheBinary(t *testing.T) {
 	if !suspended || len(st.Engine.Pauses) != 1 || st.Engine.Pauses[0].Scope != s.project+"/other" {
 		t.Fatalf("state was lost across the restart: %s", out)
 	}
-	time.Sleep(20 * time.Second) // polls and cooldowns: the ladder must not start over
+	quiet(4) // polls and cooldowns: the ladder must not start over
 	if now := s.container("app").StartedAt; !now.Equal(started) {
 		t.Fatalf("the second run restarted a SUSPENDED container: %v -> %v", started, now)
 	}

@@ -50,9 +50,12 @@ dokdosta is a compose-aware self-healer for Docker hosts. For opted-in container
 
 ## Plan v3.18 (written and approved 11 Nov 2026)
 
-Five changes to make CI shorter; three pull requests into `main`, one after the other (not a stack: each needs the full matrix). Items 1 to 3 are built and described in the `ci.yml` bullet above. Still to build:
+Five changes to make CI shorter; three pull requests into `main`, one after the other (not a stack: each needs the full matrix). Items 1 to 3 are built and described in the `ci.yml` bullet above.
 
-- **Shorter test timings** (item 4): the integration tests give the daemon cooldown base 2 s, poll 2 s, recovery period 4 s, grace 2 s; the fixed waits become a number of polls; the values live in one place. Merge after three full green runs in a row. A flaky test gets that one value raised and reported, never a weaker assertion.
+- **Shorter test timings** (item 4, built): every dokdosta under test gets the constants at the top of `test/integration/integration_test.go` (`testGrace` 2 s, `testPoll` 2 s, `testCooldown` 2 s, `testRecovery` 4 s; `timingVars` for the binary, `timingYAML` for the image), and a wait that shows nothing more happens is `quiet(n)`, n polls. A flaky test gets the value it needs raised there and reported, never a weaker assertion. A change to these values merges after three full green runs in a row.
+
+Still to build:
+
 - **A tested tree on `main`** (item 5): a push to `main` whose exact tree a full green pull-request run tested (a marker artifact named after the tree hash, 7 days) runs only `go`; any doubt is a full run, and a documentation-only push keeps its full run.
 
 Three shards per leg stay. If a shard still starts late now that `demo` waits for `go`, two shards per leg is a question for the maintainer.
