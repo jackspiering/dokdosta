@@ -4,7 +4,7 @@
 #
 # The first stage downloads the bundled compose plugin and runs on the BUILD platform, so a multi-arch build needs no
 # emulation (QEMU): the final stage has no RUN.
-FROM --platform=$BUILDPLATFORM golang:1.27.3@sha256:2920bb124f1a2e12a1d39f0cab756ae0068441ee1da7655dec7f5e374944095b AS fetch
+FROM --platform=$BUILDPLATFORM golang:1.27.4@sha256:08bcb99a38f85a265f9a93d1d3323e2440eec333380f3ea26ee0dec9264bb41c AS fetch
 ARG COMPOSE_VERSION=5.6.0
 ARG COMPOSE_SHA256_AMD64=40343e21ca777173e69cff5dbafeb37c6f81f3b0d57d9e597f036e95eb63e76a
 ARG COMPOSE_SHA256_ARM64=733ec76717ceb59052a9609b9dadfb523b2df8eab57a54212872d10a58078ea2

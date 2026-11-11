@@ -18,6 +18,8 @@ workflow refuses an undated section.
 
 ### Changed
 
+- **Go 1.27.4.** The binaries and the image are built with Go 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash
+  in `net/http`).
 - **The drift guard's events carry what it found as data.** `DriftBlocked` and `DriftWarned` have three new attributes
   (also in `/api/v1/events`): `checks` (the checks that found something: `config`, `image`, `skew`, `unverified`) and, for
   config drift after a compose upgrade, `compose_from` and `compose_to`. The notification's hint is chosen from them, not
