@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
@@ -491,4 +492,28 @@ func TestEveryConfiguredCommandRefusesVariablesFromBeforeTheRename(t *testing.T)
 			t.Errorf("%s: the error quotes the value: %v", name, err)
 		}
 	}
+}
+
+// A dashboard address that cannot be bound is a configuration error: run stops on it.
+func TestListenHTTPRefusesAnAddressItCannotBind(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	for _, addr := range []string{taken.Addr().String(), "8484", "nope:port"} {
+		ln, err := listenHTTP(addr)
+		if err == nil {
+			ln.Close()
+			t.Fatalf("listenHTTP(%q) succeeded", addr)
+		}
+		if !strings.Contains(err.Error(), "DOKDOSTA_HTTP_ADDR") {
+			t.Errorf("listenHTTP(%q): the error does not name the variable: %v", addr, err)
+		}
+	}
+	ln, err := listenHTTP("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("a free loopback port was refused: %v", err)
+	}
+	ln.Close()
 }

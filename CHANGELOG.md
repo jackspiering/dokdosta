@@ -35,6 +35,7 @@ workflow refuses an undated section.
   (also in `/api/v1/events`): `checks` (the checks that found something: `config`, `image`, `skew`, `unverified`) and, for
   config drift after a compose upgrade, `compose_from` and `compose_to`. The notification's hint is chosen from them, not
   from the wording of the finding; the finding's text is unchanged.
+- **A dashboard address that cannot be bound stops the start.** With `DOKDOSTA_HTTP_ADDR` set to an address that is in use or malformed, `dokdosta run` logged one error and ran on, healthy, without the dashboard, the API and `/metrics`. It now exits with `cannot listen on DOKDOSTA_HTTP_ADDR ...`, like every other configuration error.
 
 ## [0.3.1] - 2026-11-02
 
