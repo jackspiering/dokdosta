@@ -10,6 +10,11 @@ workflow refuses an undated section.
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-11-16
+
+The notification library is stricter about URLs (read the first entry under Changed before you upgrade), a dashboard
+address that cannot be bound stops the start, and two fixes.
+
 ### Fixed
 
 - **The dashboard says in plain words when a moved image tag blocked a recreate.** The SUSPENDED banner of a container
@@ -33,6 +38,8 @@ workflow refuses an undated section.
   TLS settings changed as well: Gotify's `disabletls=yes` no longer skips certificate verification too, and the setting
   that skips it is now `skiptlsverify` for Gotify, ntfy and MQTT (`insecureskipverify` and `disabletlsverification` still
   work). dokdosta 0.3.1 and earlier refuse a URL that has `skiptlsverify`, which matters when you roll back.
+- **OpenTelemetry 1.47.0.** The OpenTelemetry modules that the Docker client brings along are updated from 1.35.0, which
+  closes GHSA-q7gw-24fr-5p69. dokdosta sets up no OpenTelemetry SDK, so it was very likely not affected.
 - **Go 1.27.4.** The binaries and the image are built with Go 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash
   in `net/http`).
 - **The drift guard's events carry what it found as data.** `DriftBlocked` and `DriftWarned` have three new attributes
@@ -528,7 +535,8 @@ The first release candidate of 0.1.0, published to rehearse the release pipeline
 `scripts/release/verify.sh`), which can only run for real on a tag. It contains what 0.1.0 will contain; see the 0.1.0 section
 above for the full list. A pre-release: it never moves `latest`, `v0.1` or `v0`, and it is not meant for production.
 
-[Unreleased]: https://github.com/jackspiering/dokdosta/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/jackspiering/dokdosta/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.2
 [0.3.1]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.1
 [0.3.0]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.0
 [0.3.0-rc.1]: https://github.com/jackspiering/dokdosta/releases/tag/v0.3.0-rc.1
