@@ -18,6 +18,17 @@ workflow refuses an undated section.
 
 ### Changed
 
+- **Shoutrrr 0.23.0: some notification URLs that were accepted are refused now.** The notification library reads the
+  URLs of `DOKDOSTA_NOTIFY_URLS` more strictly. dokdosta skips a URL that it refuses, as before: it starts and heals,
+  logs `notification URL is invalid and will not be used`, shows the URL as `INVALID` in `status`, and sends nothing to
+  it. **After the upgrade, run `dokdosta notify test`.** Refused now, among others: a `%` in a query that does not start
+  an escape (write `%25`), a literal `;` in a query (write `%3B`), one setting in two spellings (`title` and `Title`), a
+  URL that ends in `#`, a Discord webhook ID that is not a number, an SMTP or MQTT port outside 1 to 65535, an MQTT topic
+  with `+` or `#`, an unknown query key for Rocket.Chat or Zulip, and a Google Chat URL without its space path. The full
+  list is in the [Shoutrrr v0.23.0 release notes](https://github.com/nicholas-fedor/shoutrrr/releases/tag/v0.23.0). Two
+  TLS settings changed as well: Gotify's `disabletls=yes` no longer skips certificate verification too, and the setting
+  that skips it is now `skiptlsverify` for Gotify, ntfy and MQTT (`insecureskipverify` and `disabletlsverification` still
+  work). dokdosta 0.3.1 and earlier refuse a URL that has `skiptlsverify`, which matters when you roll back.
 - **Go 1.27.4.** The binaries and the image are built with Go 1.27.4, which fixes GO-2026-6859 (an HTTP/1 server crash
   in `net/http`).
 - **The drift guard's events carry what it found as data.** `DriftBlocked` and `DriftWarned` have three new attributes
