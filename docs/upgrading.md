@@ -9,6 +9,10 @@
    place when the new version starts, and an older version refuses a database that a newer one has migrated (below).
 4. Upgrade at a quiet moment: while dokdosta restarts, nothing is healed (a short gap, and the startup sweep catches up after
    `DOKDOSTA_STARTUP_SETTLE`).
+5. **After the upgrade, test the notifications**: `docker exec dokdosta /dokdosta notify test`. A release can bring a
+   newer Shoutrrr that refuses a notification URL the older one accepted (the release after 0.3.1 does, see its
+   changelog section). Such a URL is skipped and shown as `INVALID` in `status`, and dokdosta cannot tell you so itself:
+   the message would have to go through that URL.
 
 Container: `docker compose pull dokdosta && docker compose up -d dokdosta` (with the new tag in the file). Systemd: replace
 `/usr/local/bin/dokdosta`, `systemctl restart dokdosta`. dokdosta does not heal itself and is not touched by its own
