@@ -168,6 +168,14 @@ func runCmd(args []string) error {
 		return err
 	}
 
+	var httpLn net.Listener
+	if cfg.HTTPAddr != "" {
+		if httpLn, err = listenHTTP(cfg.HTTPAddr); err != nil {
+			return err
+		}
+		defer httpLn.Close() // a no-op once the server has closed it
+	}
+
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -286,7 +294,7 @@ func runCmd(args []string) error {
 		srv.RegisterOnShutdown(hub.Close)
 		go func() {
 			log.Info("dashboard and read-only API listening", "addr", cfg.HTTPAddr, "token", cfg.HTTPToken != "", "metrics", cfg.Metrics, "extra_hosts_without_token", len(cfg.HTTPAllowedHosts), "trusted_proxies", len(cfg.HTTPTrustedProxies))
-			if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			if err := srv.Serve(httpLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Error("http listener failed", "addr", cfg.HTTPAddr, "error", err.Error())
 			}
 		}()
@@ -619,6 +627,16 @@ func (r regAuth) hosts() []string {
 		return nil
 	}
 	return r.a.Hosts
+}
+
+// listenHTTP binds the dashboard listener. run calls it before it touches Docker, so an address that cannot be bound
+// stops the start like any other configuration error, instead of leaving a healthy dokdosta without its dashboard.
+func listenHTTP(addr string) (net.Listener, error) {
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("cannot listen on DOKDOSTA_HTTP_ADDR %q: %w", addr, err)
+	}
+	return ln, nil
 }
 
 // loadRegistryAuth checks DOKDOSTA_REGISTRY_AUTH_DIR (plan v3.12 item 4). No message quotes the file's values.
