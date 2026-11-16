@@ -2,6 +2,7 @@ package notify
 
 import (
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -25,8 +26,10 @@ const minPathSecret = 6
 // value), and the errors of an HTTP client quote the URL it called. Shoutrrr redacts its own errors too (v0.22.0), but
 // that is one layer, and dokdosta logs, counts and prints these errors in several places, so every one of them goes
 // through here.
+// A piece is matched in any letter case: Shoutrrr (v0.23.0) lower-cases a query key that it echoes.
 type Redactor struct {
-	fragments []string // longest first, so a URL goes before the pieces inside it
+	fragments []string         // longest first, so a URL goes before the pieces inside it
+	patterns  []*regexp.Regexp // one per fragment, same order: the fragment in any letter case
 }
 
 // NewRedactor builds a Redactor for the given raw URLs (notification URLs, the uptime ping URL).
@@ -62,6 +65,9 @@ func NewRedactorWith(secrets []string, raw ...string) *Redactor {
 		}
 		return r.fragments[i] < r.fragments[j]
 	})
+	for _, f := range r.fragments {
+		r.patterns = append(r.patterns, regexp.MustCompile("(?i)"+regexp.QuoteMeta(f)))
+	}
 	return r
 }
 
@@ -142,10 +148,8 @@ func (r *Redactor) Redact(s string) string {
 	if r == nil {
 		return s
 	}
-	for _, f := range r.fragments {
-		if strings.Contains(s, f) {
-			s = strings.ReplaceAll(s, f, mask)
-		}
+	for _, p := range r.patterns {
+		s = p.ReplaceAllLiteralString(s, mask)
 	}
 	return s
 }

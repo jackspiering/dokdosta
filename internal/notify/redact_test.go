@@ -132,3 +132,17 @@ func TestRedactorKeepsBooleanOptionValues(t *testing.T) {
 		t.Errorf("a secret survived: %q", got)
 	}
 }
+
+// A copy of a fragment in another letter case is masked too: Shoutrrr lower-cases a query key that it echoes in an error.
+func TestRedactorMasksAFragmentInAnyLetterCase(t *testing.T) {
+	r := NewRedactor("ntfy://ntfy.example.com/Topic-AbCdEf123?token=Tk_AbCdEf123456")
+	got := r.Redact("key tk_abcdef123456, KEY TK_ABCDEF123456, topic topic-abcdef123, host NTFY.EXAMPLE.COM, and ordinary words")
+	for _, leak := range []string{"tk_abcdef", "TK_ABCDEF", "topic-abcdef", "NTFY.EXAMPLE"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q is still in the redacted text: %s", leak, got)
+		}
+	}
+	if !strings.Contains(got, "and ordinary words") {
+		t.Errorf("ordinary text was changed: %s", got)
+	}
+}
