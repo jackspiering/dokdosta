@@ -1,6 +1,6 @@
 # GoReleaser configuration for dokdosta (plan v3.10, section 7 M6). Checked against GoReleaser v2.18.3; docs/m6-notes.md has
 # the versions of everything the release pipeline uses. The release job (.github/workflows/release.yml) runs only on a v*
-# tag; pull requests and main run `goreleaser release --snapshot --skip=publish,sign` (ci.yml), which builds the same
+# tag; pull requests and main run `goreleaser release --snapshot --clean --skip=sign` (ci.yml), which builds the same
 # archives, checksums and SBOMs and pushes and signs nothing.
 version: 2
 project_name: dokdosta
@@ -134,5 +134,5 @@ release:
     name: dokdosta
   prerelease: auto
   # A draft first would let the maintainer look before it goes public, but the published image is public the moment it is
-  # pushed. The release gate (docs/releasing.md) is the place to stop, so the release is created published.
+  # pushed. The place to stop is before the tag (docs/releasing.md, "Cutting a release"), so the release is created published.
   draft: false
