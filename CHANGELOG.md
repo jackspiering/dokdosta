@@ -15,6 +15,10 @@ workflow refuses an undated section.
 - **The dashboard says in plain words when a moved image tag blocked a recreate.** The SUSPENDED banner of a container
   whose recreate the drift guard blocked because the tag moved showed the guard's raw finding instead of "the image tag
   moved since the container was created": the page looked for the finding in a form the guard does not write.
+- **The error of a refused notification URL no longer shows a piece of the URL in lower case.** Shoutrrr 0.23.0 echoes
+  an unknown query key in lower case, and the redactor matched the exact letter case only, so a token typed as the whole
+  query of a URL (`?<token>` instead of `?token=<token>`) reached the log, `status` and `notify test` in lower case. The
+  redactor now masks every piece of a configured URL in any letter case.
 
 ### Changed
 

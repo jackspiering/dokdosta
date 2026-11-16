@@ -137,3 +137,20 @@ func TestEndToEndThroughTheGenericService(t *testing.T) {
 		}
 	}
 }
+
+// Shoutrrr v0.23.0 echoes an unknown query key in lower case ("not a valid config key: tk_abcdef123456"). A token typed
+// as the whole query is a fragment (the raw query), and its lower-case copy must be masked too.
+func TestAnInvalidURLsErrorDoesNotEchoAFragmentInAnotherCase(t *testing.T) {
+	const token = "Tk_AbCdEf123456"
+	u := "ntfy://ntfy.example.com/mytopic?" + token
+	tg := NewTargets([]string{u}, NewRedactor(u), time.Second)[0]
+	if tg.Sender != nil {
+		t.Fatal("the URL was accepted: this test needs a URL that Shoutrrr rejects for its query key")
+	}
+	if strings.Contains(strings.ToLower(tg.Err), strings.ToLower(token)) {
+		t.Fatalf("the error echoes the token: %s", tg.Err)
+	}
+	if !strings.Contains(tg.Err, "not a valid config key") {
+		t.Fatalf("the error no longer says what is wrong: %s", tg.Err)
+	}
+}
