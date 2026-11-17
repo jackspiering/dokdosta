@@ -4,11 +4,11 @@ go 1.27.4
 
 require (
 	github.com/containerd/errdefs v1.0.0
-	github.com/moby/moby/api v1.56.1
-	github.com/moby/moby/client v0.6.2
-	github.com/nicholas-fedor/shoutrrr v0.23.0
+	github.com/moby/moby/api v1.57.0
+	github.com/moby/moby/client v0.6.3
+	github.com/nicholas-fedor/shoutrrr v0.24.0
 	github.com/opencontainers/image-spec v1.1.1
-	golang.org/x/crypto v0.58.0
+	golang.org/x/crypto v0.59.0
 	modernc.org/sqlite v1.62.0
 )
 
@@ -38,13 +38,13 @@ require (
 	go.opentelemetry.io/otel/log v1.47.0 // indirect
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
-	golang.org/x/mod v0.42.0 // indirect
+	golang.org/x/mod v0.43.0 // indirect
 	golang.org/x/net v0.62.0 // indirect
-	golang.org/x/oauth2 v0.37.0 // indirect
-	golang.org/x/sync v0.24.0 // indirect
-	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/term v0.47.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
+	golang.org/x/oauth2 v0.38.0 // indirect
+	golang.org/x/sync v0.25.0 // indirect
+	golang.org/x/sys v0.50.0 // indirect
+	golang.org/x/term v0.48.0 // indirect
+	golang.org/x/text v0.44.0 // indirect
 	golang.org/x/tools v0.52.0 // indirect
 	mellium.im/reader v0.1.0 // indirect
 	mellium.im/sasl v0.3.2 // indirect
