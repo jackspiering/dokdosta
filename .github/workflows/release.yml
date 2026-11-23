@@ -38,7 +38,7 @@ jobs:
             echo "::error::$TAG does not point at a commit on main: release from main, after the pull request is merged"; exit 1
           fi
           scripts/release/release-notes.sh "$TAG" >/dev/null
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           # Nothing from another run's cache: main's CI saves one under the same key, and go build trusts the compiled
@@ -78,7 +78,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
           go-version-file: go.mod
           # Nothing from another run's cache: main's CI saves one under the same key, and go build trusts the compiled
